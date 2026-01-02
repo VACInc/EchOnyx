@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { VideoCard } from "@/components/video-card";
 import {
@@ -105,6 +105,7 @@ const statusIcon = (status: string) => {
 
 export default function Dashboard() {
   const { openModal } = useUploadModal();
+  const queryClient = useQueryClient();
 
   const { data: videos, isLoading } = useQuery({
     queryKey: ["videos"],
@@ -138,6 +139,24 @@ export default function Dashboard() {
     queryKey: ["jobs", "queued"],
     queryFn: () => api.getJobs({ status: "queued", pageSize: 50 }),
     refetchInterval: 2000,
+  });
+
+  const cancelOrphanedMutation = useMutation({
+    mutationFn: api.cancelOrphanedJobs,
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ["jobs", "processing"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs", "queued"] });
+      const count = data?.cancelled ?? 0;
+      window.alert(
+        count > 0
+          ? `Cancelled ${count} orphaned job(s).`
+          : "No orphaned jobs found."
+      );
+    },
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Failed to cancel orphaned jobs";
+      window.alert(message);
+    },
   });
 
   const downloadCount = modelStatus?.active_downloads?.length ?? 0;
@@ -197,6 +216,24 @@ export default function Dashboard() {
                 <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
                   {stat.value}
                 </p>
+                {stat.label === "Workload" && workloadJobs.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (cancelOrphanedMutation.isPending) return;
+                      const confirmed = window.confirm(
+                        "Cancel orphaned queued/processing jobs (no matching video)?"
+                      );
+                      if (confirmed) {
+                        cancelOrphanedMutation.mutate();
+                      }
+                    }}
+                    className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 transition hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                    disabled={cancelOrphanedMutation.isPending}
+                  >
+                    {cancelOrphanedMutation.isPending ? "Clearing..." : "Clear orphaned"}
+                  </button>
+                ) : null}
               </div>
               <div className={`rounded-full p-3 ${stat.bg} dark:bg-slate-800`}>
                 <stat.icon className={`h-6 w-6 ${stat.accent}`} />

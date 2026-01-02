@@ -338,4 +338,10 @@ export const api = {
       created_at: string;
     }>(`/api/jobs/${id}`);
   },
+
+  async cancelOrphanedJobs() {
+    return fetchApi<{ cancelled: number }>("/api/jobs/cancel-orphaned", {
+      method: "POST",
+    });
+  },
 };

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.job import Job, JobStatus
+from app.models.video import Video
 
 router = APIRouter()
 
@@ -221,3 +222,27 @@ async def retry_job(
     job = await enqueue_video_job(db, job)
 
     return job_to_response(job)
+
+
+@router.post("/cancel-orphaned")
+async def cancel_orphaned_jobs(
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Cancel queued/processing jobs whose videos no longer exist."""
+    result = await db.execute(
+        select(Job)
+        .outerjoin(Video, Job.video_id == Video.id)
+        .where(Video.id.is_(None))
+        .where(Job.status.in_([JobStatus.QUEUED.value, JobStatus.PROCESSING.value]))
+    )
+    jobs = result.scalars().all()
+
+    if not jobs:
+        return {"cancelled": 0}
+
+    for job in jobs:
+        job.status = JobStatus.CANCELLED.value
+
+    await db.commit()
+
+    return {"cancelled": len(jobs)}
