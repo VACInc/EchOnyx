@@ -1,6 +1,9 @@
-# EchOnyx
-
-Local, privacy-first video and presentation intelligence that runs entirely on your hardware. Designed for long-form meetings, demos, and reviews where details matter.
+<p align="center">
+  <img src="img/echonyx.png" alt="EchOnyx" width="720" />
+</p>
+<p align="center">
+  <strong>EchOnyx:</strong> Local, privacy-first video and presentation intelligence that runs entirely on your hardware. Designed for long-form meetings, demos, and reviews where details matter.
+</p>
 
 ## Features
 

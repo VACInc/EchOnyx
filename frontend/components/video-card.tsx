@@ -42,11 +42,36 @@ const STEP_ORDER = [
 ];
 
 const statusConfig = {
-  uploaded: { icon: Clock, color: "text-stone-600", bg: "bg-stone-100", animate: false },
-  queued: { icon: Clock, color: "text-amber-600", bg: "bg-amber-100", animate: false },
-  processing: { icon: Loader2, color: "text-blue-600", bg: "bg-blue-100", animate: true },
-  completed: { icon: CheckCircle, color: "text-emerald-600", bg: "bg-emerald-100", animate: false },
-  failed: { icon: AlertCircle, color: "text-red-600", bg: "bg-red-100", animate: false },
+  uploaded: {
+    icon: Clock,
+    color: "text-slate-600 dark:text-slate-200",
+    bg: "bg-slate-100 dark:bg-slate-800/70",
+    animate: false,
+  },
+  queued: {
+    icon: Clock,
+    color: "text-amber-600 dark:text-amber-200",
+    bg: "bg-amber-100 dark:bg-amber-500/15",
+    animate: false,
+  },
+  processing: {
+    icon: Loader2,
+    color: "text-blue-600 dark:text-blue-200",
+    bg: "bg-blue-100 dark:bg-blue-500/15",
+    animate: true,
+  },
+  completed: {
+    icon: CheckCircle,
+    color: "text-emerald-600 dark:text-emerald-200",
+    bg: "bg-emerald-100 dark:bg-emerald-500/15",
+    animate: false,
+  },
+  failed: {
+    icon: AlertCircle,
+    color: "text-rose-600 dark:text-rose-200",
+    bg: "bg-rose-100 dark:bg-rose-500/15",
+    animate: false,
+  },
 };
 
 export function VideoCard({ video, job }: VideoCardProps) {
@@ -104,15 +129,15 @@ export function VideoCard({ video, job }: VideoCardProps) {
 
   return (
     <Link href={`/videos/${video.id}`} className="block">
-      <div className="group rounded-2xl border border-stone-200/70 bg-white/70 p-4 transition hover:border-stone-300 hover:bg-white/90 hover:shadow-sm dark:border-slate-700/60 dark:bg-slate-900/60 dark:hover:bg-slate-900">
+      <div className="group rounded-2xl border border-slate-200/70 bg-white/70 p-4 transition hover:border-slate-300 hover:bg-white/90 hover:shadow-sm dark:border-slate-700/60 dark:bg-slate-900/60 dark:hover:bg-slate-900">
         <div className="flex flex-col gap-4 md:grid md:grid-cols-[minmax(0,2fr)_150px_120px_120px_140px] md:items-center">
           {/* Title */}
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-100 text-stone-500 dark:bg-slate-800 dark:text-slate-300">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
               <Video className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate text-sm font-semibold text-stone-900 dark:text-slate-100">
+              <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                 {video.title || video.original_filename}
               </h3>
               {video.tags && video.tags.length > 0 && (
@@ -120,7 +145,7 @@ export function VideoCard({ video, job }: VideoCardProps) {
                   {video.tags.map((tag) => (
                     <span
                       key={tag}
-                      className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-stone-600 dark:bg-slate-800 dark:text-slate-300"
+                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300"
                     >
                       {tag}
                     </span>
@@ -137,9 +162,9 @@ export function VideoCard({ video, job }: VideoCardProps) {
               {statusLabel}
             </span>
             {showProgress && (
-              <div className="h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-slate-800">
+              <div className="h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                 <div
-                  className="h-full bg-blue-600 transition-all"
+                  className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 transition-all"
                   style={{ width: `${progress?.toFixed(0) ?? 0}%` }}
                 />
               </div>
@@ -150,7 +175,7 @@ export function VideoCard({ video, job }: VideoCardProps) {
                   <button
                     onClick={handleRetry}
                     disabled={isRetrying}
-                    className="flex items-center rounded-full bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                    className="flex items-center rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 px-3 py-1.5 text-xs font-medium text-white transition hover:from-blue-400 hover:via-indigo-400 hover:to-purple-400 disabled:opacity-50"
                   >
                     {isRetrying ? (
                       <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -164,7 +189,7 @@ export function VideoCard({ video, job }: VideoCardProps) {
                   <button
                     onClick={handleReset}
                     disabled={isResetting}
-                    className="flex items-center rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition hover:bg-stone-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    className="flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                   >
                     {isResetting ? (
                       <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -179,17 +204,17 @@ export function VideoCard({ video, job }: VideoCardProps) {
           </div>
 
           {/* Duration */}
-          <div className="text-sm font-medium text-stone-600 dark:text-slate-300">
+          <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
             {video.duration_formatted || "Processing..."}
           </div>
 
           {/* Size */}
-          <div className="text-sm font-medium text-stone-600 dark:text-slate-300">
+          <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
             {formatFileSize(video.file_size)}
           </div>
 
           {/* Added */}
-          <div className="text-sm font-medium text-stone-500 dark:text-slate-400">
+          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">
             {formatDistanceToNow(new Date(video.created_at), { addSuffix: true })}
           </div>
         </div>

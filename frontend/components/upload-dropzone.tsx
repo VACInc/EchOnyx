@@ -55,7 +55,7 @@ export function UploadDropzone() {
           "flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed p-10 transition",
           isDragActive
             ? "border-blue-500 bg-blue-50"
-            : "border-stone-300 hover:border-blue-400 hover:bg-stone-50 dark:border-slate-700 dark:hover:bg-slate-800/40"
+            : "border-slate-300 hover:border-blue-400 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800/40"
         )}
       >
         <input {...getInputProps()} />
@@ -75,34 +75,34 @@ export function UploadDropzone() {
 
       {/* File List */}
       {files.length > 0 && (
-        <div className="rounded-2xl border border-stone-200/70 bg-white/80 dark:border-slate-700/60 dark:bg-slate-900/70">
-          <div className="border-b border-stone-200/70 px-4 py-3 dark:border-slate-700/60">
-            <h3 className="font-medium text-stone-900 dark:text-slate-100">
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 dark:border-slate-700/60 dark:bg-slate-900/70">
+          <div className="border-b border-slate-200/70 px-4 py-3 dark:border-slate-700/60">
+            <h3 className="font-medium text-slate-900 dark:text-slate-100">
               {files.length} file{files.length > 1 ? "s" : ""} selected
             </h3>
           </div>
-          <ul className="divide-y divide-stone-200/70 dark:divide-slate-700/60">
+          <ul className="divide-y divide-slate-200/70 dark:divide-slate-700/60">
             {files.map((file, index) => (
               <li key={index} className="flex items-center px-4 py-3">
-                <FileVideo className="h-8 w-8 text-stone-400 dark:text-slate-500" />
+                <FileVideo className="h-8 w-8 text-slate-400 dark:text-slate-500" />
                 <div className="ml-3 flex-1 min-w-0">
-                  <p className="truncate text-sm font-medium text-stone-900 dark:text-slate-100">
+                  <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
                     {file.name}
                   </p>
-                  <p className="text-xs text-stone-500 dark:text-slate-400">
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
                     {formatFileSize(file.size)}
                   </p>
                 </div>
                 <button
                   onClick={() => removeFile(index)}
-                  className="ml-4 rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600 dark:hover:bg-slate-800"
+                  className="ml-4 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </li>
             ))}
           </ul>
-          <div className="border-t border-stone-200/70 px-4 py-3 dark:border-slate-700/60">
+          <div className="border-t border-slate-200/70 px-4 py-3 dark:border-slate-700/60">
             <button
               onClick={uploadAll}
               disabled={uploadMutation.isPending}
