@@ -202,10 +202,14 @@ export default function Dashboard() {
     <div className="space-y-8">
       {/* Quick Stats */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-4">
-        {stats.map((stat, idx) => (
+        {stats.map((stat, idx) => {
+          const isWorkload = stat.label === "Workload";
+          return (
           <div
             key={stat.label}
-            className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70"
+            className={`rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70 ${
+              isWorkload ? "group relative" : ""
+            }`}
             style={{ animationDelay: `${idx * 80}ms` }}
           >
             <div className="flex items-center justify-between">
@@ -216,31 +220,38 @@ export default function Dashboard() {
                 <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
                   {stat.value}
                 </p>
-                {stat.label === "Workload" && workloadJobs.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (cancelOrphanedMutation.isPending) return;
-                      const confirmed = window.confirm(
-                        "Cancel orphaned queued/processing jobs (no matching video)?"
-                      );
-                      if (confirmed) {
-                        cancelOrphanedMutation.mutate();
-                      }
-                    }}
-                    className="mt-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 transition hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                    disabled={cancelOrphanedMutation.isPending}
-                  >
-                    {cancelOrphanedMutation.isPending ? "Clearing..." : "Clear orphaned"}
-                  </button>
-                ) : null}
               </div>
               <div className={`rounded-full p-3 ${stat.bg} dark:bg-slate-800`}>
                 <stat.icon className={`h-6 w-6 ${stat.accent}`} />
               </div>
             </div>
+            {isWorkload ? (
+              <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Workload cleanup</p>
+                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                  Cancels queued/processing jobs that no longer have a matching video.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (cancelOrphanedMutation.isPending) return;
+                    const confirmed = window.confirm(
+                      "Cancel orphaned queued/processing jobs (no matching video)?"
+                    );
+                    if (confirmed) {
+                      cancelOrphanedMutation.mutate();
+                    }
+                  }}
+                  className="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300 hover:text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-slate-100"
+                  disabled={cancelOrphanedMutation.isPending}
+                >
+                  {cancelOrphanedMutation.isPending ? "Clearing..." : "Clear orphaned"}
+                </button>
+              </div>
+            ) : null}
           </div>
-        ))}
+        );
+        })}
 
         {/* Model Status (compact) */}
         <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
