@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+
+# local environments
+.venv*
+
+# caches
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# local data
+uploads/
+
+# OS/editor
+.DS_Store
+
+# local tooling
+.claude/

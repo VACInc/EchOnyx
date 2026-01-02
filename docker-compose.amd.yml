@@ -1,0 +1,60 @@
+# AMD GPU override (Strix Halo / ROCm) - use with: docker compose -f docker-compose.yml -f docker-compose.amd.yml up
+
+services:
+  backend:
+    build:
+      args:
+        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.1/}
+        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.8.0+rocm7.1.0.lw.git7a520360}
+        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.8.0+rocm7.1.0.git6e1c7fe9}
+        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.23.0+rocm7.1.0.git824e8c87}
+        ROCM_NIGHTLY: ${ROCM_NIGHTLY:-0}
+        LLAMA_BUILD_VULKAN: ${LLAMA_BUILD_VULKAN:-0}
+        LLAMA_BUILD_HIPBLAS: ${LLAMA_BUILD_HIPBLAS:-1}
+        INSTALL_NEMO: ${INSTALL_NEMO:-0}
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    volumes:
+      - /opt/rocm:/opt/rocm:ro
+      - /opt/rocm-7.1.0:/opt/rocm-7.1.0:ro
+    group_add:
+      - "44"   # video group
+      - "993"  # render group
+    environment:
+      - GPU_BACKEND=${GPU_BACKEND:-rocm}
+      - HARDWARE_PROFILE=strix_halo
+      - HSA_OVERRIDE_GFX_VERSION=11.5.1  # For Strix Halo gfx1151
+      - VULKAN_DEVICE=0
+      - MODEL_LOADING=${MODEL_LOADING:-sequential}
+      - ROCM_PATH=/opt/rocm
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
+
+  worker:
+    build:
+      args:
+        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.1/}
+        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.8.0+rocm7.1.0.lw.git7a520360}
+        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.8.0+rocm7.1.0.git6e1c7fe9}
+        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.23.0+rocm7.1.0.git824e8c87}
+        ROCM_NIGHTLY: ${ROCM_NIGHTLY:-0}
+        LLAMA_BUILD_VULKAN: ${LLAMA_BUILD_VULKAN:-0}
+        LLAMA_BUILD_HIPBLAS: ${LLAMA_BUILD_HIPBLAS:-1}
+        INSTALL_NEMO: ${INSTALL_NEMO:-0}
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    volumes:
+      - /opt/rocm:/opt/rocm:ro
+      - /opt/rocm-7.1.0:/opt/rocm-7.1.0:ro
+    group_add:
+      - "44"   # video group
+      - "993"  # render group
+    environment:
+      - GPU_BACKEND=${GPU_BACKEND:-rocm}
+      - HARDWARE_PROFILE=strix_halo
+      - HSA_OVERRIDE_GFX_VERSION=11.5.1
+      - VULKAN_DEVICE=0
+      - MODEL_LOADING=${MODEL_LOADING:-sequential}
+      - ROCM_PATH=/opt/rocm
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
