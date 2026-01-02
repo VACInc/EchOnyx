@@ -226,7 +226,7 @@ export default function Dashboard() {
               </div>
             </div>
             {isWorkload ? (
-              <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Workload cleanup</p>
                 <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
                   Cancels queued/processing jobs that no longer have a matching video.
@@ -287,7 +287,7 @@ export default function Dashboard() {
             })}
           </div>
 
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
             <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Model status</p>
             <div className="mt-3 space-y-2">
               {modelEntries.map(({ key, data }) => {
@@ -324,7 +324,7 @@ export default function Dashboard() {
               <Cpu className="h-6 w-6 text-slate-600 dark:text-slate-300" />
             </div>
           </div>
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-sm opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900">
+          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-sm opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900">
             <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-300">
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 dark:text-slate-500">Profile</span>
