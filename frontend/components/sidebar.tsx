@@ -8,7 +8,6 @@ import {
   Video,
   Search,
   Settings,
-  Cpu,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUploadModal } from "@/components/upload-modal";
@@ -26,14 +25,15 @@ export function Sidebar() {
   const { openModal } = useUploadModal();
 
   return (
-    <div className="flex h-full w-64 flex-col bg-slate-950">
+    <div className="flex h-full w-64 flex-col bg-[#0b0f1a]">
       {/* Logo */}
       <div className="flex h-16 items-center justify-between px-6">
         <div className="flex items-center">
-          <Cpu className="h-8 w-8 text-blue-400" />
-          <span className="ml-3 text-xl font-semibold text-white">
-            Video Summarizer
-          </span>
+          <img
+            src="/echonyx-horizontal.png"
+            alt="EchOnyx"
+            className="h-10 w-auto"
+          />
         </div>
       </div>
 

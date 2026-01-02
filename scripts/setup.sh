@@ -1,11 +1,11 @@
 #!/bin/bash
 set -e
 
-# Video Summarizer Setup Script
+# EchOnyx Setup Script
 # Detects hardware and configures the environment
 
 echo "========================================"
-echo "  Video Summarizer Setup"
+echo "  EchOnyx Setup"
 echo "========================================"
 
 # Colors for output

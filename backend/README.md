@@ -1,4 +1,4 @@
-# Video Summarizer Backend
+# EchOnyx Backend
 
 Backend service for the video summarization system.
 

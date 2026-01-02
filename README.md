@@ -1,6 +1,6 @@
-# Video Summarizer
+# EchOnyx
 
-Local, privacy-first video and presentation summarization that runs entirely on your hardware. Designed for long-form meetings, demos, and reviews where details matter.
+Local, privacy-first video and presentation intelligence that runs entirely on your hardware. Designed for long-form meetings, demos, and reviews where details matter.
 
 ## Features
 
@@ -24,7 +24,7 @@ Local, privacy-first video and presentation summarization that runs entirely on 
 
 ```bash
 git clone <repository-url>
-cd video-summarizer
+cd EchOnyx
 cp .env.example .env
 ```
 

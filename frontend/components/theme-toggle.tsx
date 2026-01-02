@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 
-const STORAGE_KEY = "video-summarizer-theme";
+const STORAGE_KEY = "echonyx-theme";
 
 function applyTheme(theme: "light" | "dark") {
   const root = document.documentElement;

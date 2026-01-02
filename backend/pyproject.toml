@@ -1,5 +1,5 @@
 [project]
-name = "video-summarizer"
+name = "echonyx"
 version = "0.1.0"
 description = "Local video and presentation summarization system"
 readme = "README.md"

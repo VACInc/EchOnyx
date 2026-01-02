@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = "Video Summarizer"
+    app_name: str = "EchOnyx"
     debug: bool = False
     api_prefix: str = "/api"
 
