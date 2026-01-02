@@ -32,7 +32,7 @@ export function Sidebar() {
           <img
             src="/echonyx-horizontal.png"
             alt="EchOnyx"
-            className="h-10 w-auto"
+            className="h-9 w-full max-w-[200px] object-contain"
           />
         </div>
       </div>
