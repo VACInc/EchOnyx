@@ -37,6 +37,12 @@ interface VideoListResponse {
   page_size: number;
 }
 
+interface VideoStatsResponse {
+  total: number;
+  completed: number;
+  workload: number;
+}
+
 interface SettingsResponse {
   hardware_profile: string;
   gpu_backend: string;
@@ -149,6 +155,10 @@ export const api = {
     if (params.pageSize) query.set("page_size", params.pageSize.toString());
     if (params.search) query.set("search", params.search);
     return fetchApi<VideoListResponse>(`/api/videos?${query}`);
+  },
+
+  async getVideoStats() {
+    return fetchApi<VideoStatsResponse>("/api/videos/stats");
   },
 
   async getVideo(id: string) {

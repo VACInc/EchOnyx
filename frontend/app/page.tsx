@@ -113,6 +113,12 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
+  const { data: videoStats } = useQuery({
+    queryKey: ["videoStats"],
+    queryFn: api.getVideoStats,
+    refetchInterval: 5000,
+  });
+
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: api.getSettings,
@@ -184,14 +190,14 @@ export default function Dashboard() {
   const stats = [
     {
       label: "Completed",
-      value: videos?.total ?? 0,
+      value: videoStats?.completed ?? 0,
       icon: Video,
       accent: "text-blue-600 dark:text-blue-300",
       bg: "bg-blue-50 dark:bg-blue-500/10",
     },
     {
       label: "Workload",
-      value: workloadJobs.length,
+      value: videoStats?.workload ?? 0,
       icon: Clock,
       accent: "text-amber-600 dark:text-amber-300",
       bg: "bg-amber-50 dark:bg-amber-500/10",
