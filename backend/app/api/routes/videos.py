@@ -71,6 +71,23 @@ def _normalize_tags(tags: list[str] | None) -> list[str]:
     return normalized
 
 
+async def _get_active_job(db: AsyncSession, video_id: uuid.UUID) -> Job | None:
+    result = await db.execute(
+        select(Job)
+        .where(
+            Job.video_id == video_id,
+            Job.status.in_([
+                JobStatus.PENDING.value,
+                JobStatus.QUEUED.value,
+                JobStatus.PROCESSING.value,
+            ]),
+        )
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 @router.post("/upload", response_model=VideoResponse)
 async def upload_video(
     file: Annotated[UploadFile, File(description="Video file to upload")],
@@ -376,6 +393,21 @@ async def reprocess_video(
     if not file_path.exists():
         raise HTTPException(status_code=400, detail="Video file no longer exists")
 
+    active_job = await _get_active_job(db, video.id)
+    if active_job:
+        return VideoResponse(
+            id=str(video.id),
+            filename=video.filename,
+            original_filename=video.original_filename,
+            file_size=video.file_size,
+            duration_seconds=video.duration_seconds,
+            duration_formatted=video.duration_formatted,
+            title=video.title,
+            tags=video.tags,
+            status=active_job.status,
+            created_at=video.created_at.isoformat(),
+        )
+
     # Create new processing job
     job = Job(
         video_id=video.id,
@@ -429,6 +461,21 @@ async def retry_video(
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+
+    active_job = await _get_active_job(db, video.id)
+    if active_job:
+        return VideoResponse(
+            id=str(video.id),
+            filename=video.filename,
+            original_filename=video.original_filename,
+            file_size=video.file_size,
+            duration_seconds=video.duration_seconds,
+            duration_formatted=video.duration_formatted,
+            title=video.title,
+            tags=video.tags,
+            status=active_job.status,
+            created_at=video.created_at.isoformat(),
+        )
 
     job_query = (
         select(Job)

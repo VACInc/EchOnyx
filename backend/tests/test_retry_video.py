@@ -60,6 +60,7 @@ async def test_retry_video_preserves_step_progress(monkeypatch):
 
     db = DummySession([
         DummyResult([video]),
+        DummyResult([]),
         DummyResult([job]),
     ])
 
