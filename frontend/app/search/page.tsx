@@ -61,8 +61,8 @@ export default function SearchPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-semibold text-stone-900 dark:text-slate-100">Search</h1>
-        <p className="mt-1 text-sm text-stone-500 dark:text-slate-400">
+        <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Search</h1>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Search across all video transcripts and summaries
         </p>
       </div>
@@ -74,7 +74,7 @@ export default function SearchPage() {
           className={`flex items-center rounded-lg px-4 py-2 ${
             mode === "search"
               ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-slate-800 dark:text-slate-200"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
           }`}
         >
           <Search className="mr-2 h-4 w-4" />
@@ -85,7 +85,7 @@ export default function SearchPage() {
           className={`flex items-center rounded-lg px-4 py-2 ${
             mode === "ask"
               ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "bg-stone-100 text-stone-700 hover:bg-stone-200 dark:bg-slate-800 dark:text-slate-200"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
           }`}
         >
           <MessageSquare className="mr-2 h-4 w-4" />
@@ -107,7 +107,7 @@ export default function SearchPage() {
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded-2xl border border-stone-200 bg-white/80 py-3 pl-10 pr-4 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
+              className="w-full rounded-2xl border border-slate-200 bg-white/80 py-3 pl-10 pr-4 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
             />
           </div>
           <button
@@ -118,22 +118,22 @@ export default function SearchPage() {
             {mode === "search" ? "Search" : "Ask"}
           </button>
         </div>
-        <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70">
-          <p className="text-sm font-medium text-stone-700 dark:text-slate-200">Filter by labels</p>
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Filter by labels</p>
           <div className="mt-3 flex flex-wrap gap-2">
             {tags.length === 0 && (
-              <span className="text-sm text-stone-400 dark:text-slate-500">No label filters applied.</span>
+              <span className="text-sm text-slate-400 dark:text-slate-500">No label filters applied.</span>
             )}
             {tags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700 dark:bg-slate-800 dark:text-slate-200"
+                className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200"
               >
                 {tag}
                 <button
                   type="button"
                   onClick={() => removeTag(tag)}
-                  className="ml-2 text-stone-400 hover:text-stone-600 dark:text-slate-400 dark:hover:text-slate-200"
+                  className="ml-2 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200"
                   aria-label={`Remove ${tag}`}
                 >
                   ×
@@ -153,13 +153,13 @@ export default function SearchPage() {
                 }
               }}
               placeholder="Add labels to filter (comma-separated)"
-              className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
             />
             <button
               type="button"
               onClick={addTagsFromInput}
               disabled={tagInput.trim().length === 0}
-              className="rounded-full border border-stone-200 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
             >
               Add filter
             </button>
@@ -170,18 +170,18 @@ export default function SearchPage() {
       {/* Results */}
       {mode === "search" && searchMutation.data && (
         <div className="space-y-4">
-          <p className="text-sm text-stone-500 dark:text-slate-400">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
             {searchMutation.data.total} results for "{searchMutation.data.query}"
           </p>
           {tags.length > 0 && (
-            <p className="text-xs text-stone-400 dark:text-slate-500">
+            <p className="text-xs text-slate-400 dark:text-slate-500">
               Filtered by labels: {tags.join(", ")}
             </p>
           )}
           {searchMutation.data.results.map((result, idx) => (
             <div
               key={idx}
-              className="rounded-2xl border border-stone-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70"
+              className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70"
             >
               <div className="flex items-center justify-between">
                 <Link
@@ -192,19 +192,19 @@ export default function SearchPage() {
                   {result.video_title}
                 </Link>
                 {result.timestamp_formatted && (
-                  <span className="text-sm text-stone-500 dark:text-slate-400">
+                  <span className="text-sm text-slate-500 dark:text-slate-400">
                     {result.timestamp_formatted}
                   </span>
                 )}
               </div>
               {result.speaker && (
-                <p className="mt-1 text-sm font-medium text-stone-700 dark:text-slate-200">
+                <p className="mt-1 text-sm font-medium text-slate-700 dark:text-slate-200">
                   {result.speaker}
                 </p>
               )}
-              <p className="mt-2 text-stone-600 dark:text-slate-300">{result.text}</p>
+              <p className="mt-2 text-slate-600 dark:text-slate-300">{result.text}</p>
               {result.context && (
-                <p className="mt-1 text-sm text-stone-400 dark:text-slate-500">...{result.context}...</p>
+                <p className="mt-1 text-sm text-slate-400 dark:text-slate-500">...{result.context}...</p>
               )}
             </div>
           ))}
@@ -212,16 +212,16 @@ export default function SearchPage() {
       )}
 
       {mode === "ask" && askMutation.data && (
-        <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-          <h3 className="font-medium text-stone-900 dark:text-slate-100">Answer</h3>
-          <p className="mt-2 text-stone-700 dark:text-slate-200">{askMutation.data.answer}</p>
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+          <h3 className="font-medium text-slate-900 dark:text-slate-100">Answer</h3>
+          <p className="mt-2 text-slate-700 dark:text-slate-200">{askMutation.data.answer}</p>
 
           {askMutation.data.sources.length > 0 && (
             <div className="mt-4">
-              <h4 className="text-sm font-medium text-stone-500 dark:text-slate-400">Sources</h4>
+              <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Sources</h4>
               <ul className="mt-2 space-y-2">
                 {askMutation.data.sources.map((source, idx) => (
-                  <li key={idx} className="rounded-xl bg-stone-50 p-2 text-sm dark:bg-slate-800/70">
+                  <li key={idx} className="rounded-xl bg-slate-50 p-2 text-sm dark:bg-slate-800/70">
                     <Link
                       href={`/videos/${source.video_id}`}
                       className="text-blue-600 hover:underline"

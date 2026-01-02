@@ -26,7 +26,7 @@ export default function RootLayout({
         <Providers>
           <div className="flex h-screen">
             <Sidebar />
-            <main className="flex-1 overflow-auto bg-gradient-to-b from-stone-50 via-amber-50/30 to-stone-100 p-6 dark:from-[#0a0d18] dark:via-[#111733]/60 dark:to-[#0b0f1a]">
+            <main className="flex-1 overflow-auto bg-gradient-to-b from-slate-50 via-blue-50/40 to-indigo-50 p-6 dark:from-[#070a14] dark:via-[#0f152b]/70 dark:to-[#0b0f1a]">
               {children}
             </main>
           </div>

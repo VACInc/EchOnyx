@@ -76,23 +76,23 @@ function UploadModal({
     >
       <div
         className={cn(
-          "relative w-full max-w-5xl overflow-hidden rounded-2xl border border-stone-200/70 bg-white shadow-2xl",
+          "relative w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-2xl",
           "dark:border-slate-700/60 dark:bg-slate-900"
         )}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-stone-200/70 px-6 py-4 dark:border-slate-700/60">
+        <div className="flex items-center justify-between border-b border-slate-200/70 px-6 py-4 dark:border-slate-700/60">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-stone-500 dark:text-slate-400">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
               Upload
             </p>
-            <h2 className="text-xl font-semibold text-stone-900 dark:text-slate-100">
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
               Add new videos
             </h2>
           </div>
           <button
             onClick={onClose}
-            className="rounded-full border border-stone-200/70 p-2 text-stone-500 transition hover:text-stone-800 dark:border-slate-700/60 dark:text-slate-300 dark:hover:text-slate-100"
+            className="rounded-full border border-slate-200/70 p-2 text-slate-500 transition hover:text-slate-800 dark:border-slate-700/60 dark:text-slate-300 dark:hover:text-slate-100"
             aria-label="Close upload modal"
           >
             <X className="h-4 w-4" />
@@ -105,12 +105,12 @@ function UploadModal({
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-xl border border-stone-200/70 bg-stone-50/80 p-4 dark:border-slate-700/60 dark:bg-slate-800/60">
-              <div className="flex items-center gap-2 text-sm font-semibold text-stone-900 dark:text-slate-100">
-                <Film className="h-4 w-4 text-stone-600 dark:text-slate-300" />
+            <div className="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 dark:border-slate-700/60 dark:bg-slate-800/60">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                <Film className="h-4 w-4 text-slate-600 dark:text-slate-300" />
                 Processing pipeline
               </div>
-              <ul className="mt-3 space-y-2 text-sm text-stone-600 dark:text-slate-300">
+              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
                 <li>1. Extract audio + key frames</li>
                 <li>2. Transcribe and diarize speakers</li>
                 <li>3. Analyze slides + visuals</li>
@@ -130,8 +130,8 @@ function UploadModal({
               </ul>
             </div>
 
-            <div className="flex items-start gap-3 rounded-xl border border-stone-200/70 bg-white/70 p-4 text-xs text-stone-500 dark:border-slate-700/60 dark:bg-slate-800/40 dark:text-slate-400">
-              <Shield className="mt-0.5 h-4 w-4 text-stone-400 dark:text-slate-400" />
+            <div className="flex items-start gap-3 rounded-xl border border-slate-200/70 bg-white/70 p-4 text-xs text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/40 dark:text-slate-400">
+              <Shield className="mt-0.5 h-4 w-4 text-slate-400 dark:text-slate-400" />
               <p>
                 Processing is fully local. No data leaves your machine unless you
                 configured external endpoints.

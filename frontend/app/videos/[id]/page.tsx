@@ -174,11 +174,11 @@ export default function VideoDetailPage({
   };
 
   if (isVideoLoading) {
-    return <div className="py-12 text-center text-stone-500 dark:text-slate-400">Loading...</div>;
+    return <div className="py-12 text-center text-slate-500 dark:text-slate-400">Loading...</div>;
   }
 
   if (!video) {
-    return <div className="py-12 text-center text-stone-500 dark:text-slate-400">Video not found</div>;
+    return <div className="py-12 text-center text-slate-500 dark:text-slate-400">Video not found</div>;
   }
 
   const headerTitle = summary?.title || video.title || video.original_filename || "Untitled Video";
@@ -190,15 +190,15 @@ export default function VideoDetailPage({
         <div className="flex items-center space-x-4">
           <Link
             href="/videos"
-            className="rounded-full p-2 hover:bg-stone-100 dark:hover:bg-slate-800"
+            className="rounded-full p-2 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-semibold text-stone-900 dark:text-slate-100">
+            <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
               {headerTitle}
             </h1>
-            <div className="mt-1 flex items-center space-x-4 text-sm text-stone-500 dark:text-slate-400">
+            <div className="mt-1 flex items-center space-x-4 text-sm text-slate-500 dark:text-slate-400">
               <span className="flex items-center">
                 <Clock className="mr-1 h-4 w-4" />
                 {summary?.duration_formatted || video.duration_formatted || "Processing..."}
@@ -216,7 +216,7 @@ export default function VideoDetailPage({
           <button
             onClick={() => handleExport("md")}
             disabled={!summary}
-            className="flex items-center rounded-full border border-stone-200 px-3 py-2 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+            className="flex items-center rounded-full border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
           >
             <Download className="mr-2 h-4 w-4" />
             Markdown
@@ -224,7 +224,7 @@ export default function VideoDetailPage({
           <button
             onClick={() => handleExport("pdf")}
             disabled={!summary}
-            className="flex items-center rounded-full border border-stone-200 px-3 py-2 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+            className="flex items-center rounded-full border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
           >
             <Download className="mr-2 h-4 w-4" />
             PDF
@@ -232,7 +232,7 @@ export default function VideoDetailPage({
           <button
             onClick={() => handleExport("json")}
             disabled={!summary}
-            className="flex items-center rounded-full border border-stone-200 px-3 py-2 text-sm hover:bg-stone-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+            className="flex items-center rounded-full border border-slate-200 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
           >
             <Download className="mr-2 h-4 w-4" />
             JSON
@@ -249,28 +249,28 @@ export default function VideoDetailPage({
       </div>
 
       {/* Labels */}
-      <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+      <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">Labels</h2>
-            <p className="text-sm text-stone-500 dark:text-slate-400">Add custom labels to organize videos.</p>
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Labels</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Add custom labels to organize videos.</p>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {tags.length === 0 && (
-            <span className="text-sm text-stone-500 dark:text-slate-400">No labels yet.</span>
+            <span className="text-sm text-slate-500 dark:text-slate-400">No labels yet.</span>
           )}
           {tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center rounded-full bg-stone-100 px-3 py-1 text-xs font-medium text-stone-700 dark:bg-slate-800 dark:text-slate-200"
+              className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200"
             >
               {tag}
               <button
                 type="button"
                 onClick={() => removeTag(tag)}
                 disabled={isSavingTags}
-                className="ml-2 text-stone-400 hover:text-stone-600 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-200"
+                className="ml-2 text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-200"
                 aria-label={`Remove ${tag}`}
               >
                 ×
@@ -290,7 +290,7 @@ export default function VideoDetailPage({
               }
             }}
             placeholder="Add label (comma-separated)"
-            className="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/70"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/70"
           />
           <button
             type="button"
@@ -352,8 +352,8 @@ export default function VideoDetailPage({
           )}
 
           <div className="rounded-xl bg-white/80 p-4 shadow-sm dark:bg-slate-900/70">
-            <h3 className="text-sm font-semibold text-stone-900 dark:text-slate-100">Step details</h3>
-            <div className="mt-3 space-y-2 text-sm text-stone-700 dark:text-slate-300">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Step details</h3>
+            <div className="mt-3 space-y-2 text-sm text-slate-700 dark:text-slate-300">
               {STEP_ORDER.map((stepKey) => {
                 const data = stepProgress?.[stepKey] || null;
                 const startedAt = data?.started_at ? Date.parse(data.started_at) : null;
@@ -373,16 +373,16 @@ export default function VideoDetailPage({
                   <div
                     key={stepKey}
                     className={`flex items-center justify-between rounded-lg px-3 py-2 ${
-                      isActive ? "bg-blue-50 dark:bg-blue-500/10" : "bg-stone-50 dark:bg-slate-800/60"
+                      isActive ? "bg-blue-50 dark:bg-blue-500/10" : "bg-slate-50 dark:bg-slate-800/60"
                     }`}
                   >
                     <div>
-                      <div className="font-medium text-stone-900 dark:text-slate-100">
+                      <div className="font-medium text-slate-900 dark:text-slate-100">
                         {STEP_LABELS[stepKey] || stepKey}
                       </div>
-                      <div className="text-xs text-stone-500 dark:text-slate-400 capitalize">{status}</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 capitalize">{status}</div>
                     </div>
-                    <div className="text-right text-xs text-stone-600 dark:text-slate-400">
+                    <div className="text-right text-xs text-slate-600 dark:text-slate-400">
                       <div>{data?.progress !== undefined ? `${data.progress.toFixed(0)}%` : "--"}</div>
                       <div>{formatDuration(duration)}</div>
                     </div>
@@ -397,14 +397,14 @@ export default function VideoDetailPage({
       {video.status === "completed" && (
         <>
           {/* Tabs */}
-          <div className="border-b border-stone-200 dark:border-slate-700">
+          <div className="border-b border-slate-200 dark:border-slate-700">
             <nav className="-mb-px flex space-x-8">
               <button
                 onClick={() => setActiveTab("summary")}
                 className={`flex items-center border-b-2 px-1 py-4 text-sm font-medium ${
                   activeTab === "summary"
                     ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700 dark:text-slate-400 dark:hover:text-slate-200"
+                    : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <FileText className="mr-2 h-4 w-4" />
@@ -415,7 +415,7 @@ export default function VideoDetailPage({
                 className={`flex items-center border-b-2 px-1 py-4 text-sm font-medium ${
                   activeTab === "transcript"
                     ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700 dark:text-slate-400 dark:hover:text-slate-200"
+                    : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <List className="mr-2 h-4 w-4" />
@@ -426,7 +426,7 @@ export default function VideoDetailPage({
                 className={`flex items-center border-b-2 px-1 py-4 text-sm font-medium ${
                   activeTab === "slides"
                     ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-stone-500 hover:border-stone-300 hover:text-stone-700 dark:text-slate-400 dark:hover:text-slate-200"
+                    : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <Image className="mr-2 h-4 w-4" />
@@ -436,7 +436,7 @@ export default function VideoDetailPage({
           </div>
 
           {isSummaryLoading && (
-            <div className="py-12 text-center text-stone-500 dark:text-slate-400">Loading summary...</div>
+            <div className="py-12 text-center text-slate-500 dark:text-slate-400">Loading summary...</div>
           )}
         </>
       )}
@@ -445,20 +445,20 @@ export default function VideoDetailPage({
       {video.status === "completed" && activeTab === "summary" && summary?.summary && (
         <div className="space-y-6">
           {/* Executive Summary */}
-          <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-            <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">Executive Summary</h2>
-            <p className="mt-2 text-stone-700 dark:text-slate-200">{summary.summary.executive_summary}</p>
+          <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Executive Summary</h2>
+            <p className="mt-2 text-slate-700 dark:text-slate-200">{summary.summary.executive_summary}</p>
           </div>
 
           {/* Key Points */}
           {summary.summary.key_points.length > 0 && (
-            <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-              <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">Key Points</h2>
+            <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Key Points</h2>
               <ul className="mt-2 space-y-2">
                 {summary.summary.key_points.map((point, idx) => (
                   <li key={idx} className="flex items-start">
                     <CheckCircle className="mr-2 mt-0.5 h-5 w-5 flex-shrink-0 text-green-500" />
-                    <span className="text-stone-700 dark:text-slate-200">{point}</span>
+                    <span className="text-slate-700 dark:text-slate-200">{point}</span>
                   </li>
                 ))}
               </ul>
@@ -467,13 +467,13 @@ export default function VideoDetailPage({
 
           {/* Action Items */}
           {summary.summary.action_items.length > 0 && (
-            <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-              <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">Action Items</h2>
+            <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Action Items</h2>
               <ul className="mt-2 space-y-2">
                 {summary.summary.action_items.map((item, idx) => (
                   <li key={idx} className="flex items-center">
                     <input type="checkbox" className="mr-3 h-4 w-4 rounded" />
-                    <span className="text-stone-700 dark:text-slate-200">{item}</span>
+                    <span className="text-slate-700 dark:text-slate-200">{item}</span>
                   </li>
                 ))}
               </ul>
@@ -482,16 +482,16 @@ export default function VideoDetailPage({
 
           {/* Topics */}
           {summary.summary.topics.length > 0 && (
-            <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-              <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">Topic Breakdown</h2>
+            <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Topic Breakdown</h2>
               <div className="mt-4 space-y-4">
                 {summary.summary.topics.map((topic, idx) => (
                   <div key={idx} className="border-l-4 border-blue-500 pl-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-medium text-stone-900 dark:text-slate-100">{topic.topic}</h3>
-                      <span className="text-sm text-stone-500 dark:text-slate-400">{topic.timestamp}</span>
+                      <h3 className="font-medium text-slate-900 dark:text-slate-100">{topic.topic}</h3>
+                      <span className="text-sm text-slate-500 dark:text-slate-400">{topic.timestamp}</span>
                     </div>
-                    <p className="mt-1 text-stone-600 dark:text-slate-300">{topic.summary}</p>
+                    <p className="mt-1 text-slate-600 dark:text-slate-300">{topic.summary}</p>
                   </div>
                 ))}
               </div>
@@ -501,11 +501,11 @@ export default function VideoDetailPage({
       )}
 
       {video.status === "completed" && activeTab === "transcript" && summary && (
-        <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
           <div className="space-y-4">
             {summary.transcript.map((segment, idx) => (
               <div key={idx} className="flex">
-                <span className="w-20 flex-shrink-0 text-sm text-stone-500 dark:text-slate-400">
+                <span className="w-20 flex-shrink-0 text-sm text-slate-500 dark:text-slate-400">
                   {formatTimestamp(segment.start)}
                 </span>
                 <div className="flex-1">
@@ -514,7 +514,7 @@ export default function VideoDetailPage({
                       {segment.speaker}:{" "}
                     </span>
                   )}
-                  <span className="text-stone-700 dark:text-slate-200">{segment.text}</span>
+                  <span className="text-slate-700 dark:text-slate-200">{segment.text}</span>
                 </div>
               </div>
             ))}
@@ -525,20 +525,20 @@ export default function VideoDetailPage({
       {video.status === "completed" && activeTab === "slides" && summary && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {summary.slides.length === 0 ? (
-            <p className="col-span-full py-12 text-center text-stone-500 dark:text-slate-400">
+            <p className="col-span-full py-12 text-center text-slate-500 dark:text-slate-400">
               No slides detected
             </p>
           ) : (
             summary.slides.map((slide, idx) => (
-              <div key={idx} className="rounded-2xl border border-stone-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-                <div className="mb-2 text-sm text-stone-500 dark:text-slate-400">
+              <div key={idx} className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+                <div className="mb-2 text-sm text-slate-500 dark:text-slate-400">
                   {formatTimestamp(slide.timestamp)}
                 </div>
                 {slide.description && (
-                  <p className="text-sm text-stone-700 dark:text-slate-200">{slide.description}</p>
+                  <p className="text-sm text-slate-700 dark:text-slate-200">{slide.description}</p>
                 )}
                 {slide.ocr_text && (
-                  <p className="mt-2 text-xs text-stone-500 dark:text-slate-400">{slide.ocr_text}</p>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{slide.ocr_text}</p>
                 )}
               </div>
             ))

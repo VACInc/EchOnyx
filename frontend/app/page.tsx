@@ -19,13 +19,41 @@ import { useMemo } from "react";
 import { useUploadModal } from "@/components/upload-modal";
 
 const statusStyles: Record<string, { label: string; className: string }> = {
-  loaded: { label: "Loaded", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-  cached: { label: "Cached", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-  uncached: { label: "Uncached", className: "border-amber-200 bg-amber-50 text-amber-700" },
-  downloading: { label: "Downloading", className: "border-blue-200 bg-blue-50 text-blue-700" },
-  failed: { label: "Failed", className: "border-red-200 bg-red-50 text-red-700" },
-  online: { label: "Online", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-  offline: { label: "Offline", className: "border-red-200 bg-red-50 text-red-700" },
+  loaded: {
+    label: "Loaded",
+    className:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+  },
+  cached: {
+    label: "Cached",
+    className:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+  },
+  uncached: {
+    label: "Uncached",
+    className:
+      "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200",
+  },
+  downloading: {
+    label: "Downloading",
+    className:
+      "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/40 dark:bg-blue-500/10 dark:text-blue-200",
+  },
+  failed: {
+    label: "Failed",
+    className:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200",
+  },
+  online: {
+    label: "Online",
+    className:
+      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
+  },
+  offline: {
+    label: "Offline",
+    className:
+      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200",
+  },
 };
 
 const modelOrder = ["whisper", "diarization", "vision", "summarization", "embedding"];
@@ -54,7 +82,7 @@ const modelBadge = (modelName: string, modelType: string) => {
   if (name.includes("pyannote")) return { label: "P", className: "bg-amber-100 text-amber-700" };
   if (name.includes("nomic")) return { label: "N", className: "bg-indigo-100 text-indigo-700" };
   if (name.includes("gptoss")) return { label: "G", className: "bg-purple-100 text-purple-700" };
-  return { label: modelType.slice(0, 1).toUpperCase(), className: "bg-stone-100 text-stone-600" };
+  return { label: modelType.slice(0, 1).toUpperCase(), className: "bg-slate-100 text-slate-600" };
 };
 
 const statusIcon = (status: string) => {
@@ -127,15 +155,15 @@ export default function Dashboard() {
       label: "Total videos",
       value: videos?.total ?? 0,
       icon: Video,
-      accent: "text-blue-600",
-      bg: "bg-blue-50",
+      accent: "text-blue-600 dark:text-blue-300",
+      bg: "bg-blue-50 dark:bg-blue-500/10",
     },
     {
       label: "Active jobs",
       value: processingJobs?.jobs?.length ?? 0,
       icon: Clock,
-      accent: "text-amber-600",
-      bg: "bg-amber-50",
+      accent: "text-amber-600 dark:text-amber-300",
+      bg: "bg-amber-50 dark:bg-amber-500/10",
     },
   ];
 
@@ -146,15 +174,15 @@ export default function Dashboard() {
         {stats.map((stat, idx) => (
           <div
             key={stat.label}
-            className="rounded-2xl border border-stone-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70"
+            className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70"
             style={{ animationDelay: `${idx * 80}ms` }}
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400 dark:text-slate-500">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
                   {stat.label}
                 </p>
-                <p className="mt-2 text-2xl font-semibold text-stone-900 dark:text-slate-100">
+                <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
                   {stat.value}
                 </p>
               </div>
@@ -166,14 +194,14 @@ export default function Dashboard() {
         ))}
 
         {/* Model Status (compact) */}
-        <div className="group relative rounded-2xl border border-stone-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400 dark:text-slate-500">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
                 Model status
               </p>
               {downloadCount > 0 ? (
-                <p className="mt-2 text-sm font-semibold text-stone-900 dark:text-slate-100">
+                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
                   {`${downloadCount} downloading`}
                 </p>
               ) : null}
@@ -190,7 +218,7 @@ export default function Dashboard() {
                   key={key}
                   className={`inline-flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-[10px] font-semibold ${style.className}`}
                 >
-                  <span className="text-[11px] font-semibold text-stone-700 dark:text-slate-100">
+                  <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-100">
                     {shortLabel}
                   </span>
                   <BadgeIcon className={`h-3.5 w-3.5 ${data.status === "downloading" ? "animate-spin" : ""}`} />
@@ -199,8 +227,8 @@ export default function Dashboard() {
             })}
           </div>
 
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-stone-200 bg-white p-4 text-xs text-stone-600 opacity-0 shadow-xl transition duration-200 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            <p className="text-xs font-semibold text-stone-700 dark:text-slate-200">Model status</p>
+          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Model status</p>
             <div className="mt-3 space-y-2">
               {modelEntries.map(({ key, data }) => {
                 if (!data) return null;
@@ -212,7 +240,7 @@ export default function Dashboard() {
                       <Icon className={`h-3 w-3 ${data.status === "downloading" ? "animate-spin" : ""}`} />
                       {modelLabels[key] || key}
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.18em] text-stone-400 dark:text-slate-500">
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
                       {data.status}
                     </span>
                   </div>
@@ -222,51 +250,51 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="group relative rounded-2xl border border-stone-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-400 dark:text-slate-500">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
                 Hardware
               </p>
-              <p className="mt-2 text-lg font-semibold text-stone-900 dark:text-slate-100">
+              <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
                 {settings?.hardware_profile ?? "detecting..."}
               </p>
             </div>
-            <div className="rounded-full bg-stone-100 p-3 dark:bg-slate-800">
-              <Cpu className="h-6 w-6 text-stone-600 dark:text-slate-300" />
+            <div className="rounded-full bg-slate-100 p-3 dark:bg-slate-800">
+              <Cpu className="h-6 w-6 text-slate-600 dark:text-slate-300" />
             </div>
           </div>
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-stone-200 bg-white p-4 text-sm opacity-0 shadow-xl transition duration-200 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900">
-            <div className="grid gap-2 text-xs text-stone-600 dark:text-slate-300">
+          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-72 -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-sm opacity-0 shadow-xl transition duration-200 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 dark:border-slate-700 dark:bg-slate-900">
+            <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-300">
               <div className="flex items-center justify-between">
-                <span className="text-stone-400 dark:text-slate-500">Profile</span>
+                <span className="text-slate-400 dark:text-slate-500">Profile</span>
                 <span>{hardware?.active_profile ?? "detecting"}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-stone-400 dark:text-slate-500">GPU backend</span>
+                <span className="text-slate-400 dark:text-slate-500">GPU backend</span>
                 <span>{hardware?.active_backend ?? "detecting"}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-stone-400 dark:text-slate-500">Whisper backend</span>
+                <span className="text-slate-400 dark:text-slate-500">Whisper backend</span>
                 <span>{hardware?.whisper_backend ?? "detecting"}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-stone-400 dark:text-slate-500">Loading strategy</span>
+                <span className="text-slate-400 dark:text-slate-500">Loading strategy</span>
                 <span>{hardware?.model_loading_strategy ?? "detecting"}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-stone-400 dark:text-slate-500">Total VRAM</span>
+                <span className="text-slate-400 dark:text-slate-500">Total VRAM</span>
                 <span>{hardware?.total_vram_gb?.toFixed(1) ?? 0} GB</span>
               </div>
               {hardware?.unified_memory_gb && (
                 <div className="flex items-center justify-between">
-                  <span className="text-stone-400 dark:text-slate-500">Unified memory</span>
+                  <span className="text-slate-400 dark:text-slate-500">Unified memory</span>
                   <span>{hardware.unified_memory_gb.toFixed(0)} GB</span>
                 </div>
               )}
               {hardware?.nvidia_gpus?.length ? (
                 <div className="mt-2">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-stone-400 dark:text-slate-500">
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
                     GPUs
                   </p>
                   <ul className="mt-2 space-y-1">
@@ -291,9 +319,9 @@ export default function Dashboard() {
       </div>
 
       {/* Recent Videos */}
-      <div className="rounded-2xl border border-stone-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+      <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-stone-900 dark:text-slate-100">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Recent videos
           </h2>
           <Link
@@ -305,11 +333,11 @@ export default function Dashboard() {
         </div>
 
         {isLoading ? (
-          <div className="py-8 text-center text-stone-500 dark:text-slate-400">Loading...</div>
+          <div className="py-8 text-center text-slate-500 dark:text-slate-400">Loading...</div>
         ) : videos?.videos?.length === 0 ? (
           <div className="py-8 text-center">
-            <Video className="mx-auto h-12 w-12 text-stone-400 dark:text-slate-500" />
-            <p className="mt-2 text-stone-500 dark:text-slate-400">No videos yet</p>
+            <Video className="mx-auto h-12 w-12 text-slate-400 dark:text-slate-500" />
+            <p className="mt-2 text-slate-500 dark:text-slate-400">No videos yet</p>
             <button
               onClick={openModal}
               className="mt-4 inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
