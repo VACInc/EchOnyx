@@ -134,33 +134,45 @@ export default function Dashboard() {
     refetchInterval: 2000,
   });
 
+  const { data: queuedJobs } = useQuery({
+    queryKey: ["jobs", "queued"],
+    queryFn: () => api.getJobs({ status: "queued", pageSize: 50 }),
+    refetchInterval: 2000,
+  });
+
   const downloadCount = modelStatus?.active_downloads?.length ?? 0;
   const modelEntries = modelOrder
     .map((key) => ({ key, data: modelStatus?.models?.[key] }))
     .filter((entry) => entry.data);
 
+  const workloadJobs = useMemo(() => {
+    const processing = processingJobs?.jobs ?? [];
+    const queued = queuedJobs?.jobs ?? [];
+    return [...processing, ...queued];
+  }, [processingJobs, queuedJobs]);
+
   const jobByVideoId = useMemo(() => {
     type ProcessingJob = NonNullable<typeof processingJobs>["jobs"][number];
     const map: Record<string, ProcessingJob> = {};
-    if (processingJobs?.jobs) {
-      for (const job of processingJobs.jobs) {
+    if (workloadJobs.length > 0) {
+      for (const job of workloadJobs) {
         map[job.video_id] = job;
       }
     }
     return map;
-  }, [processingJobs]);
+  }, [workloadJobs]);
 
   const stats = [
     {
-      label: "Total videos",
+      label: "Completed",
       value: videos?.total ?? 0,
       icon: Video,
       accent: "text-blue-600 dark:text-blue-300",
       bg: "bg-blue-50 dark:bg-blue-500/10",
     },
     {
-      label: "Active jobs",
-      value: processingJobs?.jobs?.length ?? 0,
+      label: "Workload",
+      value: workloadJobs.length,
       icon: Clock,
       accent: "text-amber-600 dark:text-amber-300",
       bg: "bg-amber-50 dark:bg-amber-500/10",
