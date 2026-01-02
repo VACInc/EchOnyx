@@ -17,15 +17,6 @@ export default function VideosPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-100">Videos</h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {data?.total ?? 0} videos in library
-          </p>
-        </div>
-      </div>
-
       {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
