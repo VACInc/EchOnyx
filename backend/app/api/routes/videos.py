@@ -9,7 +9,7 @@ from typing import Annotated
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import and_, case, exists, func, or_, select
+from sqlalchemy import case, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -89,6 +89,19 @@ async def _get_active_job(db: AsyncSession, video_id: uuid.UUID) -> Job | None:
                 JobStatus.QUEUED.value,
                 JobStatus.PROCESSING.value,
             ]),
+        )
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_latest_completed_job(db: AsyncSession, video_id: uuid.UUID) -> Job | None:
+    result = await db.execute(
+        select(Job)
+        .where(
+            Job.video_id == video_id,
+            Job.status == JobStatus.COMPLETED.value,
         )
         .order_by(Job.created_at.desc())
         .limit(1)
@@ -223,18 +236,22 @@ async def list_videos(
     video_responses = []
     dirty_jobs = False
     for video in videos:
-        active_job = await _get_active_job(db, video.id)
-        if active_job:
-            job = active_job
+        completed_job = await _get_latest_completed_job(db, video.id)
+        if completed_job:
+            job = completed_job
         else:
-            job_query = (
-                select(Job)
-                .where(Job.video_id == video.id)
-                .order_by(Job.created_at.desc())
-                .limit(1)
-            )
-            job_result = await db.execute(job_query)
-            job = job_result.scalar_one_or_none()
+            active_job = await _get_active_job(db, video.id)
+            if active_job:
+                job = active_job
+            else:
+                job_query = (
+                    select(Job)
+                    .where(Job.video_id == video.id)
+                    .order_by(Job.created_at.desc())
+                    .limit(1)
+                )
+                job_result = await db.execute(job_query)
+                job = job_result.scalar_one_or_none()
         file_missing = not Path(video.file_path).exists()
         status = job.status if job else "uploaded"
 
@@ -283,42 +300,15 @@ async def get_video_stats(
     db: AsyncSession = Depends(get_db),
 ) -> VideoStatsResponse:
     """Get aggregated counts for completed vs workload videos."""
-    active_statuses = [
-        JobStatus.PENDING.value,
-        JobStatus.QUEUED.value,
-        JobStatus.PROCESSING.value,
-    ]
-
-    latest_job_subquery = (
-        select(
-            Job.video_id.label("video_id"),
-            Job.status.label("status"),
-            func.row_number()
-            .over(partition_by=Job.video_id, order_by=Job.created_at.desc())
-            .label("rn"),
-        )
-        .subquery()
-    )
-
-    has_active_job = exists(
+    has_completed_job = exists(
         select(1).where(
             Job.video_id == Video.id,
-            Job.status.in_(active_statuses),
+            Job.status == JobStatus.COMPLETED.value,
         )
     )
+    completed_condition = has_completed_job
 
-    latest_status = latest_job_subquery.c.status
-
-    completed_condition = and_(
-        ~has_active_job,
-        latest_status == JobStatus.COMPLETED.value,
-    )
-
-    workload_condition = or_(
-        has_active_job,
-        latest_status.is_(None),
-        latest_status != JobStatus.COMPLETED.value,
-    )
+    workload_condition = ~has_completed_job
 
     stats_query = (
         select(
@@ -327,13 +317,6 @@ async def get_video_stats(
             func.coalesce(func.sum(case((workload_condition, 1), else_=0)), 0).label("workload"),
         )
         .select_from(Video)
-        .outerjoin(
-            latest_job_subquery,
-            and_(
-                latest_job_subquery.c.video_id == Video.id,
-                latest_job_subquery.c.rn == 1,
-            ),
-        )
     )
 
     result = await db.execute(stats_query)
@@ -363,18 +346,22 @@ async def get_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    active_job = await _get_active_job(db, video.id)
-    if active_job:
-        job = active_job
+    completed_job = await _get_latest_completed_job(db, video.id)
+    if completed_job:
+        job = completed_job
     else:
-        job_query = (
-            select(Job)
-            .where(Job.video_id == video.id)
-            .order_by(Job.created_at.desc())
-            .limit(1)
-        )
-        job_result = await db.execute(job_query)
-        job = job_result.scalar_one_or_none()
+        active_job = await _get_active_job(db, video.id)
+        if active_job:
+            job = active_job
+        else:
+            job_query = (
+                select(Job)
+                .where(Job.video_id == video.id)
+                .order_by(Job.created_at.desc())
+                .limit(1)
+            )
+            job_result = await db.execute(job_query)
+            job = job_result.scalar_one_or_none()
 
     file_missing = not Path(video.file_path).exists()
     status = job.status if job else "uploaded"
