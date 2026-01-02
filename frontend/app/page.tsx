@@ -208,7 +208,9 @@ export default function Dashboard() {
           <div
             key={stat.label}
             className={`rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70 ${
-              isWorkload ? "group relative" : ""
+              isWorkload
+                ? "group relative after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-['']"
+                : ""
             }`}
             style={{ animationDelay: `${idx * 80}ms` }}
           >
@@ -254,7 +256,7 @@ export default function Dashboard() {
         })}
 
         {/* Model Status (compact) */}
-        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-[''] dark:border-slate-700/60 dark:bg-slate-900/70">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
@@ -310,7 +312,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-[''] dark:border-slate-700/60 dark:bg-slate-900/70">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
