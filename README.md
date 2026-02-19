@@ -1,3 +1,5 @@
+> ⚠️ **Work in Progress** — EchOnyx is under active development and not yet ready for general use. Expect breaking changes, incomplete features, and rough edges.
+
 <p align="center">
   <img src="img/echonyx.png" alt="EchOnyx" width="720" />
 </p>
