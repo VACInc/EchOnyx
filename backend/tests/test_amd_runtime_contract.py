@@ -20,4 +20,5 @@ def test_rocm_llama_server_files_fail_closed_without_rocm():
     assert "rocm/dev-ubuntu-24.04:7.2-complete" in dockerfile_text
     assert "rocminfo" in entrypoint_text
     assert "/dev/kfd" in entrypoint_text
+    assert "LD_LIBRARY_PATH" in entrypoint_text
     assert "refusing to start CPU fallback" in entrypoint_text

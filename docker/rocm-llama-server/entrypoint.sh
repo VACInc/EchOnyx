@@ -33,5 +33,8 @@ if [[ -z "${llama_server_bin}" || ! -x "${llama_server_bin}" ]]; then
   exit 1
 fi
 
+llama_server_dir="$(dirname "${llama_server_bin}")"
+export LD_LIBRARY_PATH="${llama_server_dir}:${LD_LIBRARY_PATH:-}"
+
 echo "Starting ROCm llama-server: ${llama_server_bin}" >&2
 exec "${llama_server_bin}" "$@"
