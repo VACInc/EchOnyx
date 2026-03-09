@@ -85,6 +85,22 @@ def _load_audio_segment(
     return waveform, sample_rate
 
 
+def _probe_audio_info(audio_path: Path) -> tuple[int, int]:
+    info_fn = getattr(torchaudio, "info", None)
+    if callable(info_fn):
+        info = info_fn(str(audio_path))
+        return int(info.num_frames), int(info.sample_rate)
+
+    waveform, sample_rate = torchaudio.load(str(audio_path))
+    if hasattr(waveform, "shape"):
+        total_frames = waveform.shape[-1]
+    elif hasattr(waveform, "size"):
+        total_frames = waveform.size(-1)
+    else:
+        total_frames = len(waveform.squeeze(0).numpy())
+    return int(total_frames), int(sample_rate)
+
+
 async def classify_audio_events(
     audio_path: Path,
     progress_callback: Callable[[float], None] | None = None,
@@ -114,9 +130,7 @@ async def classify_audio_events(
             device = model_bundle["device"]
             bundle_type = model_bundle.get("type", "audio_event_classifier")
 
-            info = torchaudio.info(str(audio_path))
-            total_frames = info.num_frames
-            sample_rate = info.sample_rate
+            total_frames, sample_rate = _probe_audio_info(audio_path)
             target_sample_rate = getattr(
                 getattr(processor, "feature_extractor", processor),
                 "sampling_rate",

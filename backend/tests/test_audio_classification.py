@@ -174,3 +174,36 @@ async def test_classify_audio_events_uses_clap_candidates(monkeypatch):
     assert result["tv_score"] > result["speech_score"]
     assert any("broadcast or TV-style playback" in hint for hint in result["hints"])
     assert manager.released is True
+
+
+@pytest.mark.asyncio
+async def test_classify_audio_events_handles_missing_torchaudio_info(monkeypatch):
+    settings = types.SimpleNamespace(
+        audio_event_sample_seconds=1.0,
+        audio_event_num_samples=1,
+        audio_event_min_score=0.15,
+        audio_event_debug=False,
+    )
+    manager = DummyManager(
+        {
+            "type": "audio_event_clap",
+            "model": FakeClapModel(),
+            "processor": FakeClapProcessor(),
+            "device": "cpu",
+        }
+    )
+
+    def fake_load(_path, frame_offset=0, num_frames=0):
+        frames = num_frames or 48_000
+        return FakeTensor(np.ones((1, frames))), 48_000
+
+    monkeypatch.setattr(audio_classification, "get_settings", lambda: settings)
+    monkeypatch.setattr(audio_classification, "get_model_manager", lambda: manager)
+    monkeypatch.delattr(audio_classification.torchaudio, "info", raising=False)
+    monkeypatch.setattr(audio_classification.torchaudio, "load", fake_load)
+
+    result = await audio_classification.classify_audio_events(Path("/tmp/sample.wav"))
+
+    assert result["top_labels"][0]["label"] == "broadcast playback"
+    assert any("broadcast or TV-style playback" in hint for hint in result["hints"])
+    assert manager.released is True
