@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from app.config import GPUBackend, ModelLoadingStrategy, get_settings
+from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,12 @@ def _torch_dtype_for_backend(backend: GPUBackend):
     return torch.float16 if backend == GPUBackend.CUDA else torch.float32
 
 
-def _torch_device(backend: GPUBackend) -> str:
+def _torch_device(
+    backend: GPUBackend,
+    *,
+    strict: bool = False,
+    runtime_label: str = "model",
+) -> str:
     """Map backend choice to torch device name with safe fallback."""
     if backend.value in {"cuda", "rocm"}:
         try:
@@ -57,10 +62,19 @@ def _torch_device(backend: GPUBackend) -> str:
             if torch.cuda.is_available():
                 return "cuda"
         except Exception:
+            if strict:
+                raise RuntimeError(
+                    f"{runtime_label} requires {backend.value} acceleration, but PyTorch GPU support is unavailable."
+                ) from None
             logger.warning("Torch CUDA/ROCm not available, falling back to CPU.")
             return "cpu"
+        if strict:
+            raise RuntimeError(
+                f"{runtime_label} requires {backend.value} acceleration, but no GPU device is available."
+            )
         logger.warning("GPU backend requested but no CUDA/ROCm device found, using CPU.")
     return "cpu"
+
 
 def _faster_whisper_device(backend: GPUBackend) -> str:
     """Map backend to faster-whisper device name."""
@@ -84,12 +98,10 @@ def _resolve_llama_gpu_layers(
     *,
     rocm_safe_default: bool = False,
 ) -> int:
-    """Resolve llama.cpp GPU layer count with ROCm-safe defaults."""
+    """Resolve llama.cpp GPU layer count defaults."""
     if configured_layers is not None:
         return configured_layers
     if backend == GPUBackend.CPU:
-        return 0
-    if backend == GPUBackend.ROCM and rocm_safe_default:
         return 0
     return -1
 
@@ -133,13 +145,19 @@ async def _load_transformers_whisper(
     model_name: str,
     backend: GPUBackend,
     cache_dir: Path,
+    *,
+    strict_accelerator: bool = False,
 ) -> Any:
     """Load a Whisper model via transformers for ROCm/CPU compatibility."""
     from inspect import signature
     from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
     import torch
 
-    device = _torch_device(backend)
+    device = _torch_device(
+        backend,
+        strict=strict_accelerator,
+        runtime_label="transcription",
+    )
     dtype = _torch_dtype_for_backend(backend) or (torch.float16 if device == "cuda" else torch.float32)
     loop = asyncio.get_event_loop()
 
@@ -206,6 +224,14 @@ class ModelManager:
         """Check if we're in sequential loading mode."""
         return self.settings.model_loading == ModelLoadingStrategy.SEQUENTIAL
 
+    @property
+    def requires_strict_accelerator(self) -> bool:
+        """Whether this runtime must fail closed instead of using CPU fallback."""
+        return (
+            self.settings.hardware_profile == HardwareProfile.STRIX_HALO
+            and self.settings.gpu_backend == GPUBackend.ROCM
+        )
+
     async def get_model(self, model_type: ModelType) -> Any:
         """
         Get a model, loading it if necessary.
@@ -262,7 +288,11 @@ class ModelManager:
         import torch
 
         model_name = self.settings.audio_event_model
-        device = _torch_device(self.settings.gpu_backend)
+        device = _torch_device(
+            self.settings.gpu_backend,
+            strict=self.requires_strict_accelerator,
+            runtime_label="audio event classification",
+        )
         dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or torch.float32
         cache_dir = self.settings.model_cache_dir
         loop = asyncio.get_event_loop()
@@ -298,7 +328,11 @@ class ModelManager:
             from nemo.collections.speechlm2.models import SALM
             import torch
 
-            device = _torch_device(self.settings.gpu_backend)
+            device = _torch_device(
+                self.settings.gpu_backend,
+                strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
+                runtime_label="Canary transcription",
+            )
             if self.settings.granite_force_cpu:
                 device = "cpu"
 
@@ -335,6 +369,7 @@ class ModelManager:
                             fallback_name,
                             self.settings.gpu_backend,
                             self.settings.model_cache_dir,
+                            strict_accelerator=self.requires_strict_accelerator,
                         )
                     else:
                         model = await _load_faster_whisper(
@@ -351,7 +386,11 @@ class ModelManager:
             from inspect import signature
             import torch
 
-            device = _torch_device(self.settings.gpu_backend)
+            device = _torch_device(
+                self.settings.gpu_backend,
+                strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
+                runtime_label="Granite transcription",
+            )
             if self.settings.granite_force_cpu:
                 device = "cpu"
             dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or (
@@ -421,6 +460,7 @@ class ModelManager:
                             fallback_name,
                             self.settings.gpu_backend,
                             self.settings.model_cache_dir,
+                            strict_accelerator=self.requires_strict_accelerator,
                         )
                     else:
                         model = await _load_faster_whisper(
@@ -437,6 +477,7 @@ class ModelManager:
                 normalized_name,
                 self.settings.gpu_backend,
                 self.settings.model_cache_dir,
+                strict_accelerator=self.requires_strict_accelerator,
             )
             logger.info("Loaded Whisper transformers model: %s", normalized_name)
             return model
@@ -473,6 +514,10 @@ class ModelManager:
             import torch
             if torch.cuda.is_available():
                 pipeline.to(torch.device("cuda"))
+            elif self.requires_strict_accelerator:
+                raise RuntimeError(
+                    "Diarization requires ROCm acceleration on Strix Halo, but no GPU device is available."
+                )
         elif self.settings.gpu_backend == GPUBackend.VULKAN:
             logger.warning("Diarization running on CPU for %s backend.", self.settings.gpu_backend.value)
 
@@ -494,17 +539,11 @@ class ModelManager:
                 self.settings.model_cache_dir
             )
 
-        # Default local vision to CPU on ROCm unless explicitly overridden.
         n_gpu_layers = _resolve_llama_gpu_layers(
             self.settings.gpu_backend,
             self.settings.vision_gpu_layers,
-            rocm_safe_default=True,
+            rocm_safe_default=False,
         )
-        if self.settings.gpu_backend == GPUBackend.ROCM and self.settings.vision_gpu_layers is None:
-            logger.warning(
-                "ROCm vision model loads defaulting to CPU layers for stability. "
-                "Set VISION_GPU_LAYERS to override."
-            )
 
         loop = asyncio.get_event_loop()
         init_params = {
@@ -628,10 +667,11 @@ class ModelManager:
         from sentence_transformers import SentenceTransformer
 
         model_name = self.settings.embedding_model
-        if self.settings.gpu_backend in {GPUBackend.CUDA, GPUBackend.ROCM}:
-            device = "cuda"
-        else:
-            device = "cpu"
+        device = _torch_device(
+            self.settings.gpu_backend,
+            strict=self.requires_strict_accelerator,
+            runtime_label="embedding",
+        )
 
         loop = asyncio.get_event_loop()
         model = await loop.run_in_executor(

@@ -3,6 +3,7 @@
 ## High Priority
 
 - Make AMD/Strix Halo fully functional on ROCm unless CPU execution is benchmarked to be equally fast for that exact stage and model.
+- Standardize the Strix Halo host baseline around a known-good ROCm/kernel combination and verify it during live acceptance so ROCm regressions are caught outside the app code too.
 - Replace the current fixed model-loading behavior with a dynamic residency planner that:
   - detects GPU count, memory, and topology automatically
   - determines whether models can remain resident instead of unloading between stages

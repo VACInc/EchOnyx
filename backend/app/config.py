@@ -1,11 +1,9 @@
 """Application configuration with hardware detection."""
 
-import os
 import subprocess
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -119,6 +117,38 @@ class Settings(BaseSettings):
     hf_token: str = ""
 
 
+def validate_hardware_requirements(settings: Settings) -> None:
+    """Fail closed when a runtime violates a required hardware contract."""
+    if settings.hardware_profile != HardwareProfile.STRIX_HALO:
+        return
+
+    if settings.gpu_backend != GPUBackend.ROCM:
+        raise RuntimeError(
+            "Strix Halo requires GPU_BACKEND=rocm. CPU and Vulkan fallbacks are disabled."
+        )
+
+    if settings.granite_force_cpu:
+        raise RuntimeError(
+            "Strix Halo requires ROCm acceleration for transcription; GRANITE_FORCE_CPU must stay false."
+        )
+
+    try:
+        import torch
+    except Exception as exc:  # pragma: no cover - depends on runtime environment
+        raise RuntimeError("Strix Halo requires a ROCm-enabled PyTorch runtime.") from exc
+
+    hip_version = getattr(getattr(torch, "version", None), "hip", None)
+    if hip_version is None:
+        raise RuntimeError(
+            "Strix Halo requires a ROCm-enabled PyTorch build; torch.version.hip is unavailable."
+        )
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "Strix Halo requires a visible ROCm device; torch.cuda.is_available() is false."
+        )
+
+
 def detect_gpu_info() -> dict:
     """Detect GPU information from the system."""
     gpu_info = {
@@ -183,7 +213,7 @@ def detect_gpu_info() -> dict:
                     total_ram_kb = int(line.split()[1])
                     total_ram_gb = total_ram_kb / (1024**2)
                     # If we have lots of RAM and AMD GPU, might be Strix Halo
-                    if total_ram_gb >= 96 and not gpu_info["nvidia_gpus"]:
+                    if total_ram_gb >= 96 and gpu_info["amd_gpus"] and not gpu_info["nvidia_gpus"]:
                         gpu_info["unified_memory_gb"] = total_ram_gb
     except FileNotFoundError:
         pass
@@ -210,7 +240,7 @@ def auto_detect_hardware_profile(gpu_info: dict) -> tuple[HardwareProfile, GPUBa
 
     # Check for AMD with unified memory (Strix Halo)
     if unified_memory >= 96:
-        return HardwareProfile.STRIX_HALO, GPUBackend.VULKAN
+        return HardwareProfile.STRIX_HALO, GPUBackend.ROCM
 
     # Check for single AMD GPU
     if amd_gpus:
@@ -270,6 +300,8 @@ def get_settings() -> Settings:
     # Adjust batch concurrent jobs based on hardware
     if settings.hardware_profile == HardwareProfile.MULTI_GPU:
         settings.batch_concurrent_jobs = max(2, settings.batch_concurrent_jobs)
+
+    validate_hardware_requirements(settings)
 
     return settings
 

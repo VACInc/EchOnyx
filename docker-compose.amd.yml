@@ -1,10 +1,35 @@
-# AMD GPU override (Strix Halo / ROCm) - use with: docker compose -f docker-compose.yml -f docker-compose.amd.yml up
+# AMD GPU override (Strix Halo / ROCm) - use with:
+# docker compose -f docker-compose.yml -f docker-compose.amd.yml up
+
+x-rocm-llama-server: &rocm-llama-server
+  build:
+    context: .
+    dockerfile: docker/rocm-llama-server/Dockerfile
+    args:
+      ROCM_DEV_IMAGE: ${ROCM_DEV_IMAGE:-rocm/dev-ubuntu-24.04:7.2-complete}
+      AMD_LLAMA_PACKAGE_URL: ${AMD_LLAMA_PACKAGE_URL:-https://repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/llama-b7782-ubuntu-24.04-rocm-7.2.0-gfx110X-gfx115X-gfx120X-x64.zip}
+  restart: unless-stopped
+  devices:
+    - /dev/kfd:/dev/kfd
+    - /dev/dri:/dev/dri
+  group_add:
+    - "44"   # video group
+    - "993"  # render group
+  environment:
+    - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
+  volumes:
+    - model_cache:/models:ro
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 20
+    start_period: 90s
 
 services:
   vision-server:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    <<: *rocm-llama-server
     container_name: vs-vision
-    restart: unless-stopped
     ports:
       - "8081:8080"
     command:
@@ -15,26 +40,15 @@ services:
       - -c
       - "8192"
       - -ngl
-      - "0"
+      - "999"
       - -np
       - "1"
-      - -cram
-      - "0"
       - --host
       - 0.0.0.0
-    volumes:
-      - model_cache:/models:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
 
   summarization-server:
-    image: ghcr.io/ggml-org/llama.cpp:server
+    <<: *rocm-llama-server
     container_name: vs-summary
-    restart: unless-stopped
     ports:
       - "8080:8080"
     command:
@@ -43,29 +57,19 @@ services:
       - -c
       - "32768"
       - -ngl
-      - "0"
+      - "999"
       - -np
       - "1"
-      - -cram
-      - "0"
       - --host
       - 0.0.0.0
-    volumes:
-      - model_cache:/models:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 20
-      start_period: 30s
 
   backend:
     build:
       args:
-        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.1/}
-        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.8.0+rocm7.1.0.lw.git7a520360}
-        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.8.0+rocm7.1.0.git6e1c7fe9}
-        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.23.0+rocm7.1.0.git824e8c87}
+        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/}
+        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.10.0+rocm7.2.0.lw.gitb6ee5fde}
+        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.10.0+rocm7.2.0.git5047768f}
+        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.25.0+rocm7.2.0.git82df5f59}
         ROCM_NIGHTLY: ${ROCM_NIGHTLY:-0}
         LLAMA_BUILD_VULKAN: ${LLAMA_BUILD_VULKAN:-0}
         LLAMA_BUILD_HIPBLAS: ${LLAMA_BUILD_HIPBLAS:-1}
@@ -75,18 +79,16 @@ services:
       - /dev/dri:/dev/dri
     volumes:
       - /opt/rocm:/opt/rocm:ro
-      - /opt/rocm-7.1.0:/opt/rocm-7.1.0:ro
     group_add:
       - "44"   # video group
       - "993"  # render group
     environment:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
-      - HSA_OVERRIDE_GFX_VERSION=11.5.1  # For Strix Halo gfx1151
-      - VULKAN_DEVICE=0
+      - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
-      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
       - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1
@@ -104,10 +106,10 @@ services:
   worker:
     build:
       args:
-        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.1/}
-        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.8.0+rocm7.1.0.lw.git7a520360}
-        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.8.0+rocm7.1.0.git6e1c7fe9}
-        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.23.0+rocm7.1.0.git824e8c87}
+        ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/}
+        ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.10.0+rocm7.2.0.lw.gitb6ee5fde}
+        ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.10.0+rocm7.2.0.git5047768f}
+        ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.25.0+rocm7.2.0.git82df5f59}
         ROCM_NIGHTLY: ${ROCM_NIGHTLY:-0}
         LLAMA_BUILD_VULKAN: ${LLAMA_BUILD_VULKAN:-0}
         LLAMA_BUILD_HIPBLAS: ${LLAMA_BUILD_HIPBLAS:-1}
@@ -117,18 +119,16 @@ services:
       - /dev/dri:/dev/dri
     volumes:
       - /opt/rocm:/opt/rocm:ro
-      - /opt/rocm-7.1.0:/opt/rocm-7.1.0:ro
     group_add:
       - "44"   # video group
       - "993"  # render group
     environment:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
-      - HSA_OVERRIDE_GFX_VERSION=11.5.1
-      - VULKAN_DEVICE=0
+      - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
-      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
+      - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
       - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1

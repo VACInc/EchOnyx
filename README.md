@@ -116,8 +116,9 @@ Use the Search page to:
 | CPU Only | Fallback for systems without GPU | Sequential |
 
 Current AMD note:
-- Torch-backed stages can use ROCm on Strix Halo today.
-- GGUF vision/summarization on AMD currently use local `llama.cpp` servers for stability while ROCm-native GGUF execution is being hardened.
+- Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.
+- The AMD Docker override now uses AMD's published ROCm `llama.cpp` server artifact for `gfx115X` and fails closed if ROCm cannot enumerate a supported device.
+- Current AMD defaults target ROCm `7.2` for both the backend wheels and the dedicated GGUF server image.
 
 ## Active Requirements
 
