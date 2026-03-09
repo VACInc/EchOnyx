@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)

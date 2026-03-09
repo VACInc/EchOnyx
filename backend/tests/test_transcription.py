@@ -1,4 +1,7 @@
+import sys
 import types
+
+import numpy as np
 
 import pytest
 
@@ -42,3 +45,42 @@ async def test_transcribe_audio_does_not_fallback_when_primary_model_errors(monk
 
     assert fallback_called is False
     assert manager.released is True
+
+
+@pytest.mark.asyncio
+async def test_transcribe_nemo_canary_uses_settings(monkeypatch, tmp_path):
+    class FakeTokenizer:
+        def ids_to_text(self, _ids):
+            return "Budget review due Friday."
+
+    class FakeModel:
+        audio_locator_tag = "<audio>"
+        tokenizer = FakeTokenizer()
+
+        def generate(self, prompts, max_new_tokens: int):
+            assert prompts
+            assert max_new_tokens == 256
+            return [np.array([1, 2, 3])]
+
+    fake_sf = types.SimpleNamespace(
+        read=lambda _path: (np.array([0.1, 0.2, 0.3], dtype=np.float32), 16000),
+        write=lambda _path, _audio, _sample_rate: None,
+    )
+
+    monkeypatch.setattr(
+        transcription,
+        "get_settings",
+        lambda: types.SimpleNamespace(asr_chunk_length_s=30.0, asr_chunk_overlap_s=2.0),
+    )
+    monkeypatch.setitem(sys.modules, "soundfile", fake_sf)
+
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"placeholder")
+
+    result = await transcription._transcribe_nemo_canary(
+        {"model": FakeModel()},
+        audio_path,
+    )
+
+    assert result["text"] == "Budget review due Friday."
+    assert result["language"] == "en"
