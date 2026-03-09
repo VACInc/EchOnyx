@@ -150,6 +150,8 @@ async def ask_question(
         if source.context:
             context_blocks.append(f"Supporting context: {source.context}")
 
+    context_text = "\n".join(context_blocks)
+
     answer = await complete_with_summarization_model(
         messages=[
             {"role": "system", "content": QUESTION_ANSWERING_SYSTEM_PROMPT},
@@ -158,7 +160,7 @@ async def ask_question(
                 "content": (
                     f"Question: {question.question}\n\n"
                     "Context:\n"
-                    f"{'\n'.join(context_blocks)}"
+                    f"{context_text}"
                 ),
             },
         ],
