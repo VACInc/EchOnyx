@@ -100,12 +100,29 @@ async def test_requeue_orphaned_jobs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_recover_stale_processing_jobs(monkeypatch):
+    step_progress = {
+        "audio_extraction": {
+            "progress": 100.0,
+            "step_index": 1,
+            "step_count": 8,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "transcription": {
+            "progress": 25.0,
+            "step_index": 2,
+            "step_count": 8,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        },
+    }
     stale_job = Job(
         id=uuid.uuid4(),
         video_id=uuid.uuid4(),
         status=JobStatus.PROCESSING.value,
         celery_task_id="old-task",
         started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        current_step="transcription",
+        progress=18.0,
+        step_progress=step_progress,
         retry_count=0,
     )
     active_job = Job(
@@ -136,6 +153,9 @@ async def test_recover_stale_processing_jobs(monkeypatch):
     assert stale_job.status == JobStatus.QUEUED.value
     assert stale_job.celery_task_id == "new-task"
     assert stale_job.retry_count == 1
+    assert stale_job.current_step == "transcription"
+    assert stale_job.progress == 18.0
+    assert stale_job.step_progress == step_progress
     assert active_job.status == JobStatus.PROCESSING.value
 
 

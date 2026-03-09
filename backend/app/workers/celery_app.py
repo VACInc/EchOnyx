@@ -1,10 +1,15 @@
 """Celery application configuration."""
 
+import asyncio
+import logging
+
 from celery import Celery
+from celery.signals import worker_ready
 
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 celery_app = Celery(
     "video_summarizer",
@@ -54,3 +59,30 @@ celery_app.conf.update(
         },
     },
 )
+
+
+@worker_ready.connect
+def _recover_jobs_on_worker_ready(**_kwargs) -> None:
+    """Requeue interrupted jobs as soon as a worker is available again."""
+    from app.database import get_worker_async_session_maker
+    from app.workers.enqueue import requeue_orphaned_jobs, recover_stale_processing_jobs
+
+    async def _recover() -> None:
+        worker_async_session_maker = get_worker_async_session_maker()
+        async with worker_async_session_maker() as session:
+            requeued = await requeue_orphaned_jobs(session)
+            if requeued:
+                logger.info("Worker startup requeued %d orphaned job(s)", requeued)
+            recovered = await recover_stale_processing_jobs(session)
+            if recovered:
+                logger.info("Worker startup recovered %d stale processing job(s)", recovered)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_recover())
+    except Exception as exc:  # pragma: no cover - startup best effort
+        logger.warning("Worker startup recovery failed: %s", exc)
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()

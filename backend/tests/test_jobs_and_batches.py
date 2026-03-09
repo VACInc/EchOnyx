@@ -274,7 +274,7 @@ async def test_process_batch_enqueues_each_job(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-    monkeypatch.setattr("app.workers.tasks.async_session_maker", lambda: SessionFactory(session))
+    monkeypatch.setattr("app.workers.tasks.get_worker_async_session_maker", lambda: lambda: SessionFactory(session))
 
     result = await _process_batch_async(object(), str(batch.id))
 

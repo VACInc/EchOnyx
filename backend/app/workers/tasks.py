@@ -13,7 +13,7 @@ from pathlib import Path
 from celery import shared_task
 from sqlalchemy import select
 
-from app.database import async_session_maker
+from app.database import get_worker_async_session_maker
 from app.models.job import Batch, Job, JobStatus, JobStep, JOB_STEP_ORDER
 from app.models.video import Video
 from app.workers.celery_app import celery_app
@@ -70,7 +70,29 @@ def run_async(coro):
     try:
         return loop.run_until_complete(coro)
     finally:
+        asyncio.set_event_loop(None)
         loop.close()
+
+
+async def _mark_job_failed(
+    job_id: uuid.UUID,
+    error_message: str,
+    error_step: str | None = None,
+) -> None:
+    """Persist a failed job state using a fresh worker-safe DB session."""
+    worker_async_session_maker = get_worker_async_session_maker()
+    async with worker_async_session_maker() as session:
+        job_result = await session.execute(select(Job).where(Job.id == job_id))
+        job = job_result.scalar_one_or_none()
+        if not job:
+            return
+
+        job.status = JobStatus.FAILED.value
+        job.error_message = error_message
+        job.error_step = error_step or job.current_step
+        job.completed_at = datetime.now(timezone.utc)
+        await session.commit()
+        await _sync_batch_status(session, job.batch_id)
 
 
 async def _sync_batch_status(session, batch_id: uuid.UUID | None) -> None:
@@ -148,20 +170,22 @@ async def _process_video_async(task, video_id: str, job_id: str):
 
     vid = uuid.UUID(video_id)
     jid = uuid.UUID(job_id)
+    job = None
+    worker_async_session_maker = get_worker_async_session_maker()
 
-    async with async_session_maker() as session:
-        # Get video and job
-        video_result = await session.execute(select(Video).where(Video.id == vid))
-        video = video_result.scalar_one_or_none()
+    try:
+        async with worker_async_session_maker() as session:
+            # Get video and job
+            video_result = await session.execute(select(Video).where(Video.id == vid))
+            video = video_result.scalar_one_or_none()
 
-        job_result = await session.execute(select(Job).where(Job.id == jid))
-        job = job_result.scalar_one_or_none()
+            job_result = await session.execute(select(Job).where(Job.id == jid))
+            job = job_result.scalar_one_or_none()
 
-        if not video or not job:
-            logger.error(f"Video or job not found: video={video_id}, job={job_id}")
-            return {"status": "error", "message": "Video or job not found"}
+            if not video or not job:
+                logger.error(f"Video or job not found: video={video_id}, job={job_id}")
+                return {"status": "error", "message": "Video or job not found"}
 
-        try:
             loop = asyncio.get_running_loop()
             progress_lock = asyncio.Lock()
             step_count = len(JOB_STEP_ORDER)
@@ -499,24 +523,18 @@ async def _process_video_async(task, video_id: str, job_id: str):
             logger.info(f"Video processing complete: {video_id}")
             return {"status": "success", "video_id": video_id}
 
-        except Exception as e:
-            logger.exception(f"Error processing video {video_id}: {e}")
-            log_gpu_memory("error")
+    except Exception as e:
+        logger.exception(f"Error processing video {video_id}: {e}")
+        log_gpu_memory("error")
 
-            async with progress_lock:
-                job.status = JobStatus.FAILED.value
-                job.error_message = str(e)
-                job.error_step = job.current_step
-                await session.commit()
-                await _sync_batch_status(session, job.batch_id)
+        await _mark_job_failed(jid, str(e), job.current_step if job else None)
+        await notify_job_error(job_id, str(e), job.current_step if job else None)
 
-            await notify_job_error(job_id, str(e), job.current_step)
+        # Retry if applicable
+        if task.request.retries < task.max_retries:
+            raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
 
-            # Retry if applicable
-            if task.request.retries < task.max_retries:
-                raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
-
-            return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e)}
 
 
 @celery_app.task(bind=True)
@@ -530,8 +548,9 @@ async def _process_batch_async(task, batch_id: str):
     from app.workers.enqueue import enqueue_video_job
 
     bid = uuid.UUID(batch_id)
+    worker_async_session_maker = get_worker_async_session_maker()
 
-    async with async_session_maker() as session:
+    async with worker_async_session_maker() as session:
         # Get batch
         batch_result = await session.execute(select(Batch).where(Batch.id == bid))
         batch = batch_result.scalar_one_or_none()

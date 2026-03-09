@@ -189,7 +189,7 @@ async def test_process_video_pipeline_with_real_sample_video(
         captured_embeddings.append(kwargs)
         return 1
 
-    monkeypatch.setattr("app.workers.tasks.async_session_maker", lambda: SessionFactory(
+    monkeypatch.setattr("app.workers.tasks.get_worker_async_session_maker", lambda: lambda: SessionFactory(
         ProcessingSession([
             SequenceResult(scalar=video),
             SequenceResult(scalar=job),

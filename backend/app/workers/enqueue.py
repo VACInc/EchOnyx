@@ -124,9 +124,6 @@ async def recover_stale_processing_jobs(db: AsyncSession) -> int:
             continue
 
         job.status = JobStatus.QUEUED.value
-        job.current_step = None
-        job.progress = 0.0
-        job.step_progress = None
         job.error_message = None
         job.error_step = None
         job.started_at = None
