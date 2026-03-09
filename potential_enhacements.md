@@ -25,7 +25,8 @@
 
 ## Product And Pipeline Enhancements
 
-- Reevaluate the audio-event stage and choose the best local model/runtime for meeting-vs-broadcast and similar source hints instead of treating the current AST AudioSet classifier as final.
+- Replace the current audio-event classifier with a CLAP-based raw-audio hint stage so meeting/broadcast/podcast/demo-style cues come from the audio itself rather than only a closed AudioSet label map.
+- Let the summarization model reconcile CLAP-derived audio hints with transcript/slides/vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - If audio-event classification stays, benchmark candidate models on Strix Halo ROCm and NVIDIA, including accuracy on small real video fixtures plus latency/VRAM impact.
 - Incremental recomputation with step-level caching and lineage/versioning for transcripts, frames, vision metadata, and summaries.
 - Multi-index retrieval routing (transcript + slides + vision) with reranking for better long-video QA.
