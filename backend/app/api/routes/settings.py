@@ -11,6 +11,7 @@ from app.config import (
     GPUBackend,
     HardwareProfile,
     ModelLoadingStrategy,
+    get_asr_family,
     get_hardware_info,
     get_settings,
 )
@@ -35,12 +36,15 @@ class HardwareInfo(BaseModel):
     active_profile: str
     active_backend: str
     whisper_backend: str
+    asr_family: str
     model_loading_strategy: str
 
 
 class ModelConfig(BaseModel):
     """Model configuration."""
 
+    asr_family: str
+    asr_model: str
     whisper_model: str
     transcription_fallback_model: str
     transcription_fallback_enabled: bool
@@ -55,6 +59,7 @@ class ModelConfig(BaseModel):
     summarization_endpoint_url: str
     summarization_endpoint_model: str
     embedding_model: str
+    audio_event_model: str
 
 
 class ProcessingConfig(BaseModel):
@@ -126,6 +131,8 @@ async def get_current_settings() -> SettingsResponse:
         gpu_backend=settings.gpu_backend.value if settings.gpu_backend else "unknown",
         model_loading=settings.model_loading.value,
         models=ModelConfig(
+            asr_family=get_asr_family(settings.whisper_model),
+            asr_model=settings.whisper_model,
             whisper_model=settings.whisper_model,
             transcription_fallback_model=settings.transcription_fallback_model,
             transcription_fallback_enabled=settings.transcription_fallback_enabled,
@@ -140,6 +147,7 @@ async def get_current_settings() -> SettingsResponse:
             summarization_endpoint_url=settings.summarization_endpoint_url,
             summarization_endpoint_model=settings.summarization_endpoint_model,
             embedding_model=settings.embedding_model,
+            audio_event_model=settings.audio_event_model,
         ),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,
@@ -201,6 +209,7 @@ async def get_hardware() -> HardwareInfo:
         active_profile=info["active_profile"],
         active_backend=info["active_backend"],
         whisper_backend=info["whisper_backend"],
+        asr_family=info["asr_family"],
         model_loading_strategy=info["model_loading_strategy"],
     )
 
@@ -235,6 +244,10 @@ async def list_available_models() -> dict:
         "embedding": [
             {"name": "Qwen/Qwen3-Embedding-8B", "size_gb": 16.0, "recommended": True},
             {"name": "nomic-ai/nomic-embed-text-v1.5", "size_gb": 0.6, "recommended": False},
+        ],
+        "audio_event": [
+            {"name": "laion/clap-htsat-fused", "size_gb": 2.5, "recommended": True},
+            {"name": "MIT/ast-finetuned-audioset-10-10-0.4593", "size_gb": 0.4, "recommended": False},
         ],
     }
 

@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
-from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
@@ -67,28 +66,12 @@ async def transcribe_audio(
         if isinstance(model, dict):
             model_type = model.get("type")
             if model_type in {"granite", "whisper_transformers", "nemo_canary"}:
-                try:
-                    result = await _transcribe_transformers_asr(
-                        model,
-                        audio_path,
-                        language=language,
-                        progress_callback=progress_callback,
-                    )
-                except Exception:
-                    settings = get_settings()
-                    if model_type == "granite" and settings.transcription_fallback_enabled:
-                        logger.exception(
-                            "Granite transcription failed, falling back to Whisper model: %s",
-                            settings.transcription_fallback_model,
-                        )
-                        result = await _transcribe_with_faster_whisper(
-                            audio_path,
-                            settings.transcription_fallback_model,
-                            language=language,
-                            progress_callback=progress_callback,
-                        )
-                    else:
-                        raise
+                result = await _transcribe_transformers_asr(
+                    model,
+                    audio_path,
+                    language=language,
+                    progress_callback=progress_callback,
+                )
             else:
                 result = await _transcribe_with_faster_whisper(
                     audio_path,

@@ -3,8 +3,9 @@ import types
 
 import pytest
 
-from app.config import GPUBackend
-from app.core.model_manager import _resolve_llama_gpu_layers, _torch_device
+from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy
+from app.core import model_manager as model_manager_module
+from app.core.model_manager import ModelManager, _resolve_llama_gpu_layers, _torch_device
 
 
 def test_resolve_llama_gpu_layers_defaults_to_cpu_on_cpu_backend():
@@ -33,3 +34,32 @@ def test_torch_device_returns_cuda_when_gpu_is_available(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     assert _torch_device(GPUBackend.ROCM, strict=True, runtime_label="embedding") == "cuda"
+
+
+@pytest.mark.asyncio
+async def test_load_whisper_canary_failure_raises_without_fallback(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="nvidia/canary-qwen-2.5b",
+        gpu_backend=GPUBackend.CPU,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+
+    class FakeSALM:
+        @staticmethod
+        def from_pretrained(_model_name):
+            raise RuntimeError("canary load failed")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "nemo.collections.speechlm2.models",
+        types.SimpleNamespace(SALM=FakeSALM),
+    )
+
+    manager = ModelManager()
+
+    with pytest.raises(RuntimeError, match="canary load failed"):
+        await manager._load_whisper()

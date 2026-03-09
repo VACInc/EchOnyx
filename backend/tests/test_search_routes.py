@@ -1,4 +1,5 @@
 import uuid
+import asyncio
 
 import pytest
 
@@ -184,3 +185,75 @@ async def test_find_similar_uses_embedding_matches(monkeypatch):
     assert response.results[0].video_id == str(similar_video.id)
     assert response.results[0].text == "Planning session overlap"
     assert response.results[0].relevance_score == pytest.approx(0.79)
+
+
+@pytest.mark.asyncio
+async def test_search_falls_back_when_semantic_search_times_out(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="meeting.mp4",
+        original_filename="meeting.mp4",
+        file_path="/tmp/meeting.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Meeting",
+        transcript={
+            "segments": [
+                {"start": 12.0, "end": 16.0, "text": "The budget was approved.", "speaker": "Speaker 1"},
+            ]
+        },
+    )
+
+    async def slow_search_content(**_kwargs):
+        await asyncio.sleep(0.02)
+        return []
+
+    monkeypatch.setattr(search_module, "SEMANTIC_SEARCH_TIMEOUT_S", 0.001)
+    monkeypatch.setattr(search_module, "search_content", slow_search_content)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await search(q="budget", tags=None, speaker=None, limit=5, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(video.id)
+    assert response.results[0].text == "The budget was approved."
+
+
+@pytest.mark.asyncio
+async def test_find_similar_falls_back_to_lexical_similarity(monkeypatch):
+    source_video = Video(
+        id=uuid.uuid4(),
+        filename="source.mp4",
+        original_filename="source.mp4",
+        file_path="/tmp/source.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Roadmap Review",
+        summary={"executive_summary": "Budget roadmap review and planning decisions."},
+    )
+    similar_video = Video(
+        id=uuid.uuid4(),
+        filename="similar.mp4",
+        original_filename="similar.mp4",
+        file_path="/tmp/similar.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Planning Session",
+        summary={"executive_summary": "Planning session covering roadmap and budget milestones."},
+    )
+
+    async def broken_similarity(*_args, **_kwargs):
+        raise RuntimeError("semantic lookup failed")
+
+    monkeypatch.setattr(search_module, "find_similar_content", broken_similarity)
+
+    db = DummySession([
+        SequenceResult(scalar=source_video),
+        SequenceResult(items=[similar_video]),
+        SequenceResult(items=[similar_video]),
+    ])
+    response = await find_similar(str(source_video.id), limit=3, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(similar_video.id)
+    assert response.results[0].relevance_score > 0

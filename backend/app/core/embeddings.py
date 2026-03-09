@@ -3,12 +3,13 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-from app.config import get_settings
+from app.config import GPUBackend, ModelLoadingStrategy, get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     """
     manager = get_model_manager()
     model = await manager.get_model(ModelType.EMBEDDING)
+    settings = get_settings()
 
     try:
         loop = asyncio.get_event_loop()
@@ -80,7 +82,38 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
         return await loop.run_in_executor(None, do_embed)
 
     finally:
-        await manager.release_model(ModelType.EMBEDDING)
+        # Keep the embedding model warm on sequential ROCm runtimes. Search, ask,
+        # and similar all run in the API process and otherwise pay a heavy cold
+        # load cost on every request.
+        if not (
+            settings.model_loading == ModelLoadingStrategy.SEQUENTIAL
+            and settings.gpu_backend == GPUBackend.ROCM
+        ):
+            await manager.release_model(ModelType.EMBEDDING)
+
+
+def _coerce_documents(result: dict) -> list[str]:
+    documents = result.get("documents")
+    if not documents:
+        return []
+    if isinstance(documents, Sequence) and documents and isinstance(documents[0], str):
+        return [str(doc).strip() for doc in documents if str(doc).strip()]
+    return []
+
+
+def _build_similarity_query_text(documents: list[str], max_documents: int = 4, max_chars: int = 5000) -> str:
+    selected: list[str] = []
+    total_chars = 0
+    for document in documents[:max_documents]:
+        normalized = " ".join(document.split())
+        if not normalized:
+            continue
+        remaining = max_chars - total_chars
+        if remaining <= 0:
+            break
+        selected.append(normalized[:remaining])
+        total_chars += min(len(normalized), remaining)
+    return "\n\n".join(selected)
 
 
 async def index_video_content(
@@ -326,29 +359,32 @@ async def find_similar_content(
     """
     collection = get_collection()
 
-    # Get embeddings for this video's summary
+    # Use source documents rather than stored embedding rows. Fetching embeddings
+    # directly from the persistent Chroma collection has proven brittle on the
+    # live Strix Halo instance.
     results = collection.get(
         where={"$and": [{"video_id": video_id}, {"type": "summary"}]},
-        include=["embeddings"],
+        include=["documents"],
     )
 
-    if not _has_embedding_rows(results):
+    source_documents = _coerce_documents(results)
+    if not source_documents:
         results = collection.get(
             where={"$and": [{"video_id": video_id}, {"type": "transcript"}]},
-            include=["embeddings"],
+            include=["documents"],
         )
+        source_documents = _coerce_documents(results)
 
-    if not _has_embedding_rows(results):
+    query_text = _build_similarity_query_text(source_documents)
+    if not query_text:
         return []
 
-    # Use the first summary embedding as query
-    query_embedding = results["embeddings"][0]
+    query_embedding = await generate_embeddings([query_text])
 
     # Search for similar content in other videos
     similar = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=n_results * 3,  # Get more to filter
-        where={"type": "summary"},
+        query_embeddings=query_embedding,
+        n_results=max(n_results * 6, 24),
         include=["metadatas", "distances"],
     )
 

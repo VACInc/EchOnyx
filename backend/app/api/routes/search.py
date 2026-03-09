@@ -1,5 +1,7 @@
 """Search and RAG endpoints."""
 
+import asyncio
+import re
 import uuid
 from typing import Annotated, Sequence
 
@@ -14,6 +16,8 @@ from app.database import get_db
 from app.models.video import Video
 
 router = APIRouter()
+SEMANTIC_SEARCH_TIMEOUT_S = 20.0
+SIMILARITY_TOKEN_REGEX = re.compile(r"[a-z0-9]{3,}")
 
 
 class SearchResult(BaseModel):
@@ -195,7 +199,14 @@ async def find_similar(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    similar_videos = await find_similar_content(str(video.id), n_results=limit)
+    try:
+        similar_videos = await asyncio.wait_for(
+            find_similar_content(str(video.id), n_results=limit),
+            timeout=SEMANTIC_SEARCH_TIMEOUT_S,
+        )
+    except Exception:
+        result = await db.execute(select(Video).where(Video.id != vid))
+        similar_videos = _fallback_similar_videos(video, result.scalars().all(), limit)
     if not similar_videos:
         return SearchResponse(
             query=f"similar to: {video.title or video.original_filename}",
@@ -320,10 +331,13 @@ async def _semantic_search(
 
     video_map = {str(video.id): video for video in videos}
     try:
-        matches = await search_content(
-            query=q,
-            video_ids=list(video_map.keys()),
-            n_results=max(limit * 5, limit),
+        matches = await asyncio.wait_for(
+            search_content(
+                query=q,
+                video_ids=list(video_map.keys()),
+                n_results=max(limit * 5, limit),
+            ),
+            timeout=SEMANTIC_SEARCH_TIMEOUT_S,
         )
     except Exception:
         return []
@@ -466,6 +480,59 @@ def _coerce_timestamp(value: object) -> float | None:
             except ValueError:
                 return None
     return None
+
+
+def _video_similarity_text(video: Video) -> str:
+    parts: list[str] = []
+    if video.title:
+        parts.append(video.title)
+    if video.summary:
+        executive_summary = video.summary.get("executive_summary")
+        if executive_summary:
+            parts.append(str(executive_summary))
+        key_points = video.summary.get("key_points") or []
+        if isinstance(key_points, list):
+            parts.extend(str(point) for point in key_points if point)
+        topics = video.summary.get("topics") or []
+        if isinstance(topics, list):
+            for topic in topics[:6]:
+                parts.append(str(topic.get("topic") or ""))
+                parts.append(str(topic.get("summary") or ""))
+    if video.slides:
+        for slide in video.slides[:6]:
+            parts.append(str(slide.get("title") or ""))
+            parts.append(str(slide.get("content") or ""))
+    if video.transcript:
+        for segment in (video.transcript.get("segments") or [])[:24]:
+            parts.append(str(segment.get("text") or ""))
+    return " ".join(part for part in parts if part).strip()
+
+
+def _similarity_tokens(text: str) -> set[str]:
+    return set(SIMILARITY_TOKEN_REGEX.findall(text.lower()))
+
+
+def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], limit: int) -> list[dict]:
+    source_tokens = _similarity_tokens(_video_similarity_text(source_video))
+    if not source_tokens:
+        return []
+
+    scored: list[dict] = []
+    for candidate in candidates:
+        candidate_id = str(candidate.id)
+        if candidate_id == str(source_video.id):
+            continue
+        candidate_tokens = _similarity_tokens(_video_similarity_text(candidate))
+        if not candidate_tokens:
+            continue
+        overlap = source_tokens & candidate_tokens
+        if not overlap:
+            continue
+        score = len(overlap) / len(source_tokens | candidate_tokens)
+        scored.append({"video_id": candidate_id, "score": score})
+
+    scored.sort(key=lambda item: item["score"], reverse=True)
+    return scored[:limit]
 
 
 def _normalize_tag_filter(tags: Sequence[str] | None) -> list[str]:

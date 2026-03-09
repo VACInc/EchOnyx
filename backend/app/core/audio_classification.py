@@ -1,4 +1,4 @@
-"""Audio event classification for lightweight source hints."""
+"""Audio hint extraction for lightweight source-context cues."""
 
 from __future__ import annotations
 
@@ -16,29 +16,47 @@ from app.core.model_manager import ModelType, get_model_manager
 logger = logging.getLogger(__name__)
 
 
-TV_LABEL_REGEX = (
-    "television",
-    "tv",
-    "broadcast",
-    "radio",
-    "news",
-    "talk show",
+CLAP_HINT_CANDIDATES = (
+    {
+        "key": "meeting_room_speech",
+        "label": "meeting-room speech",
+        "prompt": "near-field speech in a meeting room or office",
+        "hint": "Audio sounds like direct meeting-room or office speech.",
+    },
+    {
+        "key": "broadcast_playback",
+        "label": "broadcast playback",
+        "prompt": "broadcast television news or talk-show audio playing from speakers",
+        "hint": "Audio sounds like broadcast or TV-style playback rather than participants speaking directly.",
+    },
+    {
+        "key": "podcast_voiceover",
+        "label": "podcast voice-over",
+        "prompt": "podcast, voice-over, or studio narration",
+        "hint": "Audio sounds like produced narration or podcast-style speech.",
+    },
+    {
+        "key": "software_demo",
+        "label": "software demo narration",
+        "prompt": "screen recording or software demo with spoken narration",
+        "hint": "Audio sounds like narrated software-demo or screencast audio.",
+    },
+    {
+        "key": "music_heavy",
+        "label": "music-heavy content",
+        "prompt": "music-heavy entertainment audio",
+        "hint": "Audio contains strong music or entertainment-style backing audio.",
+    },
+    {
+        "key": "crowd_applause",
+        "label": "crowd or applause",
+        "prompt": "audience applause or crowd reaction",
+        "hint": "Audio contains crowd or applause cues.",
+    },
 )
 
-SPEECH_LABEL_REGEX = (
-    "speech",
-    "conversation",
-    "narration",
-    "monologue",
-    "lecture",
-    "meeting",
-    "presentation",
-)
-
-
-def _label_hits(label: str, keywords: tuple[str, ...]) -> bool:
-    lowered = label.lower()
-    return any(keyword in lowered for keyword in keywords)
+CLAP_BROADCAST_KEYS = {"broadcast_playback"}
+CLAP_SPEECH_KEYS = {"meeting_room_speech", "podcast_voiceover", "software_demo"}
 
 
 def _select_offsets(total_frames: int, sample_frames: int, num_samples: int) -> list[int]:
@@ -94,10 +112,16 @@ async def classify_audio_events(
             model = model_bundle["model"]
             processor = model_bundle["processor"]
             device = model_bundle["device"]
+            bundle_type = model_bundle.get("type", "audio_event_classifier")
 
             info = torchaudio.info(str(audio_path))
             total_frames = info.num_frames
             sample_rate = info.sample_rate
+            target_sample_rate = getattr(
+                getattr(processor, "feature_extractor", processor),
+                "sampling_rate",
+                sample_rate,
+            )
             sample_seconds = settings.audio_event_sample_seconds
             sample_frames = int(sample_seconds * sample_rate)
             offsets = _select_offsets(total_frames, sample_frames, settings.audio_event_num_samples)
@@ -111,19 +135,31 @@ async def classify_audio_events(
 
             for idx, offset in enumerate(offsets, start=1):
                 waveform, sr = _load_audio_segment(audio_path, offset, sample_frames)
-                if sr != sample_rate and sr > 0:
-                    resampler = torchaudio.transforms.Resample(sr, sample_rate)
+                if sr != target_sample_rate and sr > 0:
+                    resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
                     waveform = resampler(waveform)
-                inputs = processor(
-                    waveform.squeeze(0).numpy(),
-                    sampling_rate=sample_rate,
-                    return_tensors="pt",
-                )
+                if bundle_type == "audio_event_clap":
+                    inputs = processor(
+                        text=[candidate["prompt"] for candidate in CLAP_HINT_CANDIDATES],
+                        audios=waveform.squeeze(0).numpy(),
+                        sampling_rate=target_sample_rate,
+                        return_tensors="pt",
+                        padding=True,
+                    )
+                else:
+                    inputs = processor(
+                        waveform.squeeze(0).numpy(),
+                        sampling_rate=target_sample_rate,
+                        return_tensors="pt",
+                    )
                 if device == "cuda":
                     inputs = {k: v.to(torch.device("cuda")) for k, v in inputs.items()}
                 with torch.no_grad():
                     outputs = model(**inputs)
-                logits = outputs.logits.detach().float().cpu()
+                if bundle_type == "audio_event_clap":
+                    logits = outputs.logits_per_audio.detach().float().cpu()
+                else:
+                    logits = outputs.logits.detach().float().cpu()
                 logits_accum = logits if logits_accum is None else logits_accum + logits
                 sample_offsets_s.append(offset / sample_rate)
                 if progress_callback:
@@ -141,33 +177,64 @@ async def classify_audio_events(
             avg_logits = logits_accum / max(len(offsets), 1)
             probs = torch.softmax(avg_logits, dim=-1).squeeze(0)
 
-            id2label = model.config.id2label
             topk = min(8, probs.numel())
             scores, indices = torch.topk(probs, k=topk)
             top_labels = []
-            for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
-                label = id2label.get(idx, str(idx))
-                top_labels.append({"label": label, "score": float(score)})
+            if bundle_type == "audio_event_clap":
+                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
+                    candidate = CLAP_HINT_CANDIDATES[idx]
+                    top_labels.append({"label": candidate["label"], "score": float(score)})
 
-            tv_score = 0.0
-            speech_score = 0.0
-            for idx, score in enumerate(probs.tolist()):
-                label = id2label.get(idx, "")
-                if _label_hits(label, TV_LABEL_REGEX):
-                    tv_score += score
-                if _label_hits(label, SPEECH_LABEL_REGEX):
-                    speech_score += score
+                tv_score = float(
+                    sum(
+                        probs[idx].item()
+                        for idx, candidate in enumerate(CLAP_HINT_CANDIDATES)
+                        if candidate["key"] in CLAP_BROADCAST_KEYS
+                    )
+                )
+                speech_score = float(
+                    sum(
+                        probs[idx].item()
+                        for idx, candidate in enumerate(CLAP_HINT_CANDIDATES)
+                        if candidate["key"] in CLAP_SPEECH_KEYS
+                    )
+                )
 
-            hints = []
-            min_score = settings.audio_event_min_score
-            if tv_score >= min_score and tv_score > speech_score:
-                hints.append(
-                    "Audio event classification suggests TV/broadcast content dominates the audio."
-                )
-            elif speech_score >= min_score and speech_score >= tv_score:
-                hints.append(
-                    "Audio event classification suggests near-field speech dominates the audio."
-                )
+                hints = []
+                min_score = settings.audio_event_min_score
+                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
+                    if float(score) < min_score:
+                        continue
+                    hint = CLAP_HINT_CANDIDATES[idx]["hint"]
+                    if hint not in hints:
+                        hints.append(hint)
+                    if len(hints) >= 2:
+                        break
+            else:
+                id2label = model.config.id2label
+                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
+                    label = id2label.get(idx, str(idx))
+                    top_labels.append({"label": label, "score": float(score)})
+
+                tv_score = 0.0
+                speech_score = 0.0
+                for idx, score in enumerate(probs.tolist()):
+                    label = id2label.get(idx, "").lower()
+                    if any(keyword in label for keyword in ("television", "tv", "broadcast", "radio", "news", "talk show")):
+                        tv_score += score
+                    if any(keyword in label for keyword in ("speech", "conversation", "narration", "monologue", "lecture", "meeting", "presentation")):
+                        speech_score += score
+
+                hints = []
+                min_score = settings.audio_event_min_score
+                if tv_score >= min_score and tv_score > speech_score:
+                    hints.append(
+                        "Audio event classification suggests TV/broadcast content dominates the audio."
+                    )
+                elif speech_score >= min_score and speech_score >= tv_score:
+                    hints.append(
+                        "Audio event classification suggests near-field speech dominates the audio."
+                    )
 
             if settings.audio_event_debug:
                 logger.info(

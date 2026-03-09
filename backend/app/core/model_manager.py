@@ -24,6 +24,11 @@ def _is_canary_model(model_name: str) -> bool:
     return "canary" in lowered or "nvidia/canary" in lowered
 
 
+def _is_clap_model(model_name: str) -> bool:
+    """Heuristic to detect CLAP audio models."""
+    return "clap" in model_name.lower()
+
+
 def _normalize_whisper_model_name(model_name: str) -> str:
     """Normalize common Whisper aliases to Hugging Face model IDs."""
     lower = model_name.lower()
@@ -284,7 +289,7 @@ class ModelManager:
 
     async def _load_audio_event(self) -> Any:
         """Load an audio event classification model."""
-        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification, AutoProcessor, ClapModel
         import torch
 
         model_name = self.settings.audio_event_model
@@ -298,20 +303,33 @@ class ModelManager:
         loop = asyncio.get_event_loop()
 
         def load_audio_event():
-            processor = AutoFeatureExtractor.from_pretrained(
-                model_name,
-                cache_dir=str(cache_dir),
-            )
-            model = AutoModelForAudioClassification.from_pretrained(
-                model_name,
-                cache_dir=str(cache_dir),
-                torch_dtype=dtype,
-            )
+            if _is_clap_model(model_name):
+                processor = AutoProcessor.from_pretrained(
+                    model_name,
+                    cache_dir=str(cache_dir),
+                )
+                model = ClapModel.from_pretrained(
+                    model_name,
+                    cache_dir=str(cache_dir),
+                    torch_dtype=dtype,
+                )
+                bundle_type = "audio_event_clap"
+            else:
+                processor = AutoFeatureExtractor.from_pretrained(
+                    model_name,
+                    cache_dir=str(cache_dir),
+                )
+                model = AutoModelForAudioClassification.from_pretrained(
+                    model_name,
+                    cache_dir=str(cache_dir),
+                    torch_dtype=dtype,
+                )
+                bundle_type = "audio_event_classifier"
             if device == "cuda":
                 model = model.to(torch.device("cuda"))
             model.eval()
             return {
-                "type": "audio_event",
+                "type": bundle_type,
                 "model": model,
                 "processor": processor,
                 "device": device,
@@ -349,37 +367,9 @@ class ModelManager:
                     "device": device,
                 }
 
-            try:
-                model_bundle = await loop.run_in_executor(None, load_canary)
-                logger.info("Loaded Canary speech model: %s", model_name)
-                return model_bundle
-            except Exception:
-                if self.settings.transcription_fallback_enabled:
-                    fallback = self.settings.transcription_fallback_model
-                    logger.exception(
-                        "Canary load failed, falling back to Whisper model: %s",
-                        fallback,
-                    )
-                    fallback_name = _normalize_whisper_model_name(fallback)
-                    if self.settings.gpu_backend in {
-                        GPUBackend.ROCM,
-                        GPUBackend.VULKAN,
-                    }:
-                        model = await _load_transformers_whisper(
-                            fallback_name,
-                            self.settings.gpu_backend,
-                            self.settings.model_cache_dir,
-                            strict_accelerator=self.requires_strict_accelerator,
-                        )
-                    else:
-                        model = await _load_faster_whisper(
-                            fallback_name,
-                            self.settings.gpu_backend,
-                            self.settings.model_cache_dir,
-                        )
-                    logger.info("Loaded Whisper fallback model: %s", fallback)
-                    return model
-                raise
+            model_bundle = await loop.run_in_executor(None, load_canary)
+            logger.info("Loaded Canary speech model: %s", model_name)
+            return model_bundle
 
         if _is_granite_speech_model(model_name):
             from transformers import AutoFeatureExtractor, AutoModelForSpeechSeq2Seq, AutoProcessor, AutoTokenizer
@@ -440,37 +430,9 @@ class ModelManager:
                     "device": device,
                 }
 
-            try:
-                model_bundle = await loop.run_in_executor(None, load_granite)
-                logger.info(f"Loaded Granite speech model: {model_name}")
-                return model_bundle
-            except Exception:
-                if self.settings.transcription_fallback_enabled:
-                    fallback = self.settings.transcription_fallback_model
-                    logger.exception(
-                        "Granite load failed, falling back to Whisper model: %s",
-                        fallback,
-                    )
-                    fallback_name = _normalize_whisper_model_name(fallback)
-                    if self.settings.gpu_backend in {
-                        GPUBackend.ROCM,
-                        GPUBackend.VULKAN,
-                    }:
-                        model = await _load_transformers_whisper(
-                            fallback_name,
-                            self.settings.gpu_backend,
-                            self.settings.model_cache_dir,
-                            strict_accelerator=self.requires_strict_accelerator,
-                        )
-                    else:
-                        model = await _load_faster_whisper(
-                            fallback_name,
-                            self.settings.gpu_backend,
-                            self.settings.model_cache_dir,
-                        )
-                    logger.info("Loaded Whisper fallback model: %s", fallback)
-                    return model
-                raise
+            model_bundle = await loop.run_in_executor(None, load_granite)
+            logger.info(f"Loaded Granite speech model: {model_name}")
+            return model_bundle
 
         if self.settings.gpu_backend in {GPUBackend.ROCM, GPUBackend.VULKAN}:
             model = await _load_transformers_whisper(

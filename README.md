@@ -73,11 +73,12 @@ Set these in `.env` as needed:
 
 Defaults are configured in `.env.example`. All models are swappable:
 
-- **Transcription**: `WHISPER_MODEL` / `TRANSCRIPTION_FALLBACK_MODEL`
+- **Transcription**: `WHISPER_MODEL` (explicit ASR selector; no silent fallback)
 - **Diarization**: `DIARIZATION_MODEL` (pyannote)
 - **Vision**: `VISION_MODEL` (GGUF) or `VISION_ENDPOINT_*`
 - **Summarization**: `SUMMARIZATION_MODEL` (GGUF) or `SUMMARIZATION_ENDPOINT_*`
 - **Embeddings**: `EMBEDDING_MODEL` (HF)
+- **Audio Hints**: `AUDIO_EVENT_MODEL` (defaults to CLAP for raw-audio source cues)
 
 GGUF models can be downloaded automatically via the built-in model downloader when needed.
 

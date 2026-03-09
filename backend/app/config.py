@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # Models
     whisper_model: str = "large-v3"
     transcription_fallback_model: str = "large-v3"
-    transcription_fallback_enabled: bool = True
+    transcription_fallback_enabled: bool = False
     granite_force_cpu: bool = False
     diarization_model: str = "pyannote/speaker-diarization-community-1"
     vision_model: str = "Qwen3-Omni-30B-A3B-Q4_K_M.gguf"
@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     summarization_endpoint_api_key: str = ""
     summarization_endpoint_timeout_s: float = 600.0
     embedding_model: str = "Qwen/Qwen3-Embedding-8B"
-    audio_event_model: str = "MIT/ast-finetuned-audioset-10-10-0.4593"
+    audio_event_model: str = "laion/clap-htsat-fused"
     audio_event_sample_seconds: float = 8.0
     audio_event_num_samples: int = 6
     audio_event_min_score: float = 0.15
@@ -115,6 +115,16 @@ class Settings(BaseSettings):
 
     # Hugging Face (for pyannote)
     hf_token: str = ""
+
+
+def get_asr_family(model_name: str) -> str:
+    """Classify the selected ASR model family for reporting and UI."""
+    lowered = model_name.lower()
+    if "canary" in lowered:
+        return "canary"
+    if "granite-speech" in lowered:
+        return "granite"
+    return "whisper"
 
 
 def validate_hardware_requirements(settings: Settings) -> None:
@@ -312,7 +322,7 @@ def get_hardware_info() -> dict:
     settings = get_settings()
 
     whisper_name = settings.whisper_model.lower()
-    if "granite-speech" in whisper_name:
+    if get_asr_family(settings.whisper_model) == "granite":
         if settings.gpu_backend == GPUBackend.CUDA and not settings.granite_force_cpu:
             whisper_backend = "cuda"
         else:
@@ -337,5 +347,6 @@ def get_hardware_info() -> dict:
         "active_profile": settings.hardware_profile.value,
         "active_backend": settings.gpu_backend.value,
         "whisper_backend": whisper_backend,
+        "asr_family": get_asr_family(settings.whisper_model),
         "model_loading_strategy": settings.model_loading.value,
     }

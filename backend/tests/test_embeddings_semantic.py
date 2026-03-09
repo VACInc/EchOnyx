@@ -73,3 +73,39 @@ async def test_semantic_index_search_and_similarity(monkeypatch, tmp_path):
     assert matches
     assert matches[0]["metadata"]["video_id"] == video_one
     assert similar[0]["video_id"] == video_two
+
+
+@pytest.mark.asyncio
+async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch):
+    calls: dict[str, object] = {}
+
+    class FakeCollection:
+        def get(self, where=None, include=None):
+            calls["include"] = include
+            return {"documents": ["Roadmap review and budget planning."]}
+
+        def query(self, query_embeddings=None, n_results: int = 0, include=None):
+            calls["query_embeddings"] = query_embeddings
+            calls["n_results"] = n_results
+            return {
+                "ids": [["source_chunk", "other_chunk"]],
+                "metadatas": [[
+                    {"video_id": "source-video"},
+                    {"video_id": "other-video"},
+                ]],
+                "distances": [[0.0, 0.2]],
+            }
+
+    async def fake_generate_embeddings(texts: list[str]) -> list[list[float]]:
+        calls["texts"] = texts
+        return [[0.4, 0.6]]
+
+    monkeypatch.setattr(embeddings, "get_collection", lambda name="video_content": FakeCollection())
+    monkeypatch.setattr(embeddings, "generate_embeddings", fake_generate_embeddings)
+
+    similar = await embeddings.find_similar_content("source-video", n_results=1)
+
+    assert calls["include"] == ["documents"]
+    assert calls["texts"] == ["Roadmap review and budget planning."]
+    assert calls["query_embeddings"] == [[0.4, 0.6]]
+    assert similar == [{"video_id": "other-video", "score": pytest.approx(0.8)}]
