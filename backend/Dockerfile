@@ -94,21 +94,32 @@ RUN set -e; \
 
 RUN python - <<'PY'
 from pathlib import Path
+import re
 
 path = Path("/usr/local/lib/python3.11/site-packages/llama_cpp/_ctypes_extensions.py")
 if path.exists():
     text = path.read_text()
     if "Missing llama.cpp symbol" not in text:
-        text = text.replace(
-            "    func = getattr(lib, name)\\n",
-            "    try:\\n"
-            "        func = getattr(lib, name)\\n"
-            "    except AttributeError:\\n"
-            "        def missing(*args, **kwargs):\\n"
-            "            raise AttributeError(f\"Missing llama.cpp symbol: {name}\")\\n"
-            "        return missing\\n",
+        text, count = re.subn(
+            r"(?m)^(?P<indent>\\s*)func = getattr\\(lib, name\\)$",
+            "\\g<indent>try:\\n"
+            "\\g<indent>    func = getattr(lib, name)\\n"
+            "\\g<indent>except AttributeError:\\n"
+            "\\g<indent>    def missing(*args, **kwargs):\\n"
+            "\\g<indent>        raise AttributeError(f\"Missing llama.cpp symbol: {name}\")\\n"
+            "\\g<indent>    return missing",
+            text,
+            count=1,
         )
+        if count == 0:
+            raise SystemExit(f"Failed to patch ctypes loader at {path}")
         path.write_text(text)
+PY
+
+RUN python - <<'PY'
+import llama_cpp
+
+print("llama_cpp import ok", getattr(llama_cpp, "__version__", "unknown"))
 PY
 
 # Force ROCm PyTorch wheels when configured
