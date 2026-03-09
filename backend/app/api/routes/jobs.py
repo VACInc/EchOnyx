@@ -3,8 +3,8 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy import select
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -29,6 +29,8 @@ class JobProgress(BaseModel):
 class JobResponse(BaseModel):
     """Job response schema."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     video_id: str
     status: str
@@ -40,9 +42,6 @@ class JobResponse(BaseModel):
     started_at: str | None
     completed_at: str | None
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class JobListResponse(BaseModel):
@@ -99,8 +98,9 @@ async def list_jobs(
             raise HTTPException(status_code=400, detail="Invalid video ID")
 
     # Get total count
-    count_result = await db.execute(select(Job.id).select_from(query.subquery()))
-    total = len(count_result.all())
+    count_query = select(func.count()).select_from(query.order_by(None).subquery())
+    count_result = await db.execute(count_query)
+    total = int(count_result.scalar_one())
 
     # Get paginated results
     offset = (page - 1) * page_size
@@ -170,10 +170,12 @@ async def cancel_job(
 
     # Cancel Celery task if running
     if job.celery_task_id:
-        # TODO: Import and revoke Celery task
-        # from app.workers.celery_app import celery_app
-        # celery_app.control.revoke(job.celery_task_id, terminate=True)
-        pass
+        try:
+            from app.workers.celery_app import celery_app
+
+            celery_app.control.revoke(job.celery_task_id, terminate=True)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to revoke Celery task: {exc}")
 
     job.status = JobStatus.CANCELLED.value
     await db.commit()
@@ -241,6 +243,13 @@ async def cancel_orphaned_jobs(
         return {"cancelled": 0}
 
     for job in jobs:
+        if job.celery_task_id:
+            try:
+                from app.workers.celery_app import celery_app
+
+                celery_app.control.revoke(job.celery_task_id, terminate=True)
+            except Exception:
+                continue
         job.status = JobStatus.CANCELLED.value
 
     await db.commit()

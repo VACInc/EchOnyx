@@ -164,7 +164,7 @@ export default function SearchPage() {
       {mode === "search" && searchMutation.data && (
         <div className="space-y-4">
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {searchMutation.data.total} results for "{searchMutation.data.query}"
+            {searchMutation.data.total} results for &quot;{searchMutation.data.query}&quot;
           </p>
           {tags.length > 0 && (
             <p className="text-xs text-slate-400 dark:text-slate-500">

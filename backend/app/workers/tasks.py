@@ -73,6 +73,54 @@ def run_async(coro):
         loop.close()
 
 
+async def _sync_batch_status(session, batch_id: uuid.UUID | None) -> None:
+    """Refresh aggregate batch status from the current job states."""
+    if batch_id is None:
+        return
+
+    batch_result = await session.execute(select(Batch).where(Batch.id == batch_id))
+    batch = batch_result.scalar_one_or_none()
+    if not batch:
+        return
+
+    job_result = await session.execute(select(Job).where(Job.batch_id == batch_id))
+    jobs = job_result.scalars().all()
+    if not jobs:
+        batch.total_videos = 0
+        batch.completed_videos = 0
+        batch.failed_videos = 0
+        batch.status = JobStatus.COMPLETED.value
+        await session.commit()
+        return
+
+    completed = sum(1 for item in jobs if item.status == JobStatus.COMPLETED.value)
+    failed = sum(1 for item in jobs if item.status == JobStatus.FAILED.value)
+    cancelled = sum(1 for item in jobs if item.status == JobStatus.CANCELLED.value)
+    active = sum(
+        1 for item in jobs
+        if item.status in {
+            JobStatus.PENDING.value,
+            JobStatus.QUEUED.value,
+            JobStatus.PROCESSING.value,
+        }
+    )
+
+    batch.total_videos = len(jobs)
+    batch.completed_videos = completed
+    batch.failed_videos = failed
+
+    if active > 0:
+        batch.status = JobStatus.PROCESSING.value
+    elif cancelled == len(jobs):
+        batch.status = JobStatus.CANCELLED.value
+    elif failed > 0 or cancelled > 0:
+        batch.status = JobStatus.FAILED.value
+    else:
+        batch.status = JobStatus.COMPLETED.value
+
+    await session.commit()
+
+
 @celery_app.task(bind=True, max_retries=3)
 def process_video(self, video_id: str, job_id: str):
     """
@@ -444,6 +492,7 @@ async def _process_video_async(task, video_id: str, job_id: str):
                 job.progress = 100.0
                 job.completed_at = datetime.now(timezone.utc)
                 await session.commit()
+                await _sync_batch_status(session, job.batch_id)
 
             await notify_job_progress(job_id, job.status, 100.0, None)
 
@@ -459,6 +508,7 @@ async def _process_video_async(task, video_id: str, job_id: str):
                 job.error_message = str(e)
                 job.error_step = job.current_step
                 await session.commit()
+                await _sync_batch_status(session, job.batch_id)
 
             await notify_job_error(job_id, str(e), job.current_step)
 
@@ -477,6 +527,8 @@ def process_batch(self, batch_id: str):
 
 async def _process_batch_async(task, batch_id: str):
     """Async implementation of batch processing."""
+    from app.workers.enqueue import enqueue_video_job
+
     bid = uuid.UUID(batch_id)
 
     async with async_session_maker() as session:
@@ -502,7 +554,9 @@ async def _process_batch_async(task, batch_id: str):
 
         # Queue each job
         for job in jobs:
-            process_video.delay(str(job.video_id), str(job.id))
+            await enqueue_video_job(session, job)
+
+        await _sync_batch_status(session, batch.id)
 
         logger.info(f"Batch processing started: {batch_id}, {len(jobs)} jobs queued")
         return {"status": "started", "jobs_queued": len(jobs)}

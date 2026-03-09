@@ -9,7 +9,7 @@ import {
   Clock,
   Users,
   FileText,
-  Image,
+  Image as ImageIcon,
   CheckCircle,
   List,
   Trash2,
@@ -429,7 +429,7 @@ export default function VideoDetailPage({
                     : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
-                <Image className="mr-2 h-4 w-4" />
+                <ImageIcon className="mr-2 h-4 w-4" />
                 Slides ({summary?.slides.length ?? 0})
               </button>
             </nav>

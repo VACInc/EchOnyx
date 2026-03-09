@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -29,9 +30,11 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex h-20 items-center justify-between px-4">
         <div className="flex h-full w-full items-center">
-          <img
+          <Image
             src="/echonyx-horizontal.png"
             alt="EchOnyx"
+            width={240}
+            height={80}
             className="h-full w-full object-contain"
           />
         </div>

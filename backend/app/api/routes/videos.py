@@ -8,7 +8,7 @@ from typing import Annotated
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import case, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,8 @@ settings = get_settings()
 class VideoResponse(BaseModel):
     """Video response schema."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     filename: str
     original_filename: str
@@ -34,9 +36,6 @@ class VideoResponse(BaseModel):
     tags: list[str] | None
     status: str
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class VideoListResponse(BaseModel):

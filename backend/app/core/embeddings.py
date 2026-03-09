@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 _chroma_client: chromadb.ClientAPI | None = None
 
 
+def _has_embedding_rows(result: dict) -> bool:
+    embeddings = result.get("embeddings")
+    return embeddings is not None and len(embeddings) > 0
+
+
 def get_chroma_client() -> chromadb.ClientAPI:
     """Get or create ChromaDB client."""
     global _chroma_client
@@ -244,6 +249,7 @@ async def index_video_content(
 async def search_content(
     query: str,
     video_id: str | None = None,
+    video_ids: list[str] | None = None,
     content_type: str | None = None,
     n_results: int = 10,
 ) -> list[dict]:
@@ -265,17 +271,29 @@ async def search_content(
     query_embedding = await generate_embeddings([query])
 
     # Build where filter
-    where = {}
+    filter_clauses: list[dict[str, Any]] = []
     if video_id:
-        where["video_id"] = video_id
+        filter_clauses.append({"video_id": video_id})
+    elif video_ids:
+        unique_video_ids = sorted(set(video_ids))
+        if len(unique_video_ids) == 1:
+            filter_clauses.append({"video_id": unique_video_ids[0]})
+        elif unique_video_ids:
+            filter_clauses.append({"video_id": {"$in": unique_video_ids}})
     if content_type:
-        where["type"] = content_type
+        filter_clauses.append({"type": content_type})
+
+    where: dict[str, Any] | None = None
+    if len(filter_clauses) == 1:
+        where = filter_clauses[0]
+    elif filter_clauses:
+        where = {"$and": filter_clauses}
 
     # Search
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=n_results,
-        where=where if where else None,
+        where=where,
         include=["documents", "metadatas", "distances"],
     )
 
@@ -310,11 +328,17 @@ async def find_similar_content(
 
     # Get embeddings for this video's summary
     results = collection.get(
-        where={"video_id": video_id, "type": "summary"},
+        where={"$and": [{"video_id": video_id}, {"type": "summary"}]},
         include=["embeddings"],
     )
 
-    if not results["embeddings"]:
+    if not _has_embedding_rows(results):
+        results = collection.get(
+            where={"$and": [{"video_id": video_id}, {"type": "transcript"}]},
+            include=["embeddings"],
+        )
+
+    if not _has_embedding_rows(results):
         return []
 
     # Use the first summary embedding as query

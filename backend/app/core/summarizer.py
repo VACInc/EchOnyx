@@ -86,6 +86,66 @@ def _call_summarization_endpoint(
     return response.json()
 
 
+def _extract_chat_content(response: dict) -> str:
+    """Extract the assistant message content from a chat completion response."""
+    choices = response.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(str(item.get("text") or ""))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts).strip()
+    return str(content).strip()
+
+
+async def complete_with_summarization_model(
+    messages: list[dict],
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+) -> str:
+    """Generate a generic chat completion using the configured summarization model."""
+    settings = get_settings()
+    endpoint_url = _summarization_endpoint_url(settings)
+    use_endpoint = bool(endpoint_url)
+    manager = None
+    model = None
+
+    if not use_endpoint:
+        manager = get_model_manager()
+        model = await manager.get_model(ModelType.SUMMARIZATION)
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        def do_complete() -> str:
+            response = (
+                _call_summarization_endpoint(
+                    settings,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                if use_endpoint
+                else model.create_chat_completion(
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            )
+            return _extract_chat_content(response)
+
+        return await loop.run_in_executor(None, do_complete)
+    finally:
+        if manager:
+            await manager.release_model(ModelType.SUMMARIZATION)
+
+
 def parse_summary_json(content: str) -> dict:
     """Parse a JSON summary from a model response."""
     try:
