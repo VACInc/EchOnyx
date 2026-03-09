@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -108,14 +109,45 @@ def _call_vision_endpoint(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    response = httpx.post(
-        endpoint,
-        json=payload,
-        headers=headers,
-        timeout=settings.vision_endpoint_timeout_s,
-    )
-    response.raise_for_status()
-    return response.json()
+    request_timeout = min(settings.vision_endpoint_timeout_s, 60.0)
+    deadline = time.monotonic() + max(settings.vision_endpoint_timeout_s, 5.0)
+    attempt = 0
+
+    while True:
+        attempt += 1
+        try:
+            response = httpx.post(
+                endpoint,
+                json=payload,
+                headers=headers,
+                timeout=request_timeout,
+            )
+        except httpx.RequestError:
+            if time.monotonic() >= deadline:
+                raise
+            retry_delay = min(5.0, 0.5 * attempt)
+            logger.info(
+                "Vision endpoint request failed during startup; retrying in %.1fs (attempt %d).",
+                retry_delay,
+                attempt,
+            )
+            time.sleep(retry_delay)
+            continue
+
+        if response.status_code == 503 and "loading model" in response.text.lower():
+            if time.monotonic() >= deadline:
+                response.raise_for_status()
+            retry_delay = min(5.0, 0.5 * attempt)
+            logger.info(
+                "Vision endpoint is still loading; retrying in %.1fs (attempt %d).",
+                retry_delay,
+                attempt,
+            )
+            time.sleep(retry_delay)
+            continue
+
+        response.raise_for_status()
+        return response.json()
 
 
 def _normalize_vision_result(result: object) -> dict:

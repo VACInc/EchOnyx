@@ -1,6 +1,32 @@
 # AMD GPU override (Strix Halo / ROCm) - use with: docker compose -f docker-compose.yml -f docker-compose.amd.yml up
 
 services:
+  vision-server:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: vs-vision
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    command:
+      - -m
+      - /models/Qwen3VL-32B-Instruct-Q4_K_M.gguf
+      - --mmproj
+      - /models/mmproj-Qwen3VL-32B-Instruct-F16.gguf
+      - -c
+      - "8192"
+      - -ngl
+      - "0"
+      - --host
+      - 0.0.0.0
+    volumes:
+      - model_cache:/models:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
   backend:
     build:
       args:
@@ -29,6 +55,15 @@ services:
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
+      - VISION_ENDPOINT_URL=http://vision-server:8080/v1
+      - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vision-server:
+        condition: service_healthy
 
   worker:
     build:
@@ -58,3 +93,12 @@ services:
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64:/opt/rocm-7.1.0/lib:/opt/rocm-7.1.0/lib64
+      - VISION_ENDPOINT_URL=http://vision-server:8080/v1
+      - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vision-server:
+        condition: service_healthy
