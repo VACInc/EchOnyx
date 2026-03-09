@@ -26,6 +26,18 @@ def _should_retry_on_cpu_after_gpu_error(exc: RuntimeError) -> bool:
     )
 
 
+def _run_diarization_pipeline(pipeline, waveform, sample_rate: int, params: dict, torch_module):
+    if hasattr(pipeline, "eval"):
+        pipeline.eval()
+
+    inference_mode = getattr(torch_module, "inference_mode", None)
+    if callable(inference_mode):
+        with inference_mode():
+            return pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+
+    return pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+
+
 async def diarize_audio(
     audio_path: Path,
     num_speakers: int | None = None,
@@ -99,7 +111,13 @@ async def diarize_audio(
 
             waveform = torch.from_numpy(audio_array).float().unsqueeze(0)
             try:
-                diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+                diarization = _run_diarization_pipeline(
+                    pipeline,
+                    waveform,
+                    sample_rate,
+                    params,
+                    torch,
+                )
             except RuntimeError as exc:
                 if _should_retry_on_cpu_after_gpu_error(exc):
                     logger.warning(
@@ -107,7 +125,13 @@ async def diarize_audio(
                         exc,
                     )
                     pipeline.to(torch.device("cpu"))
-                    diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+                    diarization = _run_diarization_pipeline(
+                        pipeline,
+                        waveform,
+                        sample_rate,
+                        params,
+                        torch,
+                    )
                 elif _is_gpu_runtime_error(exc):
                     logger.error(
                         "Diarization GPU failed and CPU fallback is disabled for this runtime: %s",
