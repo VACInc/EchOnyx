@@ -101,7 +101,7 @@ if path.exists():
     text = path.read_text()
     if "Missing llama.cpp symbol" not in text:
         text, count = re.subn(
-            r"(?m)^(?P<indent>\\s*)func = getattr\\(lib, name\\)$",
+            r"(?m)^(?P<indent>[ ]*)func = getattr\(lib, name\)$",
             "\\g<indent>try:\\n"
             "\\g<indent>    func = getattr(lib, name)\\n"
             "\\g<indent>except AttributeError:\\n"
