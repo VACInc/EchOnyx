@@ -20,5 +20,5 @@ uv sync
 uv run uvicorn app.main:app --reload
 
 # Run Celery worker
-uv run celery -A app.workers.celery worker --loglevel=info
+uv run celery -A app.workers.celery_app worker --loglevel=info
 ```

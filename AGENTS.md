@@ -1,5 +1,22 @@
 # AGENTS
 
 - Always keep unit tests up to date.
-- After any code changes, run unit tests to confirm functionality is not broken.
+- After any code changes, run the relevant verification before you finish:
+  - Backend: prefer `uv run pytest backend/tests`. If `uv`/`pytest` is unavailable locally, use a disposable venv or a Docker-based runner and say exactly what ran.
+  - Frontend: run a production build (`npm run build` or the frontend Docker build). Run `npm run lint` too if dependencies are installed.
 - Commit and push after every change.
+- Do not print, echo, inspect, or otherwise reveal secret values. If the user provides a wrapper command for remote access, use it as-is and do not extract or log the token behind it.
+- Treat the live Strix Halo machine as part of the review surface for this repo. Validate both code and runtime behavior.
+- Preferred live checks:
+  - Frontend: `http://192.168.1.178:3000/`
+  - API health: `http://192.168.1.178:8000/health`
+  - Runtime config: `/api/settings`, `/api/settings/hardware`, `/api/settings/models/status`
+- Do not assume the live deployment matches Docker Compose exactly. Verify the real runtime first; this project may be running directly on the host.
+- When changing queueing or pipeline behavior, explicitly verify:
+  - `/api/jobs` and `/api/batch` totals/pagination
+  - batch uploads actually enqueue work
+  - cancel flows revoke the underlying Celery task
+  - vision/summarization endpoints report `online` when configured
+  - search/ask behavior matches what the UI claims
+- Keep operational docs aligned when behavior changes. If you touch startup, worker, or deployment assumptions, update `README.md`, `backend/README.md`, Compose files, and this file together.
+- Current repo hotspot: search/ask/similarity and batch-processing paths need extra scrutiny because they are easy places for product claims and runtime behavior to drift apart.
