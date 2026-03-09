@@ -5,9 +5,25 @@ import logging
 from pathlib import Path
 from typing import Callable
 
+from app.config import GPUBackend, HardwareProfile, get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _is_gpu_runtime_error(exc: RuntimeError) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in ("miopen", "hip", "rocm"))
+
+
+def _should_retry_on_cpu_after_gpu_error(exc: RuntimeError) -> bool:
+    if not _is_gpu_runtime_error(exc):
+        return False
+    settings = get_settings()
+    return not (
+        settings.hardware_profile == HardwareProfile.STRIX_HALO
+        and settings.gpu_backend == GPUBackend.ROCM
+    )
 
 
 async def diarize_audio(
@@ -85,14 +101,19 @@ async def diarize_audio(
             try:
                 diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
             except RuntimeError as exc:
-                message = str(exc).lower()
-                if any(token in message for token in ("miopen", "hip", "rocm")):
+                if _should_retry_on_cpu_after_gpu_error(exc):
                     logger.warning(
                         "Diarization GPU failed (%s); retrying on CPU.",
                         exc,
                     )
                     pipeline.to(torch.device("cpu"))
                     diarization = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+                elif _is_gpu_runtime_error(exc):
+                    logger.error(
+                        "Diarization GPU failed and CPU fallback is disabled for this runtime: %s",
+                        exc,
+                    )
+                    raise
                 else:
                     raise
 

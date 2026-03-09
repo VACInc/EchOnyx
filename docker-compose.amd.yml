@@ -86,6 +86,7 @@ services:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
+      - MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
@@ -127,6 +128,7 @@ services:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
+      - MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64

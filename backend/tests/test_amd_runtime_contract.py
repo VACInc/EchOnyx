@@ -12,6 +12,7 @@ def test_amd_compose_uses_rocm_llama_server_image_contract():
     assert "repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/" in compose_text
     assert "--pool=solo" in compose_text
     assert '- "999"' in compose_text
+    assert "MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}" in compose_text
 
 
 def test_rocm_llama_server_files_fail_closed_without_rocm():
