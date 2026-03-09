@@ -17,6 +17,14 @@ class DummySession:
         return self._results.pop(0)
 
 
+class DummyManager:
+    def __init__(self, loaded_models=None):
+        self._loaded_models = list(loaded_models or [])
+
+    def get_loaded_models(self):
+        return list(self._loaded_models)
+
+
 @pytest.mark.asyncio
 async def test_search_uses_semantic_results_with_tag_filter(monkeypatch):
     kept_video = Video(
@@ -220,6 +228,103 @@ async def test_search_falls_back_when_semantic_search_times_out(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_skips_semantic_when_embedding_not_warm_on_sequential_rocm(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="meeting.mp4",
+        original_filename="meeting.mp4",
+        file_path="/tmp/meeting.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Roadmap Review",
+        transcript={
+            "segments": [
+                {
+                    "start": 18.0,
+                    "end": 22.0,
+                    "text": "The budget roadmap review is due Friday.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+    )
+
+    async def should_not_run(*_args, **_kwargs):
+        raise AssertionError("semantic search should have been skipped")
+
+    settings = type(
+        "Settings",
+        (),
+        {
+            "model_loading": search_module.ModelLoadingStrategy.SEQUENTIAL,
+            "gpu_backend": search_module.GPUBackend.ROCM,
+        },
+    )()
+
+    monkeypatch.setattr(search_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(search_module, "get_model_manager", lambda: DummyManager())
+    monkeypatch.setattr(search_module, "search_content", should_not_run)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await search(q="budget roadmap due", tags=None, speaker=None, limit=5, db=db)
+
+    assert response.total == 1
+    assert response.results[0].text == "The budget roadmap review is due Friday."
+    assert response.results[0].timestamp == pytest.approx(18.0)
+
+
+@pytest.mark.asyncio
+async def test_ask_question_falls_back_to_lexical_matches_when_semantic_is_unavailable(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="meeting.mp4",
+        original_filename="meeting.mp4",
+        file_path="/tmp/meeting.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Roadmap Review",
+        transcript={
+            "segments": [
+                {
+                    "start": 12.0,
+                    "end": 16.0,
+                    "text": "The budget roadmap review is due Friday.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+    )
+    settings = type(
+        "Settings",
+        (),
+        {
+            "model_loading": search_module.ModelLoadingStrategy.SEQUENTIAL,
+            "gpu_backend": search_module.GPUBackend.ROCM,
+        },
+    )()
+    captured = {}
+
+    async def fake_complete(messages, max_tokens: int = 0, temperature: float = 0.0):
+        captured["messages"] = messages
+        return "The budget roadmap review is due Friday."
+
+    monkeypatch.setattr(search_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(search_module, "get_model_manager", lambda: DummyManager())
+    monkeypatch.setattr(search_module, "complete_with_summarization_model", fake_complete)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await ask_question(
+        RAGQuestion(question="When is the budget roadmap review due?"),
+        db=db,
+    )
+
+    assert response.answer == "The budget roadmap review is due Friday."
+    assert len(response.sources) == 1
+    assert response.sources[0].text == "The budget roadmap review is due Friday."
+    assert "Friday" in captured["messages"][1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_find_similar_falls_back_to_lexical_similarity(monkeypatch):
     source_video = Video(
         id=uuid.uuid4(),
@@ -257,3 +362,52 @@ async def test_find_similar_falls_back_to_lexical_similarity(monkeypatch):
     assert response.total == 1
     assert response.results[0].video_id == str(similar_video.id)
     assert response.results[0].relevance_score > 0
+
+
+@pytest.mark.asyncio
+async def test_find_similar_skips_semantic_when_embedding_not_warm_on_sequential_rocm(monkeypatch):
+    source_video = Video(
+        id=uuid.uuid4(),
+        filename="source.mp4",
+        original_filename="source.mp4",
+        file_path="/tmp/source.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Roadmap Review",
+        summary={"executive_summary": "Budget roadmap review and planning decisions."},
+    )
+    similar_video = Video(
+        id=uuid.uuid4(),
+        filename="similar.mp4",
+        original_filename="similar.mp4",
+        file_path="/tmp/similar.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Planning Session",
+        summary={"executive_summary": "Planning session covering roadmap and budget milestones."},
+    )
+    settings = type(
+        "Settings",
+        (),
+        {
+            "model_loading": search_module.ModelLoadingStrategy.SEQUENTIAL,
+            "gpu_backend": search_module.GPUBackend.ROCM,
+        },
+    )()
+
+    async def should_not_run(*_args, **_kwargs):
+        raise AssertionError("semantic similarity should have been skipped")
+
+    monkeypatch.setattr(search_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(search_module, "get_model_manager", lambda: DummyManager())
+    monkeypatch.setattr(search_module, "find_similar_content", should_not_run)
+
+    db = DummySession([
+        SequenceResult(scalar=source_video),
+        SequenceResult(items=[similar_video]),
+        SequenceResult(items=[similar_video]),
+    ])
+    response = await find_similar(str(source_video.id), limit=3, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(similar_video.id)

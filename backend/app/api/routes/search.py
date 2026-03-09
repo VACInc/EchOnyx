@@ -10,7 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import GPUBackend, ModelLoadingStrategy, get_settings
 from app.core.embeddings import find_similar_content, search_content
+from app.core.model_manager import ModelType, get_model_manager
 from app.core.summarizer import complete_with_summarization_model
 from app.database import get_db
 from app.models.video import Video
@@ -18,6 +20,30 @@ from app.models.video import Video
 router = APIRouter()
 SEMANTIC_SEARCH_TIMEOUT_S = 20.0
 SIMILARITY_TOKEN_REGEX = re.compile(r"[a-z0-9]{3,}")
+SEARCH_STOPWORDS = {
+    "about",
+    "after",
+    "before",
+    "could",
+    "does",
+    "from",
+    "have",
+    "into",
+    "should",
+    "that",
+    "them",
+    "then",
+    "they",
+    "this",
+    "when",
+    "what",
+    "where",
+    "which",
+    "who",
+    "with",
+    "were",
+    "would",
+}
 
 
 class SearchResult(BaseModel):
@@ -200,11 +226,16 @@ async def find_similar(
         raise HTTPException(status_code=404, detail="Video not found")
 
     try:
-        similar_videos = await asyncio.wait_for(
-            find_similar_content(str(video.id), n_results=limit),
-            timeout=SEMANTIC_SEARCH_TIMEOUT_S,
-        )
+        similar_videos = []
+        if _semantic_search_available():
+            similar_videos = await asyncio.wait_for(
+                find_similar_content(str(video.id), n_results=limit),
+                timeout=SEMANTIC_SEARCH_TIMEOUT_S,
+            )
     except Exception:
+        result = await db.execute(select(Video).where(Video.id != vid))
+        similar_videos = _fallback_similar_videos(video, result.scalars().all(), limit)
+    if not similar_videos:
         result = await db.execute(select(Video).where(Video.id != vid))
         similar_videos = _fallback_similar_videos(video, result.scalars().all(), limit)
     if not similar_videos:
@@ -328,6 +359,8 @@ async def _semantic_search(
 ) -> list[SearchResult]:
     if not videos:
         return []
+    if not _semantic_search_available():
+        return []
 
     video_map = {str(video.id): video for video in videos}
     try:
@@ -380,39 +413,25 @@ def _fallback_text_search(
     speaker: str | None,
     limit: int,
 ) -> list[SearchResult]:
-    results: list[SearchResult] = []
-    search_lower = q.lower()
+    query_tokens = _search_tokens(q)
+    query_lower = q.lower().strip()
+    if not query_lower and not query_tokens:
+        return []
+    ranked_results: list[tuple[float, SearchResult]] = []
 
     for video in videos:
-        if not video.transcript:
-            continue
+        ranked_results.extend(_fallback_video_matches(video, q, query_lower, query_tokens, speaker))
 
-        for segment in video.transcript.get("segments", []):
-            text = segment.get("text", "")
-            if search_lower not in text.lower():
-                continue
-
-            segment_speaker = segment.get("speaker")
-            if speaker and segment_speaker != speaker:
-                continue
-
-            start_time = segment.get("start", 0.0)
-            results.append(
-                SearchResult(
-                    video_id=str(video.id),
-                    video_title=video.title or video.original_filename,
-                    timestamp=start_time,
-                    timestamp_formatted=format_timestamp(start_time),
-                    speaker=segment_speaker,
-                    text=text,
-                    context=get_context(video.transcript, segment),
-                    relevance_score=1.0,
-                )
-            )
-            if len(results) >= limit:
-                return results
-
-    return results
+    ranked_results.sort(
+        key=lambda item: (
+            item[0],
+            -(item[1].timestamp or 0.0),
+            item[1].video_title,
+            item[1].text,
+        ),
+        reverse=True,
+    )
+    return [result for _, result in ranked_results[:limit]]
 
 
 def _build_semantic_context(video: Video, text: str, metadata: dict) -> str:
@@ -510,6 +529,185 @@ def _video_similarity_text(video: Video) -> str:
 
 def _similarity_tokens(text: str) -> set[str]:
     return set(SIMILARITY_TOKEN_REGEX.findall(text.lower()))
+
+
+def _search_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in _similarity_tokens(text)
+        if token not in SEARCH_STOPWORDS
+    }
+
+
+def _semantic_search_available() -> bool:
+    settings = get_settings()
+    if (
+        settings.model_loading == ModelLoadingStrategy.SEQUENTIAL
+        and settings.gpu_backend == GPUBackend.ROCM
+    ):
+        manager = get_model_manager()
+        return ModelType.EMBEDDING.value in set(manager.get_loaded_models())
+    return True
+
+
+def _fallback_video_matches(
+    video: Video,
+    query: str,
+    query_lower: str,
+    query_tokens: set[str],
+    speaker: str | None,
+) -> list[tuple[float, SearchResult]]:
+    video_title = video.title or video.original_filename
+    candidates: list[tuple[float, SearchResult]] = []
+
+    if video.transcript:
+        for segment in video.transcript.get("segments", []):
+            text = str(segment.get("text", "")).strip()
+            if not text:
+                continue
+            segment_speaker = segment.get("speaker")
+            if speaker and segment_speaker != speaker:
+                continue
+            score = _lexical_match_score(query, query_lower, query_tokens, text)
+            if score <= 0:
+                continue
+            start_time = float(segment.get("start", 0.0))
+            candidates.append(
+                (
+                    score + 0.4,
+                    SearchResult(
+                        video_id=str(video.id),
+                        video_title=video_title,
+                        timestamp=start_time,
+                        timestamp_formatted=format_timestamp(start_time),
+                        speaker=segment_speaker,
+                        text=text,
+                        context=get_context(video.transcript, segment),
+                        relevance_score=score + 0.4,
+                    ),
+                )
+            )
+
+    if video.summary:
+        executive_summary = str(video.summary.get("executive_summary") or "").strip()
+        if executive_summary:
+            score = _lexical_match_score(query, query_lower, query_tokens, executive_summary)
+            if score > 0:
+                candidates.append(
+                    (
+                        score + 0.2,
+                        SearchResult(
+                            video_id=str(video.id),
+                            video_title=video_title,
+                            timestamp=None,
+                            timestamp_formatted=None,
+                            speaker=None,
+                            text=executive_summary,
+                            context="summary section: executive_summary",
+                            relevance_score=score + 0.2,
+                        ),
+                    )
+                )
+
+        for point in video.summary.get("key_points") or []:
+            point_text = str(point or "").strip()
+            if not point_text:
+                continue
+            score = _lexical_match_score(query, query_lower, query_tokens, point_text)
+            if score <= 0:
+                continue
+            candidates.append(
+                (
+                    score + 0.1,
+                    SearchResult(
+                        video_id=str(video.id),
+                        video_title=video_title,
+                        timestamp=None,
+                        timestamp_formatted=None,
+                        speaker=None,
+                        text=point_text,
+                        context="summary section: key_points",
+                        relevance_score=score + 0.1,
+                    ),
+                )
+            )
+
+        for topic in video.summary.get("topics") or []:
+            topic_name = str(topic.get("topic") or "").strip()
+            topic_summary = str(topic.get("summary") or "").strip()
+            topic_text = " ".join(part for part in (topic_name, topic_summary) if part)
+            if not topic_text:
+                continue
+            score = _lexical_match_score(query, query_lower, query_tokens, topic_text)
+            if score <= 0:
+                continue
+            timestamp = _coerce_timestamp(topic.get("timestamp"))
+            candidates.append(
+                (
+                    score + 0.1,
+                    SearchResult(
+                        video_id=str(video.id),
+                        video_title=video_title,
+                        timestamp=timestamp,
+                        timestamp_formatted=format_timestamp(timestamp) if timestamp is not None else None,
+                        speaker=None,
+                        text=topic_text,
+                        context=f"topic: {topic_name}" if topic_name else "topic",
+                        relevance_score=score + 0.1,
+                    ),
+                )
+            )
+
+    if video.slides:
+        for slide in video.slides:
+            slide_title = str(slide.get("title") or "").strip()
+            slide_content = str(slide.get("content") or "").strip()
+            slide_text = " ".join(part for part in (slide_title, slide_content) if part)
+            if not slide_text:
+                continue
+            score = _lexical_match_score(query, query_lower, query_tokens, slide_text)
+            if score <= 0:
+                continue
+            timestamp = _coerce_timestamp(slide.get("timestamp"))
+            candidates.append(
+                (
+                    score,
+                    SearchResult(
+                        video_id=str(video.id),
+                        video_title=video_title,
+                        timestamp=timestamp,
+                        timestamp_formatted=format_timestamp(timestamp) if timestamp is not None else None,
+                        speaker=None,
+                        text=slide_text,
+                        context=f"slide: {slide_title}" if slide_title else "slide",
+                        relevance_score=score,
+                    ),
+                )
+            )
+
+    return candidates
+
+
+def _lexical_match_score(
+    query: str,
+    query_lower: str,
+    query_tokens: set[str],
+    text: str,
+) -> float:
+    text_lower = text.lower()
+    text_tokens = _search_tokens(text)
+    overlap = query_tokens & text_tokens
+
+    score = 0.0
+    if query_lower and query_lower in text_lower:
+        score += 2.0
+    if overlap:
+        score += len(overlap) / max(len(query_tokens), 1)
+        score += len(overlap) / max(len(text_tokens), 1)
+    elif not query_lower:
+        return 0.0
+
+    return score
 
 
 def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], limit: int) -> list[dict]:
