@@ -78,6 +78,22 @@ def _faster_whisper_compute_type(backend: GPUBackend) -> str:
     return "float32"
 
 
+def _resolve_llama_gpu_layers(
+    backend: GPUBackend,
+    configured_layers: int | None,
+    *,
+    rocm_safe_default: bool = False,
+) -> int:
+    """Resolve llama.cpp GPU layer count with ROCm-safe defaults."""
+    if configured_layers is not None:
+        return configured_layers
+    if backend == GPUBackend.CPU:
+        return 0
+    if backend == GPUBackend.ROCM and rocm_safe_default:
+        return 0
+    return -1
+
+
 async def _load_faster_whisper(
     model_name: str,
     backend: GPUBackend,
@@ -478,8 +494,17 @@ class ModelManager:
                 self.settings.model_cache_dir
             )
 
-        # Determine GPU layers based on backend
-        n_gpu_layers = -1 if self.settings.gpu_backend.value != "cpu" else 0
+        # Default local vision to CPU on ROCm unless explicitly overridden.
+        n_gpu_layers = _resolve_llama_gpu_layers(
+            self.settings.gpu_backend,
+            self.settings.vision_gpu_layers,
+            rocm_safe_default=True,
+        )
+        if self.settings.gpu_backend == GPUBackend.ROCM and self.settings.vision_gpu_layers is None:
+            logger.warning(
+                "ROCm vision model loads defaulting to CPU layers for stability. "
+                "Set VISION_GPU_LAYERS to override."
+            )
 
         loop = asyncio.get_event_loop()
         init_params = {
@@ -580,7 +605,10 @@ class ModelManager:
                 self.settings.model_cache_dir
             )
 
-        n_gpu_layers = -1 if self.settings.gpu_backend.value != "cpu" else 0
+        n_gpu_layers = _resolve_llama_gpu_layers(
+            self.settings.gpu_backend,
+            self.settings.summarization_gpu_layers,
+        )
 
         loop = asyncio.get_event_loop()
         model = await loop.run_in_executor(

@@ -67,12 +67,14 @@ class Settings(BaseSettings):
     vision_model: str = "Qwen3-Omni-30B-A3B-Q4_K_M.gguf"
     vision_mmproj: str = ""
     vision_chat_format: str = ""
+    vision_gpu_layers: int | None = None
     vision_endpoint_url: str = ""
     vision_endpoint_model: str = ""
     vision_endpoint_api_key: str = ""
     vision_endpoint_timeout_s: float = 600.0
     vision_debug: bool = False
     summarization_model: str = "Qwen3-30B-A3B-Q4_K_M.gguf"
+    summarization_gpu_layers: int | None = None
     summarization_endpoint_url: str = ""
     summarization_endpoint_model: str = ""
     summarization_endpoint_api_key: str = ""
