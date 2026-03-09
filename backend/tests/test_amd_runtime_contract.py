@@ -10,6 +10,7 @@ def test_amd_compose_uses_rocm_llama_server_image_contract():
     assert "ghcr.io/ggml-org/llama.cpp:server" not in compose_text
     assert "docker/rocm-llama-server/Dockerfile" in compose_text
     assert "repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/" in compose_text
+    assert "--pool=solo" in compose_text
     assert '- "999"' in compose_text
 
 

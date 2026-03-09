@@ -104,6 +104,7 @@ services:
         condition: service_healthy
 
   worker:
+    command: celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q video_processing,batch_processing,default
     build:
       args:
         ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/}
