@@ -41,7 +41,7 @@ HF_TOKEN=hf_your_token_here
 
 ### 2) Run
 
-**AMD Strix Halo / Vulkan:**
+**AMD Strix Halo / ROCm:**
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 ```
@@ -110,10 +110,24 @@ Use the Search page to:
 
 | Profile | Description | Model Loading |
 |---------|-------------|---------------|
-| Strix Halo | AMD APU with 128GB unified memory | Sequential |
+| Strix Halo | AMD APU with 128GB unified memory | Sequential (current default) |
 | RTX 5090 | Single high-VRAM NVIDIA GPU (32GB+) | Parallel |
 | Multi-GPU | Multiple NVIDIA GPUs | Parallel |
 | CPU Only | Fallback for systems without GPU | Sequential |
+
+Current AMD note:
+- Torch-backed stages can use ROCm on Strix Halo today.
+- GGUF vision/summarization on AMD currently use local `llama.cpp` servers for stability while ROCm-native GGUF execution is being hardened.
+
+## Active Requirements
+
+- Strix Halo and other AMD systems must be fully functional on ROCm unless CPU execution is proven to be equally fast for the same stage/model.
+- Model residency must become dynamic instead of hard-coded:
+  - detect available GPUs, VRAM/unified memory, and topology automatically
+  - determine whether all models can stay resident without unloading
+  - support a configurable memory ceiling so the runtime keeps itself under a user-defined budget
+  - decide whether models should be isolated, shared, or split across GPUs when the hardware supports it
+- Cold-start penalties for large embedding models need to be reduced on AMD so batch tails do not stall behind first-load startup costs.
 
 ## Architecture (Brief)
 
