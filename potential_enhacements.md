@@ -14,6 +14,7 @@
 
 ## Next Functional Work
 
+- Replace automatic transcription fallback with an explicit ASR model switcher/selector so one chosen ASR path runs deterministically instead of silently falling back to Whisper.
 - Add full NVIDIA runtime support after the AMD/ROCm path is solid.
 - Add macOS/Metal support after NVIDIA.
 - Turn Ask into a true chat workflow using the summarization model as the response engine.
@@ -24,6 +25,8 @@
 
 ## Product And Pipeline Enhancements
 
+- Reevaluate the audio-event stage and choose the best local model/runtime for meeting-vs-broadcast and similar source hints instead of treating the current AST AudioSet classifier as final.
+- If audio-event classification stays, benchmark candidate models on Strix Halo ROCm and NVIDIA, including accuracy on small real video fixtures plus latency/VRAM impact.
 - Incremental recomputation with step-level caching and lineage/versioning for transcripts, frames, vision metadata, and summaries.
 - Multi-index retrieval routing (transcript + slides + vision) with reranking for better long-video QA.
 - Optional live transcription + audio capture/mixing mode for real-time meetings and demos.
