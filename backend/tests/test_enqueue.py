@@ -176,3 +176,39 @@ async def test_recover_stale_processing_jobs_skips_without_workers(monkeypatch):
 
     assert recovered == 0
     assert job.status == JobStatus.PROCESSING.value
+
+
+@pytest.mark.asyncio
+async def test_recover_stale_processing_jobs_with_zero_grace_recovers_recent_job(monkeypatch):
+    recent_job = Job(
+        id=uuid.uuid4(),
+        video_id=uuid.uuid4(),
+        status=JobStatus.PROCESSING.value,
+        celery_task_id="recent-task",
+        started_at=datetime.now(timezone.utc),
+        current_step="transcription",
+        progress=10.0,
+        step_progress={"transcription": {"progress": 10.0}},
+        retry_count=0,
+    )
+
+    async def fake_enqueue(db, job_obj, **_kwargs):
+        job_obj.celery_task_id = "new-task"
+        job_obj.status = JobStatus.QUEUED.value
+        return job_obj
+
+    monkeypatch.setattr(enqueue_module, "enqueue_video_job", fake_enqueue)
+
+    db = DummySession(results=[recent_job])
+    recovered = await enqueue_module.recover_stale_processing_jobs_with_grace(
+        db,
+        stale_minutes=0,
+        active_task_ids=set(),
+    )
+
+    assert recovered == 1
+    assert recent_job.status == JobStatus.QUEUED.value
+    assert recent_job.celery_task_id == "new-task"
+    assert recent_job.current_step == "transcription"
+    assert recent_job.progress == 10.0
+    assert recent_job.step_progress == {"transcription": {"progress": 10.0}}

@@ -65,7 +65,11 @@ celery_app.conf.update(
 def _recover_jobs_on_worker_ready(**_kwargs) -> None:
     """Requeue interrupted jobs as soon as a worker is available again."""
     from app.database import get_worker_async_session_maker
-    from app.workers.enqueue import requeue_orphaned_jobs, recover_stale_processing_jobs
+    from app.workers.enqueue import (
+        _collect_active_task_ids,
+        recover_stale_processing_jobs_with_grace,
+        requeue_orphaned_jobs,
+    )
 
     async def _recover() -> None:
         worker_async_session_maker = get_worker_async_session_maker()
@@ -73,7 +77,12 @@ def _recover_jobs_on_worker_ready(**_kwargs) -> None:
             requeued = await requeue_orphaned_jobs(session)
             if requeued:
                 logger.info("Worker startup requeued %d orphaned job(s)", requeued)
-            recovered = await recover_stale_processing_jobs(session)
+            active_task_ids, _ = _collect_active_task_ids()
+            recovered = await recover_stale_processing_jobs_with_grace(
+                session,
+                stale_minutes=0,
+                active_task_ids=active_task_ids,
+            )
             if recovered:
                 logger.info("Worker startup recovered %d stale processing job(s)", recovered)
 

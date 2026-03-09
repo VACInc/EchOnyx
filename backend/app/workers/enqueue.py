@@ -105,8 +105,23 @@ async def recover_stale_processing_jobs(db: AsyncSession) -> int:
     if not workers_present:
         logger.warning("No Celery workers found; skipping stale job recovery.")
         return 0
+    return await recover_stale_processing_jobs_with_grace(
+        db,
+        stale_minutes=settings.job_stale_minutes,
+        active_task_ids=active_task_ids,
+    )
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=settings.job_stale_minutes)
+
+async def recover_stale_processing_jobs_with_grace(
+    db: AsyncSession,
+    stale_minutes: int,
+    active_task_ids: set[str] | None = None,
+) -> int:
+    """Requeue stale processing jobs while preserving completed checkpoint state."""
+    if active_task_ids is None:
+        active_task_ids, _ = _collect_active_task_ids()
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
     result = await db.execute(
         select(Job).where(
             Job.status == JobStatus.PROCESSING.value,
