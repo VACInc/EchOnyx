@@ -7,6 +7,7 @@ import pytest
 from app.config import (
     GPUBackend,
     HardwareProfile,
+    ROCmLLMRuntime,
     Settings,
     auto_detect_hardware_profile,
     detect_gpu_info,
@@ -109,3 +110,10 @@ def test_validate_hardware_requirements_accepts_rocm_ready_strix_halo(monkeypatc
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     validate_hardware_requirements(settings)
+
+
+def test_settings_default_to_managed_llama_server_runtime():
+    settings = Settings()
+
+    assert settings.rocm_llm_runtime == ROCmLLMRuntime.LLAMA_SERVER
+    assert settings.rocm_llm_idle_timeout_s == 120

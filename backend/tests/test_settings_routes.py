@@ -25,6 +25,8 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         summarization_endpoint_model="summary-endpoint",
         embedding_model="Qwen/Qwen3-Embedding-8B",
         audio_event_model="laion/clap-htsat-fused",
+        rocm_llm_runtime="llama_server",
+        rocm_llm_idle_timeout_s=120,
         max_video_length_hours=4,
         keyframe_extraction_interval=5,
         frame_persistence_seconds=3.0,
@@ -45,6 +47,8 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.models.asr_model == "nvidia/canary-qwen-2.5b"
     assert response.models.asr_family == "canary"
     assert response.models.audio_event_model == "laion/clap-htsat-fused"
+    assert response.models.rocm_llm_runtime == "llama_server"
+    assert response.models.rocm_llm_idle_timeout_s == 120
     assert "transcription_fallback_model" not in response.models.model_dump()
     assert "transcription_fallback_enabled" not in response.models.model_dump()
 

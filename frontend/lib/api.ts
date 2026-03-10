@@ -62,6 +62,8 @@ interface SettingsResponse {
     summarization_endpoint_model: string;
     embedding_model: string;
     audio_event_model: string;
+    rocm_llm_runtime: string;
+    rocm_llm_idle_timeout_s: number;
   };
   processing: {
     max_video_length_hours: number;

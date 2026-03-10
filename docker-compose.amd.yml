@@ -1,13 +1,14 @@
 # AMD GPU override (Strix Halo / ROCm) - use with:
 # docker compose -f docker-compose.yml -f docker-compose.amd.yml up
 
-x-rocm-llama-server: &rocm-llama-server
+x-rocm-openai-runtime: &rocm-openai-runtime
   build:
     context: .
-    dockerfile: docker/rocm-llama-server/Dockerfile
+    dockerfile: docker/rocm-openai-runtime/Dockerfile
     args:
       ROCM_DEV_IMAGE: ${ROCM_DEV_IMAGE:-rocm/dev-ubuntu-24.04:7.2-complete}
       AMD_LLAMA_PACKAGE_URL: ${AMD_LLAMA_PACKAGE_URL:-https://repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/llama-b7782-ubuntu-24.04-rocm-7.2.0-gfx110X-gfx115X-gfx120X-x64.zip}
+      VLLM_PIP_SPEC: ${VLLM_PIP_SPEC:-vllm}
   restart: unless-stopped
   devices:
     - /dev/kfd:/dev/kfd
@@ -28,40 +29,35 @@ x-rocm-llama-server: &rocm-llama-server
 
 services:
   vision-server:
-    <<: *rocm-llama-server
+    <<: *rocm-openai-runtime
     container_name: vs-vision
     ports:
       - "8081:8080"
-    command:
-      - -m
-      - /models/Qwen3VL-32B-Instruct-Q4_K_M.gguf
-      - --mmproj
-      - /models/mmproj-Qwen3VL-32B-Instruct-F16.gguf
-      - -c
-      - "8192"
-      - -ngl
-      - "999"
-      - -np
-      - "1"
-      - --host
-      - 0.0.0.0
+    environment:
+      - MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}
+      - IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
+      - MODEL_PATH=${VISION_MODEL_PATH:-/models/Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-32B-Instruct-F16.gguf}
+      - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
+      - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
+      - LLAMA_SERVER_EXTRA_ARGS=${VISION_LLAMA_SERVER_EXTRA_ARGS:-}
+      - VLLM_EXTRA_ARGS=${VISION_VLLM_EXTRA_ARGS:-}
 
   summarization-server:
-    <<: *rocm-llama-server
+    <<: *rocm-openai-runtime
     container_name: vs-summary
     ports:
       - "8080:8080"
-    command:
-      - -m
-      - /models/qwen3-30b-a3b-q4_k_m.gguf
-      - -c
-      - "32768"
-      - -ngl
-      - "999"
-      - -np
-      - "1"
-      - --host
-      - 0.0.0.0
+    environment:
+      - MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}
+      - IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
+      - MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
+      - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
+      - LLAMA_SERVER_EXTRA_ARGS=${SUMMARIZATION_LLAMA_SERVER_EXTRA_ARGS:-}
+      - VLLM_EXTRA_ARGS=${SUMMARIZATION_VLLM_EXTRA_ARGS:-}
 
   backend:
     build:
@@ -88,12 +84,14 @@ services:
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
       - MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
+      - ROCM_LLM_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}
+      - ROCM_LLM_IDLE_TIMEOUT_S=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
-      - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
+      - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=qwen3-30b-a3b-q4_k_m.gguf
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
     depends_on:
       db:
         condition: service_healthy
@@ -130,12 +128,14 @@ services:
       - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
       - MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}
       - MODEL_LOADING=${MODEL_LOADING:-sequential}
+      - ROCM_LLM_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}
+      - ROCM_LLM_IDLE_TIMEOUT_S=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
       - ROCM_PATH=/opt/rocm
       - LD_LIBRARY_PATH=/opt/rocm/lib:/opt/rocm/lib64
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
-      - VISION_ENDPOINT_MODEL=Qwen3VL-32B-Instruct-Q4_K_M.gguf
+      - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=qwen3-30b-a3b-q4_k_m.gguf
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
     depends_on:
       db:
         condition: service_healthy

@@ -11,12 +11,17 @@ from app.config import (
     GPUBackend,
     HardwareProfile,
     ModelLoadingStrategy,
+    ROCmLLMRuntime,
     get_asr_family,
     get_hardware_info,
     get_settings,
 )
 
 router = APIRouter()
+
+
+def _enum_value(value) -> str:
+    return getattr(value, "value", value)
 
 
 class GPUInfo(BaseModel):
@@ -38,6 +43,8 @@ class HardwareInfo(BaseModel):
     whisper_backend: str
     asr_family: str
     model_loading_strategy: str
+    rocm_llm_runtime: str
+    rocm_llm_idle_timeout_s: int
 
 
 class ModelConfig(BaseModel):
@@ -57,6 +64,8 @@ class ModelConfig(BaseModel):
     summarization_endpoint_model: str
     embedding_model: str
     audio_event_model: str
+    rocm_llm_runtime: str
+    rocm_llm_idle_timeout_s: int
 
 
 class ProcessingConfig(BaseModel):
@@ -92,6 +101,8 @@ class SettingsUpdate(BaseModel):
     hardware_profile: HardwareProfile | None = None
     gpu_backend: GPUBackend | None = None
     model_loading: ModelLoadingStrategy | None = None
+    rocm_llm_runtime: ROCmLLMRuntime | None = None
+    rocm_llm_idle_timeout_s: int | None = None
     asr_model: str | None = None
     granite_force_cpu: bool | None = None
     diarization_model: str | None = None
@@ -122,9 +133,9 @@ async def get_current_settings() -> SettingsResponse:
     settings = get_settings()
 
     return SettingsResponse(
-        hardware_profile=settings.hardware_profile.value if settings.hardware_profile else "unknown",
-        gpu_backend=settings.gpu_backend.value if settings.gpu_backend else "unknown",
-        model_loading=settings.model_loading.value,
+        hardware_profile=_enum_value(settings.hardware_profile) if settings.hardware_profile else "unknown",
+        gpu_backend=_enum_value(settings.gpu_backend) if settings.gpu_backend else "unknown",
+        model_loading=_enum_value(settings.model_loading),
         models=ModelConfig(
             asr_family=get_asr_family(settings.whisper_model),
             asr_model=settings.whisper_model,
@@ -140,6 +151,8 @@ async def get_current_settings() -> SettingsResponse:
             summarization_endpoint_model=settings.summarization_endpoint_model,
             embedding_model=settings.embedding_model,
             audio_event_model=settings.audio_event_model,
+            rocm_llm_runtime=_enum_value(settings.rocm_llm_runtime),
+            rocm_llm_idle_timeout_s=settings.rocm_llm_idle_timeout_s,
         ),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,

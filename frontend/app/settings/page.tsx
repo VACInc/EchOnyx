@@ -67,6 +67,18 @@ export default function SettingsPage() {
             <span className="text-slate-600 dark:text-slate-300">Audio Events</span>
             <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.audio_event_model}</span>
           </div>
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-slate-600 dark:text-slate-300">ROCm LLM Runtime</span>
+            <span className="font-medium capitalize text-slate-900 dark:text-slate-100">
+              {settings?.models.rocm_llm_runtime.replaceAll("_", " ")}
+            </span>
+          </div>
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-slate-600 dark:text-slate-300">ROCm Idle Timeout</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">
+              {settings?.models.rocm_llm_idle_timeout_s}s
+            </span>
+          </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-600 dark:text-slate-300">Embeddings</span>
             <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.embedding_model}</span>

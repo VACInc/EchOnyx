@@ -66,6 +66,8 @@ Set these in `.env` as needed:
 - `HF_TOKEN`: required for pyannote diarization models
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
 - `SUMMARIZATION_ENDPOINT_URL`, `SUMMARIZATION_ENDPOINT_MODEL`: use an external LLM server
+- `ROCM_LLM_RUNTIME`: `llama_server` (managed idle teardown) or `vllm`
+- `ROCM_LLM_IDLE_TIMEOUT_S`: idle shutdown for ROCm `llama_server` endpoints
 - `EMBEDDING_MODEL`: embedding model id (HF)
 - `UPLOAD_DIR`, `MODEL_CACHE_DIR`: storage locations
 
@@ -118,7 +120,10 @@ Use the Search page to:
 
 Current AMD note:
 - Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.
-- The AMD Docker override now uses AMD's published ROCm `llama.cpp` server artifact for `gfx115X` and fails closed if ROCm cannot enumerate a supported device.
+- The AMD Docker override now supports two ROCm LLM endpoint paths behind the same OpenAI-compatible URLs:
+  - `llama_server`: AMD ROCm `llama.cpp`, managed with idle teardown
+  - `vllm`: vLLM OpenAI server for ROCm
+- The AMD Docker override still uses AMD's published ROCm `llama.cpp` server artifact for `gfx115X` and fails closed if ROCm cannot enumerate a supported device.
 - Current AMD defaults target ROCm `7.2` for both the backend wheels and the dedicated GGUF server image.
 
 ## Active Requirements

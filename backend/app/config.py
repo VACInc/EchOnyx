@@ -23,6 +23,11 @@ class GPUBackend(str, Enum):
     CPU = "cpu"
 
 
+class ROCmLLMRuntime(str, Enum):
+    LLAMA_SERVER = "llama_server"
+    VLLM = "vllm"
+
+
 class ModelLoadingStrategy(str, Enum):
     SEQUENTIAL = "sequential"  # Load/unload models as needed (memory constrained)
     PARALLEL = "parallel"  # Keep all models loaded (high VRAM)
@@ -46,6 +51,8 @@ class Settings(BaseSettings):
     cuda_visible_devices: str = ""
     vulkan_device: int = 0
     gpu_memory_fraction: float = 0.75
+    rocm_llm_runtime: ROCmLLMRuntime = ROCmLLMRuntime.LLAMA_SERVER
+    rocm_llm_idle_timeout_s: int = 120
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/video_summarizer"
@@ -349,4 +356,6 @@ def get_hardware_info() -> dict:
         "whisper_backend": whisper_backend,
         "asr_family": get_asr_family(settings.whisper_model),
         "model_loading_strategy": settings.model_loading.value,
+        "rocm_llm_runtime": settings.rocm_llm_runtime.value,
+        "rocm_llm_idle_timeout_s": settings.rocm_llm_idle_timeout_s,
     }
