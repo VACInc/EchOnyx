@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import signal
 import socket
 import subprocess
 import threading
@@ -189,6 +190,7 @@ class ManagedRuntime:
         self._health_check = health_check or self._default_health_check
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
+        self._process_group_id: int | None = None
         self._last_request_ts = 0.0
         self._last_start_ts = 0.0
         self._active_requests = 0
@@ -224,7 +226,8 @@ class ManagedRuntime:
 
             command = build_runtime_command(self.config)
             env = os.environ.copy()
-            self._process = self._popen_factory(command, env=env)
+            self._process = self._popen_factory(command, env=env, start_new_session=True)
+            self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts
             return False
 
@@ -250,14 +253,28 @@ class ManagedRuntime:
     def _terminate_locked(self) -> None:
         if not self._process:
             return
-        self._process.terminate()
+        process_group_id = self._process_group_id
+        if process_group_id is not None:
+            try:
+                os.killpg(process_group_id, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        else:
+            self._process.terminate()
         try:
             self._process.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            self._process.kill()
+            if process_group_id is not None:
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                self._process.kill()
             self._process.wait(timeout=30)
         finally:
             self._process = None
+            self._process_group_id = None
 
     def _default_health_check(self, config: RuntimeConfig) -> bool:
         url = f"http://127.0.0.1:{config.upstream_port}/health"

@@ -9,6 +9,7 @@ from app.runtime.managed_openai_runtime import (
 
 class FakeProcess:
     def __init__(self):
+        self.pid = 4321
         self.returncode = None
         self.terminated = False
         self.killed = False
@@ -130,8 +131,8 @@ def test_managed_runtime_starts_once_until_child_is_ready(monkeypatch):
     def fake_clock():
         return current_time["value"]
 
-    def fake_popen(command, env):
-        popen_calls.append((command, env))
+    def fake_popen(command, env, start_new_session):
+        popen_calls.append((command, env, start_new_session))
         return process
 
     monkeypatch.setattr(
@@ -150,11 +151,17 @@ def test_managed_runtime_starts_once_until_child_is_ready(monkeypatch):
     assert runtime.ensure_started() is False
     assert runtime.ensure_started() is True
     assert len(popen_calls) == 1
+    assert popen_calls[0][2] is True
 
 
-def test_managed_runtime_stops_idle_process():
+def test_managed_runtime_stops_idle_process(monkeypatch):
     process = FakeProcess()
     current_time = {"value": 100.0}
+    killpg_calls = []
+
+    def fake_killpg(pid, sig):
+        killpg_calls.append((pid, sig))
+        process.returncode = 0
 
     runtime = ManagedRuntime(
         _runtime_config(idle_timeout_seconds=30),
@@ -163,12 +170,14 @@ def test_managed_runtime_stops_idle_process():
         health_check=lambda _config: True,
     )
 
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.os.killpg", fake_killpg)
     runtime._process = process
+    runtime._process_group_id = process.pid
     runtime._last_request_ts = 100.0
     current_time["value"] = 131.0
 
     assert runtime.maybe_stop_idle_process() is True
-    assert process.terminated is True
+    assert killpg_calls
     assert runtime.child_running() is False
 
 
