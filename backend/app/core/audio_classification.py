@@ -28,6 +28,8 @@ CLAP_PRIMARY_CANDIDATES = (
         "prompt_variants": (
             "in-person meeting room or office discussion recorded directly at the table",
             "unproduced conference room conversation recorded in the room",
+            "office meeting captured by a room microphone with coworkers talking back and forth",
+            "conference room discussion with multiple people speaking naturally in the room",
         ),
         "hint": "Audio most likely sounds like direct meeting-room or office speech.",
         "summary_label": "direct meeting or office speech",
@@ -40,6 +42,8 @@ CLAP_PRIMARY_CANDIDATES = (
         "prompt_variants": (
             "television news, sports broadcast, or talk-show audio playing from nearby speakers",
             "tv news or sports audio coming from a television in the room",
+            "news anchor or sports commentary playing through television speakers in a room",
+            "talk show or news broadcast audio coming from nearby TV speakers",
         ),
         "hint": "Audio most likely sounds like television or broadcast playback rather than direct participant speech.",
         "summary_label": "broadcast or TV playback",
@@ -52,6 +56,7 @@ CLAP_PRIMARY_CANDIDATES = (
         "prompt_variants": (
             "produced podcast, voice-over, or studio narration",
             "studio-quality voice-over or podcast host narration",
+            "edited explainer or polished studio voice-over narration",
         ),
         "hint": "Audio most likely sounds like produced narration or podcast-style speech.",
         "summary_label": "produced narration or voice-over",
@@ -64,6 +69,8 @@ CLAP_PRIMARY_CANDIDATES = (
         "prompt_variants": (
             "screen recording or software demo with a presenter narrating steps directly",
             "screen-share software walkthrough with live spoken narration",
+            "software tutorial with mouse clicks and narrated button-by-button steps",
+            "screen recording tutorial with interface clicks and spoken software guidance",
         ),
         "hint": "Audio most likely sounds like a presenter directly narrating a software demo or walkthrough.",
         "summary_label": "direct software-demo narration",

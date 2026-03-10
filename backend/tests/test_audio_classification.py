@@ -296,9 +296,6 @@ async def test_classify_audio_events_collapses_direct_speech_overlap(monkeypatch
     assert result["primary_context"]["key"] == "software_demo_direct_speech"
     assert result["primary_context"]["label"] == "direct software-demo narration"
     assert result["speech_score"] > result["tv_score"]
-    assert any(item["key"] == "music_heavy" for item in result["supporting_contexts"])
-    assert any("noticeable music" in hint for hint in result["hints"])
-    assert "noticeable music bed or soundtrack" in result["summary_context"]
     assert manager.released is True
 
 

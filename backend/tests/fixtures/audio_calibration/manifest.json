@@ -1,6 +1,32 @@
 {
   "fixtures": [
     {
+      "media_path": "meeting_room_speech.wav",
+      "expected_primary_key": "meeting_room_speech",
+      "expected_supporting_keys": [],
+      "label": "meeting_room_speech"
+    },
+    {
+      "media_path": "meeting_with_applause.wav",
+      "expected_primary_key": "meeting_room_speech",
+      "expected_supporting_keys": [
+        "crowd_applause"
+      ],
+      "label": "meeting_with_applause"
+    },
+    {
+      "media_path": "broadcast_playback.wav",
+      "expected_primary_key": "broadcast_playback",
+      "expected_supporting_keys": [],
+      "label": "broadcast_playback"
+    },
+    {
+      "media_path": "software_demo_narration.wav",
+      "expected_primary_key": "software_demo",
+      "expected_supporting_keys": [],
+      "label": "software_demo_narration"
+    },
+    {
       "media_path": "voiceover_no_music.wav",
       "expected_primary_key": "podcast_voiceover",
       "expected_supporting_keys": [],

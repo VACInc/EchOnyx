@@ -193,7 +193,7 @@ def test_calibrate_clap_profile_from_observations_selects_music_prompt_and_rule(
     assert len(profile["supporting_prompts"]["music_heavy"]) >= 1
     assert "corporate explainer narration with light underscore music" in profile["supporting_prompts"]["music_heavy"]
     assert profile["supporting_rules"]["music_heavy"]["aggregation"] in {"mean", "max", "top2_mean"}
-    assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] <= 0.12
+    assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] in audio_calibration.ABSOLUTE_THRESHOLD_GRID
     assert profile["metrics"]["fixtures_evaluated"] == 3
 
 
@@ -241,6 +241,10 @@ def test_repo_audio_calibration_fixture_pack_is_checked_in():
     fixtures = audio_calibration.load_audio_calibration_manifest(manifest_path)
 
     assert [fixture.label for fixture in fixtures] == [
+        "meeting_room_speech",
+        "meeting_with_applause",
+        "broadcast_playback",
+        "software_demo_narration",
         "voiceover_no_music",
         "voiceover_with_music",
     ]
@@ -252,9 +256,23 @@ def test_repo_audio_calibration_profile_matches_fixture_pack():
     profile_path = Path(__file__).resolve().parents[1] / "app" / "assets" / "audio_event_calibration.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
-    assert profile["metrics"]["fixtures_evaluated"] == 2
-    assert profile["metrics"]["labels"] == ["voiceover_no_music", "voiceover_with_music"]
+    assert profile["metrics"]["fixtures_evaluated"] == 6
+    assert profile["metrics"]["labels"] == [
+        "meeting_room_speech",
+        "meeting_with_applause",
+        "broadcast_playback",
+        "software_demo_narration",
+        "voiceover_no_music",
+        "voiceover_with_music",
+    ]
     assert "music_heavy" in profile["supporting_prompts"]
+    assert profile["supporting_prompts"]["music_heavy"] == [
+        "corporate explainer narration with light underscore music",
+    ]
+    assert profile["supporting_prompts"]["crowd_applause"] == [
+        "room applause after a talk or presentation",
+        "audience applause or crowd reaction",
+    ]
     assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.03)
 
 

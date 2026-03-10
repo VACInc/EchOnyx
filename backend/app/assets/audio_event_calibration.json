@@ -8,10 +8,10 @@
   },
   "supporting_prompts": {
     "music_heavy": [
-      "corporate explainer narration with light underscore music",
-      "spoken narration with background music or soundtrack"
+      "corporate explainer narration with light underscore music"
     ],
     "crowd_applause": [
+      "room applause after a talk or presentation",
       "audience applause or crowd reaction"
     ]
   },
@@ -28,8 +28,12 @@
     }
   },
   "metrics": {
-    "fixtures_evaluated": 2,
+    "fixtures_evaluated": 6,
     "labels": [
+      "meeting_room_speech",
+      "meeting_with_applause",
+      "broadcast_playback",
+      "software_demo_narration",
       "voiceover_no_music",
       "voiceover_with_music"
     ]

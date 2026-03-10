@@ -278,10 +278,14 @@ def _fixture_primary_score(observation: dict) -> float:
     )
 
 
-def _f1(precision: float, recall: float) -> float:
+def _f_beta(precision: float, recall: float, beta: float) -> float:
+    beta_sq = beta * beta
     if precision + recall == 0:
         return 0.0
-    return 2 * precision * recall / (precision + recall)
+    denominator = (beta_sq * precision) + recall
+    if denominator == 0:
+        return 0.0
+    return (1 + beta_sq) * precision * recall / denominator
 
 
 def _choose_supporting_rules(
@@ -321,8 +325,8 @@ def _choose_supporting_rules(
 
                     precision = tp / (tp + fp) if (tp + fp) else 0.0
                     recall = tp / (tp + fn) if (tp + fn) else 0.0
-                    metric = _f1(precision, recall)
-                    tie_break = precision + (recall * 0.1)
+                    metric = _f_beta(precision, recall, beta=0.5)
+                    tie_break = (precision * 2.0) + (recall * 0.1)
                     current_tie_break = (
                         best_choice.get("_precision", 0.0)
                         + (best_choice.get("_recall", 0.0) * 0.1)
