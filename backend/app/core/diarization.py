@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable
 
@@ -31,11 +32,18 @@ def _run_diarization_pipeline(pipeline, waveform, sample_rate: int, params: dict
         pipeline.eval()
 
     inference_mode = getattr(torch_module, "inference_mode", None)
-    if callable(inference_mode):
-        with inference_mode():
-            return pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+    inference_context = inference_mode() if callable(inference_mode) else nullcontext()
 
-    return pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
+    cudnn_context = nullcontext()
+    settings = get_settings()
+    cudnn_backend = getattr(getattr(torch_module, "backends", None), "cudnn", None)
+    cudnn_flags = getattr(cudnn_backend, "flags", None)
+    if settings.gpu_backend == GPUBackend.ROCM and callable(cudnn_flags):
+        cudnn_context = cudnn_flags(enabled=False)
+
+    with cudnn_context:
+        with inference_context:
+            return pipeline({"waveform": waveform, "sample_rate": sample_rate}, **params)
 
 
 async def diarize_audio(

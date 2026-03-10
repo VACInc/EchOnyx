@@ -24,15 +24,24 @@ def test_should_not_retry_on_cpu_after_gpu_error_for_strix_halo(monkeypatch):
     assert not diarization_module._should_retry_on_cpu_after_gpu_error(RuntimeError("HIP kernel failure"))
 
 
-def test_run_diarization_pipeline_uses_eval_and_inference_mode():
+def test_run_diarization_pipeline_uses_eval_and_inference_mode(monkeypatch):
     calls: list[str] = []
+    settings = SimpleNamespace(
+        hardware_profile=HardwareProfile.STRIX_HALO,
+        gpu_backend=GPUBackend.ROCM,
+    )
 
     class DummyContext:
+        def __init__(self, label):
+            self.label = label
+
         def __enter__(self):
+            calls.append(f"{self.label}:enter")
             calls.append("enter")
             return None
 
         def __exit__(self, exc_type, exc, tb):
+            calls.append(f"{self.label}:exit")
             calls.append("exit")
             return False
 
@@ -45,9 +54,18 @@ def test_run_diarization_pipeline_uses_eval_and_inference_mode():
             return {"inputs": inputs, "params": params}
 
     class DummyTorch:
+        class backends:
+            class cudnn:
+                @staticmethod
+                def flags(enabled=False, **_kwargs):
+                    calls.append(f"cudnn:{enabled}")
+                    return DummyContext("cudnn")
+
         @staticmethod
         def inference_mode():
-            return DummyContext()
+            return DummyContext("inference")
+
+    monkeypatch.setattr(diarization_module, "get_settings", lambda: settings)
 
     result = diarization_module._run_diarization_pipeline(
         DummyPipeline(),
@@ -57,6 +75,18 @@ def test_run_diarization_pipeline_uses_eval_and_inference_mode():
         torch_module=DummyTorch(),
     )
 
-    assert calls == ["eval", "enter", "call", "exit"]
+    assert calls == [
+        "eval",
+        "cudnn:False",
+        "cudnn:enter",
+        "enter",
+        "inference:enter",
+        "enter",
+        "call",
+        "inference:exit",
+        "exit",
+        "cudnn:exit",
+        "exit",
+    ]
     assert result["inputs"]["waveform"] == "waveform"
     assert result["params"]["num_speakers"] == 2
