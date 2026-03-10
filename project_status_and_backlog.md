@@ -28,6 +28,10 @@
   - the same summary call took about `27.3s` with audio context versus `13.7s` without it on a warm summarization endpoint
 - Current CLAP limitation from that benchmark:
   - a light synthetic music bed did not clear the supporting-cue threshold, so soundtrack sensitivity still needs calibration
+- Follow-up live Strix Halo benchmark on March 10, 2026 after the automatic support-scoring pass:
+  - the same narrated benchmark clip now emits both `produced narration or voice-over` and `noticeable music bed or soundtrack`
+  - the saved audio-event artifact shows soundtrack support scoring around `0.94` for that clip
+  - the post-run GPU idle check still returned to `0%` use at about `607-609 MHz`
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 
@@ -57,6 +61,7 @@
 ## Product And Pipeline Enhancements
 
 - Tune CLAP prompt and threshold mapping so direct speech, software-demo narration, produced voice-over, playback, and soundtrack cues separate cleanly on small real fixtures.
+- Add a small labeled fixture set plus an auto-calibration pass that writes `AUDIO_EVENT_CALIBRATION_PATH` profiles instead of relying only on built-in heuristics.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.

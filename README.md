@@ -66,6 +66,7 @@ Set these in `.env` as needed:
 - `HF_TOKEN`: required for pyannote diarization models
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
 - `SUMMARIZATION_ENDPOINT_URL`, `SUMMARIZATION_ENDPOINT_MODEL`: use an external LLM server
+- `AUDIO_EVENT_CALIBRATION_PATH`: optional JSON profile that overrides CLAP prompts and support thresholds
 - `ROCM_LLM_RUNTIME`: `llama_server` (managed idle teardown) or `vllm`
 - `ROCM_LLM_IDLE_TIMEOUT_S`: idle shutdown for ROCm `llama_server` endpoints
 - `INSTALL_VLLM=1`: opt-in build flag for the heavier ROCm `vLLM` image path
