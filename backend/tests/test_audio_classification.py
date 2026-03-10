@@ -130,11 +130,20 @@ class FakeClapProcessor:
         }
 
 
-class FakeClapModel:
+class FakeBroadcastClapModel:
     def __call__(self, **_kwargs):
         logits = np.zeros((1, len(audio_classification.CLAP_HINT_CANDIDATES)))
         logits[0, 1] = 5.0
         logits[0, 4] = 2.0
+        return types.SimpleNamespace(logits_per_audio=FakeTensor(logits))
+
+
+class FakeDirectSpeechClapModel:
+    def __call__(self, **_kwargs):
+        logits = np.zeros((1, len(audio_classification.CLAP_HINT_CANDIDATES)))
+        logits[0, 3] = 5.0
+        logits[0, 0] = 4.95
+        logits[0, 4] = 4.6
         return types.SimpleNamespace(logits_per_audio=FakeTensor(logits))
 
 
@@ -149,7 +158,7 @@ async def test_classify_audio_events_uses_clap_candidates(monkeypatch):
     manager = DummyManager(
         {
             "type": "audio_event_clap",
-            "model": FakeClapModel(),
+            "model": FakeBroadcastClapModel(),
             "processor": FakeClapProcessor(),
             "device": "cpu",
         }
@@ -171,8 +180,11 @@ async def test_classify_audio_events_uses_clap_candidates(monkeypatch):
     result = await audio_classification.classify_audio_events(Path("/tmp/sample.wav"))
 
     assert result["top_labels"][0]["label"] == "broadcast playback"
+    assert result["primary_context"]["label"] == "broadcast or TV playback"
+    assert result["primary_context"]["confidence"] == "high"
     assert result["tv_score"] > result["speech_score"]
-    assert any("broadcast or TV-style playback" in hint for hint in result["hints"])
+    assert any("television or broadcast playback" in hint for hint in result["hints"])
+    assert "Primary audio context: broadcast or TV playback" in result["summary_context"]
     assert manager.released is True
 
 
@@ -187,7 +199,7 @@ async def test_classify_audio_events_handles_missing_torchaudio_info(monkeypatch
     manager = DummyManager(
         {
             "type": "audio_event_clap",
-            "model": FakeClapModel(),
+            "model": FakeBroadcastClapModel(),
             "processor": FakeClapProcessor(),
             "device": "cpu",
         }
@@ -205,5 +217,48 @@ async def test_classify_audio_events_handles_missing_torchaudio_info(monkeypatch
     result = await audio_classification.classify_audio_events(Path("/tmp/sample.wav"))
 
     assert result["top_labels"][0]["label"] == "broadcast playback"
-    assert any("broadcast or TV-style playback" in hint for hint in result["hints"])
+    assert result["primary_context"]["label"] == "broadcast or TV playback"
+    assert any("television or broadcast playback" in hint for hint in result["hints"])
+    assert "Primary audio context: broadcast or TV playback" in result["summary_context"]
+    assert manager.released is True
+
+
+@pytest.mark.asyncio
+async def test_classify_audio_events_collapses_direct_speech_overlap(monkeypatch):
+    settings = types.SimpleNamespace(
+        audio_event_sample_seconds=1.0,
+        audio_event_num_samples=2,
+        audio_event_min_score=0.15,
+        audio_event_debug=False,
+    )
+    manager = DummyManager(
+        {
+            "type": "audio_event_clap",
+            "model": FakeDirectSpeechClapModel(),
+            "processor": FakeClapProcessor(),
+            "device": "cpu",
+        }
+    )
+
+    monkeypatch.setattr(audio_classification, "get_settings", lambda: settings)
+    monkeypatch.setattr(audio_classification, "get_model_manager", lambda: manager)
+    monkeypatch.setattr(
+        audio_classification.torchaudio,
+        "info",
+        lambda _path: types.SimpleNamespace(num_frames=96_000, sample_rate=48_000),
+    )
+    monkeypatch.setattr(
+        audio_classification,
+        "_load_audio_segment",
+        lambda _audio_path, _offset, _num_frames: (FakeTensor(np.ones((1, 48_000))), 48_000),
+    )
+
+    result = await audio_classification.classify_audio_events(Path("/tmp/sample.wav"))
+
+    assert result["primary_context"]["key"] == "software_demo_direct_speech"
+    assert result["primary_context"]["label"] == "direct software-demo narration"
+    assert result["speech_score"] > result["tv_score"]
+    assert any(item["key"] == "music_heavy" for item in result["supporting_contexts"])
+    assert any("noticeable music" in hint for hint in result["hints"])
+    assert "Supporting audio cues: noticeable music bed or soundtrack." in result["summary_context"]
     assert manager.released is True

@@ -1,6 +1,7 @@
 import sys
 import types
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -122,6 +123,7 @@ async def test_process_video_pipeline_with_real_sample_video(
     )
 
     captured_embeddings: list[dict] = []
+    captured_summary_calls: list[dict] = []
 
     async def fake_transcribe_audio(_audio_path, **_kwargs):
         return {
@@ -167,6 +169,7 @@ async def test_process_video_pipeline_with_real_sample_video(
         ]
 
     async def fake_generate_summary(transcript, **_kwargs):
+        captured_summary_calls.append(_kwargs)
         return {
             "executive_summary": transcript["text"],
             "key_points": [transcript["text"]],
@@ -183,7 +186,18 @@ async def test_process_video_pipeline_with_real_sample_video(
         }
 
     async def fake_classify_audio_events(_audio_path):
-        return {"hints": []}
+        return {
+            "hints": ["Audio most likely sounds like direct meeting-room or office speech."],
+            "primary_context": {
+                "key": "meeting_room_speech",
+                "label": "direct meeting or office speech",
+                "confidence": "high",
+                "score": 0.71,
+                "hint": "Audio most likely sounds like direct meeting-room or office speech.",
+            },
+            "supporting_contexts": [],
+            "summary_context": "Primary audio context: direct meeting or office speech (high confidence).",
+        }
 
     async def fake_index_video_content(**kwargs):
         captured_embeddings.append(kwargs)
@@ -232,4 +246,8 @@ async def test_process_video_pipeline_with_real_sample_video(
     assert (work_dir / "frames.json").exists()
     assert (work_dir / "frames_analyzed.json").exists()
     assert (work_dir / "slides.json").exists()
+    assert (work_dir / "audio_event.json").exists()
+    audio_event = json.loads((work_dir / "audio_event.json").read_text(encoding="utf-8"))
+    assert audio_event["primary_context"]["label"] == "direct meeting or office speech"
+    assert captured_summary_calls[0]["audio_context"]["primary_context"]["label"] == "direct meeting or office speech"
     assert captured_embeddings and captured_embeddings[0]["video_id"] == str(video_id)

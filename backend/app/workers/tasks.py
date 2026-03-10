@@ -310,6 +310,7 @@ async def _process_video_async(task, video_id: str, job_id: str):
             frames_path = work_dir / "frames.json"
             analyzed_frames_path = work_dir / "frames_analyzed.json"
             slides_path = work_dir / "slides.json"
+            audio_event_path = work_dir / "audio_event.json"
 
             def step_completed(step: JobStep) -> bool:
                 if not job.step_progress:
@@ -473,14 +474,21 @@ async def _process_video_async(task, video_id: str, job_id: str):
                 summary_progress = make_progress_callback(JobStep.SUMMARIZATION)
                 if not audio_path.exists():
                     await extract_audio(video_path, audio_path)
-                audio_event = await classify_audio_events(audio_path)
+                audio_event = load_json(audio_event_path)
+                if not audio_event:
+                    audio_event = await classify_audio_events(audio_path)
+                    save_json(audio_event_path, audio_event)
                 audio_hints = audio_event.get("hints", [])
-                if audio_hints:
+                summary_audio_context = str(audio_event.get("summary_context") or "").strip()
+                if summary_audio_context:
+                    logger.info("Audio event context: %s", summary_audio_context)
+                elif audio_hints:
                     logger.info("Audio event hints: %s", audio_hints)
                 summary = await generate_summary(
                     merged_transcript,
                     slides=slides,
                     frames=analyzed_frames,
+                    audio_context=audio_event,
                     audio_hints=audio_hints,
                     title=video.title,
                     progress_callback=summary_progress,

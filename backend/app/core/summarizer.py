@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 SUMMARY_SYSTEM_PROMPT = """You are an expert at summarizing video presentations and meetings.
-Given a transcript and optional slide content and visual context from frames (including non-slide frames), create a comprehensive summary.
-If audio-source hints are provided, incorporate them into the executive summary or key points as appropriate.
+Given a transcript and optional slide content, visual context from frames (including non-slide frames), and audio context, create a comprehensive summary.
+Treat any audio context as supporting evidence only. Prefer direct transcript evidence and visual evidence when they conflict with tentative audio cues, and do not overstate uncertain audio inferences.
 
 Your summary should include:
 1. Executive Summary: A 2-3 sentence overview of the entire content
@@ -262,6 +262,108 @@ def infer_audio_source_hints(
     return [hint]
 
 
+def format_audio_context_for_summary(
+    audio_context: dict | None = None,
+    audio_hints: list[str] | None = None,
+    frames: list[dict] | None = None,
+) -> str:
+    """Render structured audio context into a compact prompt section."""
+    lines = [
+        "Use these cues as supporting evidence only. Prefer transcript and visuals if they conflict.",
+    ]
+    primary_context = {}
+    supporting_contexts = []
+    summary_context = ""
+
+    if isinstance(audio_context, dict):
+        raw_primary_context = audio_context.get("primary_context")
+        if isinstance(raw_primary_context, dict):
+            primary_context = raw_primary_context
+        raw_supporting_contexts = audio_context.get("supporting_contexts")
+        if isinstance(raw_supporting_contexts, list):
+            supporting_contexts = [item for item in raw_supporting_contexts if isinstance(item, dict)]
+        summary_context = str(audio_context.get("summary_context") or "").strip()
+
+    if summary_context:
+        lines.append(f"- Classifier summary: {summary_context}")
+
+    if primary_context:
+        label = str(primary_context.get("label") or "unknown audio context")
+        confidence = str(primary_context.get("confidence") or "unspecified")
+        score = primary_context.get("score")
+        score_suffix = ""
+        if isinstance(score, (int, float)):
+            score_suffix = f", score {float(score):.2f}"
+        lines.append(
+            f"- Primary classification: {label} ({confidence} confidence{score_suffix})."
+        )
+
+    if supporting_contexts:
+        supporting_labels = [
+            str(item.get("label") or item.get("key") or "unknown cue")
+            for item in supporting_contexts
+        ]
+        lines.append("- Supporting classifier cues: " + ", ".join(supporting_labels) + ".")
+
+    structured_hints = set()
+    if primary_context.get("hint"):
+        structured_hints.add(str(primary_context["hint"]))
+    for item in supporting_contexts:
+        hint = item.get("hint")
+        if hint:
+            structured_hints.add(str(hint))
+
+    additional_hints = []
+    for hint in audio_hints or []:
+        normalized = str(hint).strip()
+        if not normalized or normalized in structured_hints or normalized in additional_hints:
+            continue
+        additional_hints.append(normalized)
+    for hint in additional_hints[:2]:
+        lines.append(f"- Additional audio hint: {hint}")
+
+    for hint in infer_audio_source_hints(frames):
+        lines.append(f"- Visual corroboration: {hint}")
+
+    if len(lines) == 1:
+        return ""
+
+    return "\n".join(lines)
+
+
+def build_summary_user_prompt(
+    transcript_text: str,
+    slides_text: str = "",
+    visual_text: str = "",
+    audio_context_text: str = "",
+    title: str | None = None,
+    header: str | None = None,
+) -> str:
+    """Build the user-facing prompt for summary generation."""
+    sections: list[str] = []
+    if title:
+        sections.append(f"Video Title: {title}")
+    if header:
+        sections.append(header.strip())
+
+    sections.append(f"## Transcript\n\n{transcript_text}")
+
+    if slides_text:
+        sections.append(f"## Slide Content\n\n{slides_text}")
+
+    if visual_text:
+        sections.append(
+            "## Visual Context (key frames, includes non-slide frames)\n\n"
+            f"{visual_text}"
+        )
+
+    if audio_context_text:
+        sections.append(f"## Audio Context\n\n{audio_context_text}")
+
+    sections.append("Please provide a comprehensive summary in JSON format.")
+    return "\n\n".join(sections)
+
+
 def split_transcript_by_time(
     transcript: dict,
     chunk_seconds: float,
@@ -336,6 +438,7 @@ async def generate_summary(
     transcript: dict,
     slides: list[dict] | None = None,
     frames: list[dict] | None = None,
+    audio_context: dict | None = None,
     audio_hints: list[str] | None = None,
     title: str | None = None,
     progress_callback: Callable[[float], None] | None = None,
@@ -393,14 +496,11 @@ async def generate_summary(
                     max_chars=settings.visual_context_max_chars,
                     max_frames=settings.visual_context_max_frames,
                 )
-            derived_audio_hints = infer_audio_source_hints(frames)
-            merged_audio_hints = []
-            if audio_hints:
-                merged_audio_hints.extend(audio_hints)
-            if derived_audio_hints:
-                merged_audio_hints.extend(
-                    hint for hint in derived_audio_hints if hint not in merged_audio_hints
-                )
+            audio_context_text = format_audio_context_for_summary(
+                audio_context=audio_context,
+                audio_hints=audio_hints,
+                frames=frames,
+            )
 
             duration = transcript.get("duration")
             if not duration:
@@ -410,28 +510,13 @@ async def generate_summary(
             use_chunking = chunk_seconds > 0 and duration > (chunk_seconds * 1.2)
 
             if not use_chunking:
-                # Build the prompt
-                user_prompt = ""
-                if title:
-                    user_prompt += f"Video Title: {title}\n\n"
-
-                user_prompt += f"## Transcript\n\n{transcript_text}\n"
-
-                if slides_text:
-                    user_prompt += f"\n## Slide Content\n\n{slides_text}\n"
-
-                if visual_text:
-                    user_prompt += (
-                        "\n## Visual Context (key frames, includes non-slide frames)\n\n"
-                        f"{visual_text}\n"
-                    )
-
-                if merged_audio_hints:
-                    user_prompt += "\n## Audio Source Hints\n\n"
-                    user_prompt += "\n".join(f"- {hint}" for hint in merged_audio_hints)
-                    user_prompt += "\n"
-
-                user_prompt += "\nPlease provide a comprehensive summary in JSON format."
+                user_prompt = build_summary_user_prompt(
+                    transcript_text=transcript_text,
+                    slides_text=slides_text,
+                    visual_text=visual_text,
+                    audio_context_text=audio_context_text,
+                    title=title,
+                )
 
                 if progress_callback:
                     progress_callback(10)
@@ -504,32 +589,23 @@ async def generate_summary(
                         max_chars=per_chunk_chars,
                         max_frames=per_chunk_frames,
                     )
-                chunk_audio_hints = infer_audio_source_hints(chunk_frames)
-                if audio_hints:
-                    chunk_audio_hints = list(audio_hints) + [
-                        hint for hint in chunk_audio_hints if hint not in audio_hints
-                    ]
-
-                user_prompt = ""
-                if title:
-                    user_prompt += f"Video Title: {title}\n\n"
-                user_prompt += (
-                    f"Chunk {idx} of {total_chunks}\n"
-                    f"Time Range: {format_timestamp(chunk['start'])} - {format_timestamp(chunk['end'])}\n\n"
-                    f"## Transcript\n\n{chunk_text}\n"
+                chunk_audio_context_text = format_audio_context_for_summary(
+                    audio_context=audio_context,
+                    audio_hints=audio_hints,
+                    frames=chunk_frames,
                 )
-                if chunk_slides_text:
-                    user_prompt += f"\n## Slide Content\n\n{chunk_slides_text}\n"
-                if chunk_visual_text:
-                    user_prompt += (
-                        "\n## Visual Context (key frames, includes non-slide frames)\n\n"
-                        f"{chunk_visual_text}\n"
-                    )
-                if chunk_audio_hints:
-                    user_prompt += "\n## Audio Source Hints\n\n"
-                    user_prompt += "\n".join(f"- {hint}" for hint in chunk_audio_hints)
-                    user_prompt += "\n"
-                user_prompt += "\nPlease provide a comprehensive summary in JSON format."
+                user_prompt = build_summary_user_prompt(
+                    transcript_text=chunk_text,
+                    slides_text=chunk_slides_text,
+                    visual_text=chunk_visual_text,
+                    audio_context_text=chunk_audio_context_text,
+                    title=title,
+                    header=(
+                        f"Chunk {idx} of {total_chunks}\n"
+                        f"Time Range: {format_timestamp(chunk['start'])} - "
+                        f"{format_timestamp(chunk['end'])}"
+                    ),
+                )
 
                 response = (
                     _call_summarization_endpoint(

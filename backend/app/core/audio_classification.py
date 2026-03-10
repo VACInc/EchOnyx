@@ -20,43 +20,211 @@ CLAP_HINT_CANDIDATES = (
     {
         "key": "meeting_room_speech",
         "label": "meeting-room speech",
-        "prompt": "near-field speech in a meeting room or office",
-        "hint": "Audio sounds like direct meeting-room or office speech.",
+        "prompt": "in-person meeting room or office discussion recorded directly at the table",
+        "hint": "Audio most likely sounds like direct meeting-room or office speech.",
+        "summary_label": "direct meeting or office speech",
+        "family": "direct_speech",
     },
     {
         "key": "broadcast_playback",
         "label": "broadcast playback",
-        "prompt": "broadcast television news or talk-show audio playing from speakers",
-        "hint": "Audio sounds like broadcast or TV-style playback rather than participants speaking directly.",
+        "prompt": "television news, sports broadcast, or talk-show audio playing from nearby speakers",
+        "hint": "Audio most likely sounds like television or broadcast playback rather than direct participant speech.",
+        "summary_label": "broadcast or TV playback",
+        "family": "playback",
     },
     {
         "key": "podcast_voiceover",
         "label": "podcast voice-over",
-        "prompt": "podcast, voice-over, or studio narration",
-        "hint": "Audio sounds like produced narration or podcast-style speech.",
+        "prompt": "produced podcast, voice-over, or studio narration",
+        "hint": "Audio most likely sounds like produced narration or podcast-style speech.",
+        "summary_label": "produced narration or voice-over",
+        "family": "produced_speech",
     },
     {
         "key": "software_demo",
         "label": "software demo narration",
-        "prompt": "screen recording or software demo with spoken narration",
-        "hint": "Audio sounds like narrated software-demo or screencast audio.",
+        "prompt": "screen recording or software demo with a presenter narrating steps directly",
+        "hint": "Audio most likely sounds like a presenter directly narrating a software demo or walkthrough.",
+        "summary_label": "direct software-demo narration",
+        "family": "direct_speech",
     },
     {
         "key": "music_heavy",
         "label": "music-heavy content",
-        "prompt": "music-heavy entertainment audio",
-        "hint": "Audio contains strong music or entertainment-style backing audio.",
+        "prompt": "speech with a strong music bed or soundtrack",
+        "hint": "Audio includes noticeable music or soundtrack backing.",
+        "summary_label": "noticeable music bed or soundtrack",
+        "family": "soundtrack",
     },
     {
         "key": "crowd_applause",
         "label": "crowd or applause",
         "prompt": "audience applause or crowd reaction",
-        "hint": "Audio contains crowd or applause cues.",
+        "hint": "Audio includes crowd, applause, or live-event reaction cues.",
+        "summary_label": "crowd or applause cues",
+        "family": "event",
     },
 )
 
 CLAP_BROADCAST_KEYS = {"broadcast_playback"}
 CLAP_SPEECH_KEYS = {"meeting_room_speech", "podcast_voiceover", "software_demo"}
+CLAP_ORTHOGONAL_KEYS = {"music_heavy", "crowd_applause"}
+
+
+def _confidence_band(score: float, margin: float) -> str:
+    if score >= 0.55 or margin >= 0.25:
+        return "high"
+    if score >= 0.32 or margin >= 0.12:
+        return "medium"
+    return "low"
+
+
+def _score_clap_candidates(probs: torch.Tensor) -> list[dict]:
+    scored = []
+    for idx, candidate in enumerate(CLAP_HINT_CANDIDATES):
+        scored.append(
+            {
+                "key": candidate["key"],
+                "label": candidate["label"],
+                "summary_label": candidate["summary_label"],
+                "hint": candidate["hint"],
+                "family": candidate["family"],
+                "score": float(probs[idx].item()),
+            }
+        )
+    return sorted(scored, key=lambda item: item["score"], reverse=True)
+
+
+def _resolve_primary_clap_context(
+    scored_candidates: list[dict],
+    min_score: float,
+) -> tuple[dict | None, dict[str, float]]:
+    if not scored_candidates:
+        return None, {}
+
+    score_by_key = {item["key"]: item["score"] for item in scored_candidates}
+    software_score = score_by_key.get("software_demo", 0.0)
+    meeting_score = score_by_key.get("meeting_room_speech", 0.0)
+    podcast_score = score_by_key.get("podcast_voiceover", 0.0)
+    broadcast_score = score_by_key.get("broadcast_playback", 0.0)
+
+    primary = scored_candidates[0]
+    primary_key = primary["key"]
+    primary_label = primary["summary_label"]
+    primary_hint = primary["hint"]
+    primary_score = primary["score"]
+
+    # Collapse the common "meeting speech" + "software demo" ambiguity into a single
+    # direct-narration signal instead of emitting two competing speech hints.
+    if (
+        software_score >= min_score
+        and meeting_score >= min_score
+        and abs(software_score - meeting_score) <= 0.12
+        and max(software_score, meeting_score) >= max(podcast_score, broadcast_score)
+    ):
+        primary_key = "software_demo_direct_speech"
+        primary_label = "direct software-demo narration"
+        primary_hint = (
+            "Audio most likely sounds like a presenter or participant directly narrating a software demo or walkthrough."
+        )
+        primary_score = max(software_score, meeting_score)
+        primary_family = "direct_speech"
+    else:
+        primary_family = primary["family"]
+
+    competing_scores = [
+        item["score"]
+        for item in scored_candidates
+        if item["family"] in {"direct_speech", "produced_speech", "playback"}
+        and item["key"] != primary_key
+    ]
+    competitor = max(competing_scores, default=0.0)
+    confidence = _confidence_band(primary_score, primary_score - competitor)
+
+    if primary_score < min_score:
+        return None, score_by_key
+
+    return (
+        {
+            "key": primary_key,
+            "label": primary_label,
+            "hint": primary_hint,
+            "score": float(primary_score),
+            "family": primary_family,
+            "confidence": confidence,
+        },
+        score_by_key,
+    )
+
+
+def _select_supporting_clap_contexts(
+    scored_candidates: list[dict],
+    primary_context: dict | None,
+    min_score: float,
+) -> list[dict]:
+    if not primary_context:
+        return []
+
+    primary_score = float(primary_context["score"])
+    cutoff = max(min_score + 0.05, primary_score * 0.35)
+    supporting = []
+
+    for item in scored_candidates:
+        if item["key"] not in CLAP_ORTHOGONAL_KEYS:
+            continue
+        if item["score"] < cutoff:
+            continue
+        supporting.append(
+            {
+                "key": item["key"],
+                "label": item["summary_label"],
+                "hint": item["hint"],
+                "score": item["score"],
+            }
+        )
+        if len(supporting) >= 2:
+            break
+
+    return supporting
+
+
+def _build_clap_audio_context(probs: torch.Tensor, min_score: float) -> dict:
+    scored_candidates = _score_clap_candidates(probs)
+    primary_context, score_by_key = _resolve_primary_clap_context(scored_candidates, min_score)
+    supporting_contexts = _select_supporting_clap_contexts(scored_candidates, primary_context, min_score)
+
+    top_labels = [
+        {"label": item["label"], "score": float(item["score"])}
+        for item in scored_candidates[: min(8, len(scored_candidates))]
+    ]
+
+    hints: list[str] = []
+    summary_parts: list[str] = []
+
+    if primary_context:
+        hints.append(str(primary_context["hint"]))
+        summary_parts.append(
+            f"Primary audio context: {primary_context['label']} ({primary_context['confidence']} confidence)."
+        )
+
+    if supporting_contexts:
+        hints.extend(item["hint"] for item in supporting_contexts if item["hint"] not in hints)
+        summary_parts.append(
+            "Supporting audio cues: "
+            + "; ".join(item["label"] for item in supporting_contexts)
+            + "."
+        )
+
+    return {
+        "hints": hints[:2],
+        "top_labels": top_labels,
+        "primary_context": primary_context,
+        "supporting_contexts": supporting_contexts,
+        "summary_context": " ".join(summary_parts).strip(),
+        "tv_score": float(sum(score_by_key.get(key, 0.0) for key in CLAP_BROADCAST_KEYS)),
+        "speech_score": float(sum(score_by_key.get(key, 0.0) for key in CLAP_SPEECH_KEYS)),
+    }
 
 
 def _select_offsets(total_frames: int, sample_frames: int, num_samples: int) -> list[int]:
@@ -191,40 +359,22 @@ async def classify_audio_events(
             avg_logits = logits_accum / max(len(offsets), 1)
             probs = torch.softmax(avg_logits, dim=-1).squeeze(0)
 
-            topk = min(8, probs.numel())
-            scores, indices = torch.topk(probs, k=topk)
-            top_labels = []
             if bundle_type == "audio_event_clap":
-                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
-                    candidate = CLAP_HINT_CANDIDATES[idx]
-                    top_labels.append({"label": candidate["label"], "score": float(score)})
-
-                tv_score = float(
-                    sum(
-                        probs[idx].item()
-                        for idx, candidate in enumerate(CLAP_HINT_CANDIDATES)
-                        if candidate["key"] in CLAP_BROADCAST_KEYS
-                    )
+                clap_context = _build_clap_audio_context(
+                    probs,
+                    min_score=settings.audio_event_min_score,
                 )
-                speech_score = float(
-                    sum(
-                        probs[idx].item()
-                        for idx, candidate in enumerate(CLAP_HINT_CANDIDATES)
-                        if candidate["key"] in CLAP_SPEECH_KEYS
-                    )
-                )
-
-                hints = []
-                min_score = settings.audio_event_min_score
-                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
-                    if float(score) < min_score:
-                        continue
-                    hint = CLAP_HINT_CANDIDATES[idx]["hint"]
-                    if hint not in hints:
-                        hints.append(hint)
-                    if len(hints) >= 2:
-                        break
+                hints = clap_context["hints"]
+                top_labels = clap_context["top_labels"]
+                tv_score = clap_context["tv_score"]
+                speech_score = clap_context["speech_score"]
+                primary_context = clap_context["primary_context"]
+                supporting_contexts = clap_context["supporting_contexts"]
+                summary_context = clap_context["summary_context"]
             else:
+                topk = min(8, probs.numel())
+                scores, indices = torch.topk(probs, k=topk)
+                top_labels = []
                 id2label = model.config.id2label
                 for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
                     label = id2label.get(idx, str(idx))
@@ -249,6 +399,9 @@ async def classify_audio_events(
                     hints.append(
                         "Audio event classification suggests near-field speech dominates the audio."
                     )
+                primary_context = None
+                supporting_contexts = []
+                summary_context = ""
 
             if settings.audio_event_debug:
                 logger.info(
@@ -267,6 +420,9 @@ async def classify_audio_events(
                 "top_labels": top_labels,
                 "tv_score": float(tv_score),
                 "speech_score": float(speech_score),
+                "primary_context": primary_context,
+                "supporting_contexts": supporting_contexts,
+                "summary_context": summary_context,
                 "sample_offsets_s": sample_offsets_s,
             }
 
