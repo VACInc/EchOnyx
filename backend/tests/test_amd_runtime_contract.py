@@ -32,6 +32,7 @@ def test_rocm_llama_server_files_fail_closed_without_rocm():
     assert 'if [ "${INSTALL_VLLM}" = "1" ]' in dockerfile_text
     assert 'if [ "${VLLM_INSTALL_METHOD}" = "wheel" ]' in dockerfile_text
     assert "https://wheels.vllm.ai/rocm/" in dockerfile_text
+    assert "git" in dockerfile_text
     assert "libopenmpi3t64" in dockerfile_text
     assert "openmpi-bin" in dockerfile_text
     assert "find /opt/amd-llama -type f -name 'llama-*' -exec chmod +x {} +" in dockerfile_text

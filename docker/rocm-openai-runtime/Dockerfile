@@ -18,6 +18,7 @@ ARG VLLM_REF=v0.17.0
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    git \
     libopenmpi3t64 \
     openmpi-bin \
     python3 \
