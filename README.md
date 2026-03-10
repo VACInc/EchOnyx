@@ -88,6 +88,33 @@ Defaults are configured in `.env.example`. All models are swappable:
 
 GGUF models can be downloaded automatically via the built-in model downloader when needed.
 
+## Audio Calibration
+
+Use the fixture-driven calibration command to generate an `AUDIO_EVENT_CALIBRATION_PATH` profile from labeled media fixtures:
+
+```bash
+python -m app.core.audio_calibration \
+  --manifest /path/to/audio-calibration-manifest.json \
+  --output /data/models/audio_event_calibration.json
+```
+
+Manifest shape:
+
+```json
+{
+  "fixtures": [
+    {
+      "media_path": "/abs/path/to/demo-with-music.mp4",
+      "expected_primary_key": "podcast_voiceover",
+      "expected_supporting_keys": ["music_heavy"],
+      "label": "demo_with_music"
+    }
+  ]
+}
+```
+
+Relative `media_path` values are resolved from the manifest directory. The command accepts audio or video files and will extract temporary audio automatically when needed.
+
 ## Operations Guide (Operator Focus)
 
 ### Upload + Processing
