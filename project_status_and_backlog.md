@@ -36,6 +36,17 @@
   - fixture manifest: `backend/tests/fixtures/audio_calibration/manifest.json`
   - packaged runtime baseline: `backend/app/assets/audio_event_calibration.json`
   - custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides the packaged baseline when present
+- The checked-in CLAP fixture pack has now been expanded to cover:
+  - `meeting_room_speech`
+  - `meeting_with_applause`
+  - `broadcast_playback`
+  - `software_demo_narration`
+  - `voiceover_no_music`
+  - `voiceover_with_music`
+- Live Strix Halo validation of the expanded synthetic pack showed a hard limitation:
+  - raw CLAP-only classification still collapsed the synthetic meeting, broadcast, and software-demo clips toward `podcast_voiceover`
+  - the broader auto-generated candidate profile did not outperform the conservative voice-over baseline enough to become the default packaged profile
+  - the larger pack is still useful as a benchmark set and for future model/prompt work
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 
@@ -64,7 +75,7 @@
 
 ## Product And Pipeline Enhancements
 
-- Expand the checked-in CLAP fixture pack beyond the initial voice-over and soundtrack cases so direct speech, software-demo narration, playback, and applause cues are also calibrated on real labeled clips.
+- Replace or supplement the synthetic CLAP fixture pack with cleaner real-world labeled audio clips for meeting-room speech, broadcast playback, and software-demo narration so the benchmark reflects actual deployment acoustics.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.

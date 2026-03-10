@@ -115,7 +115,14 @@ Manifest shape:
 
 Relative `media_path` values are resolved from the manifest directory. The command accepts audio or video files and will extract temporary audio automatically when needed.
 
-The repo now ships a checked-in baseline profile at `backend/app/assets/audio_event_calibration.json`, generated from the small labeled fixture pack in `backend/tests/fixtures/audio_calibration/`. That packaged baseline loads automatically when `/data/models/audio_event_calibration.json` is absent, and a custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides it.
+The repo now ships:
+
+- a checked-in six-clip fixture pack in `backend/tests/fixtures/audio_calibration/`
+- a conservative packaged baseline profile at `backend/app/assets/audio_event_calibration.json`
+
+That packaged baseline loads automatically when `/data/models/audio_event_calibration.json` is absent, and a custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides it.
+
+Current note: the larger fixture pack is useful for benchmarking and future recalibration, but the default packaged profile intentionally remains conservative. On live Strix Halo validation, the synthetic meeting/broadcast/software clips still collapsed toward `podcast_voiceover` in raw CLAP-only classification, so the broader candidate profile is not promoted as the default yet.
 
 Regenerate the packaged baseline with:
 
