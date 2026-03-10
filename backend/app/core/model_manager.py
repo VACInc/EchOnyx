@@ -1,6 +1,7 @@
 """Model manager for loading/unloading models based on hardware profile."""
 
 import asyncio
+import gc
 import json
 import logging
 from datetime import datetime, timezone
@@ -109,6 +110,28 @@ def _resolve_llama_gpu_layers(
     if backend == GPUBackend.CPU:
         return 0
     return -1
+
+
+def _offload_model_to_cpu(model: Any) -> None:
+    """Best-effort move of a loaded model bundle back to CPU before deletion."""
+    if isinstance(model, dict):
+        for value in model.values():
+            _offload_model_to_cpu(value)
+        return
+
+    if hasattr(model, "cpu"):
+        try:
+            model.cpu()
+            return
+        except Exception:
+            logger.debug("Model.cpu() offload failed during unload.", exc_info=True)
+
+    if hasattr(model, "to"):
+        try:
+            model.to("cpu")
+            return
+        except Exception:
+            logger.debug("Model.to(cpu) offload failed during unload.", exc_info=True)
 
 
 async def _load_faster_whisper(
@@ -344,7 +367,6 @@ class ModelManager:
 
         if _is_canary_model(model_name):
             from nemo.collections.speechlm2.models import SALM
-            import torch
 
             device = _torch_device(
                 self.settings.gpu_backend,
@@ -358,8 +380,11 @@ class ModelManager:
 
             def load_canary():
                 model = SALM.from_pretrained(model_name)
-                if device == "cuda" and torch.cuda.is_available():
-                    model = model.cuda()
+                if device == "cuda":
+                    import torch
+
+                    if torch.cuda.is_available():
+                        model = model.cuda()
                 model.eval()
                 return {
                     "type": "nemo_canary",
@@ -659,13 +684,18 @@ class ModelManager:
         try:
             import torch
             if torch.cuda.is_available():
+                _offload_model_to_cpu(model)
                 del model
+                gc.collect()
+                if hasattr(torch.cuda, "synchronize"):
+                    torch.cuda.synchronize()
                 torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
         except ImportError:
             del model
 
         # Force garbage collection
-        import gc
         gc.collect()
         self._persist_loaded_models()
 

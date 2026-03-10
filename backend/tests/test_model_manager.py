@@ -5,7 +5,7 @@ import pytest
 
 from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy
 from app.core import model_manager as model_manager_module
-from app.core.model_manager import ModelManager, _resolve_llama_gpu_layers, _torch_device
+from app.core.model_manager import ModelManager, _offload_model_to_cpu, _resolve_llama_gpu_layers, _torch_device
 
 
 def test_resolve_llama_gpu_layers_defaults_to_cpu_on_cpu_backend():
@@ -34,6 +34,26 @@ def test_torch_device_returns_cuda_when_gpu_is_available(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
 
     assert _torch_device(GPUBackend.ROCM, strict=True, runtime_label="embedding") == "cuda"
+
+
+def test_offload_model_to_cpu_handles_nested_model_bundles():
+    events: list[str] = []
+
+    class CpuModel:
+        def cpu(self):
+            events.append("cpu")
+
+    class ToModel:
+        def to(self, _device):
+            events.append("to")
+
+    _offload_model_to_cpu({
+        "primary": CpuModel(),
+        "nested": {"secondary": ToModel()},
+        "plain": object(),
+    })
+
+    assert events == ["cpu", "to"]
 
 
 @pytest.mark.asyncio
