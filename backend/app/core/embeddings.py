@@ -9,7 +9,7 @@ from typing import Any
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-from app.config import GPUBackend, ModelLoadingStrategy, get_settings
+from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
@@ -70,8 +70,6 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     """
     manager = get_model_manager()
     model = await manager.get_model(ModelType.EMBEDDING)
-    settings = get_settings()
-
     try:
         loop = asyncio.get_event_loop()
 
@@ -82,14 +80,7 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
         return await loop.run_in_executor(None, do_embed)
 
     finally:
-        # Keep the embedding model warm on sequential ROCm runtimes. Search, ask,
-        # and similar all run in the API process and otherwise pay a heavy cold
-        # load cost on every request.
-        if not (
-            settings.model_loading == ModelLoadingStrategy.SEQUENTIAL
-            and settings.gpu_backend == GPUBackend.ROCM
-        ):
-            await manager.release_model(ModelType.EMBEDDING)
+        await manager.release_model(ModelType.EMBEDDING)
 
 
 def _coerce_documents(result: dict) -> list[str]:

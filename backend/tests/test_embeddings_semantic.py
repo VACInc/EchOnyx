@@ -3,6 +3,7 @@ import pytest
 from chromadb.config import Settings as ChromaSettings
 
 from app.core import embeddings
+from app.core.model_manager import ModelType
 
 
 def _fake_embedding_for(text: str) -> list[float]:
@@ -109,3 +110,38 @@ async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch)
     assert calls["texts"] == ["Roadmap review and budget planning."]
     assert calls["query_embeddings"] == [[0.4, 0.6]]
     assert similar == [{"video_id": "other-video", "score": pytest.approx(0.8)}]
+
+
+@pytest.mark.asyncio
+async def test_generate_embeddings_releases_embedding_model(monkeypatch):
+    events: list[tuple[str, object]] = []
+
+    class DummyModel:
+        def encode(self, texts, convert_to_numpy=True):
+            assert convert_to_numpy is True
+            events.append(("encode", list(texts)))
+
+            class DummyArray:
+                def tolist(self):
+                    return [[0.1, 0.2] for _ in texts]
+
+            return DummyArray()
+
+    class DummyManager:
+        async def get_model(self, model_type):
+            events.append(("get_model", model_type))
+            return DummyModel()
+
+        async def release_model(self, model_type):
+            events.append(("release_model", model_type))
+
+    monkeypatch.setattr(embeddings, "get_model_manager", lambda: DummyManager())
+
+    vectors = await embeddings.generate_embeddings(["budget roadmap"])
+
+    assert vectors == [[0.1, 0.2]]
+    assert events == [
+        ("get_model", ModelType.EMBEDDING),
+        ("encode", ["budget roadmap"]),
+        ("release_model", ModelType.EMBEDDING),
+    ]
