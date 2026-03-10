@@ -48,6 +48,37 @@ def _parse_extra_args(value: str | None) -> list[str]:
     return shlex.split(value or "")
 
 
+def _normalize_vllm_args(args: list[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+    while index < len(args):
+        current = args[index]
+        if current == "--limit-mm-per-prompt" and index + 1 < len(args):
+            raw_values: list[str] = []
+            probe = index + 1
+            while probe < len(args) and not args[probe].startswith("-"):
+                raw_values.append(args[probe])
+                probe += 1
+
+            if raw_values and all("=" in item for item in raw_values):
+                limits: dict[str, object] = {}
+                for item in raw_values:
+                    key, value = item.split("=", 1)
+                    parsed_value: object = value
+                    try:
+                        parsed_value = json.loads(value)
+                    except json.JSONDecodeError:
+                        pass
+                    limits[key] = parsed_value
+                normalized.extend([current, json.dumps(limits, separators=(",", ":"))])
+                index = probe
+                continue
+
+        normalized.append(current)
+        index += 1
+    return normalized
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     runtime: str
@@ -135,7 +166,7 @@ def build_runtime_command(config: RuntimeConfig) -> list[str]:
             "--tensor-parallel-size",
             "1",
         ]
-        command.extend(config.vllm_extra_args)
+        command.extend(_normalize_vllm_args(config.vllm_extra_args))
         return command
 
     raise RuntimeError(f"Unsupported MODEL_RUNTIME: {config.runtime}")

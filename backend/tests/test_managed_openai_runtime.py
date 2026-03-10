@@ -90,6 +90,23 @@ def test_build_runtime_command_for_vllm():
     assert command[-2:] == ["--dtype", "auto"]
 
 
+def test_build_runtime_command_normalizes_vllm_mm_limits():
+    config = _runtime_config(
+        runtime="vllm",
+        model_path="/models/unused.gguf",
+        model_name="vision-model",
+        vllm_model_id="Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
+        vllm_extra_args=["--limit-mm-per-prompt", "video=0", "image=4", "--max-num-seqs", "1"],
+    )
+
+    command = build_runtime_command(config)
+
+    assert "--limit-mm-per-prompt" in command
+    mm_limit_index = command.index("--limit-mm-per-prompt")
+    assert command[mm_limit_index + 1] == '{"video":0,"image":4}'
+    assert command[-2:] == ["--max-num-seqs", "1"]
+
+
 def test_runtime_config_accepts_vllm_model_id_without_model_path(monkeypatch):
     monkeypatch.setenv("MODEL_RUNTIME", "vllm")
     monkeypatch.delenv("MODEL_PATH", raising=False)
