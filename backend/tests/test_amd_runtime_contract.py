@@ -23,6 +23,7 @@ def test_rocm_llama_server_files_fail_closed_without_rocm():
 
     assert "rocm/dev-ubuntu-24.04:7.2-complete" in dockerfile_text
     assert 'if [ "${INSTALL_VLLM}" = "1" ]' in dockerfile_text
+    assert "find /opt/amd-llama -type f -name 'llama-*' -exec chmod +x {} +" in dockerfile_text
     assert "python3 use_existing_torch.py" in dockerfile_text
     assert "requirements/rocm.txt" in dockerfile_text
     assert "rocminfo" in entrypoint_text

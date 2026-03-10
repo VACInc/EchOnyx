@@ -24,6 +24,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 RUN mkdir -p /opt/amd-llama \
  && curl -fsSL "${AMD_LLAMA_PACKAGE_URL}" -o /tmp/amd-llama.zip \
  && unzip -q /tmp/amd-llama.zip -d /opt/amd-llama \
+ && find /opt/amd-llama -type f -name 'llama-*' -exec chmod +x {} + \
  && rm -f /tmp/amd-llama.zip
 
 RUN if [ "${INSTALL_VLLM}" = "1" ]; then \
