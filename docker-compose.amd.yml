@@ -9,6 +9,8 @@ x-rocm-openai-runtime: &rocm-openai-runtime
       ROCM_DEV_IMAGE: ${ROCM_DEV_IMAGE:-rocm/dev-ubuntu-24.04:7.2-complete}
       AMD_LLAMA_PACKAGE_URL: ${AMD_LLAMA_PACKAGE_URL:-https://repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/llama-b7782-ubuntu-24.04-rocm-7.2.0-gfx110X-gfx115X-gfx120X-x64.zip}
       INSTALL_VLLM: ${INSTALL_VLLM:-0}
+      VLLM_INSTALL_METHOD: ${VLLM_INSTALL_METHOD:-wheel}
+      VLLM_WHEEL_EXTRA_INDEX_URL: ${VLLM_WHEEL_EXTRA_INDEX_URL:-https://wheels.vllm.ai/rocm/}
       ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/}
       ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.10.0+rocm7.2.0.lw.gitb6ee5fde}
       ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.10.0+rocm7.2.0.git5047768f}
@@ -23,8 +25,11 @@ x-rocm-openai-runtime: &rocm-openai-runtime
     - "993"  # render group
   environment:
     - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
+    - HF_HOME=/cache/huggingface
+    - HUGGINGFACE_HUB_CACHE=/cache/huggingface/hub
   volumes:
     - model_cache:/models:ro
+    - vllm_cache:/cache
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
     interval: 30s
@@ -44,6 +49,7 @@ services:
       - MODEL_PATH=${VISION_MODEL_PATH:-/models/Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-32B-Instruct-F16.gguf}
+      - VLLM_MODEL_ID=${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
       - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
       - LLAMA_SERVER_EXTRA_ARGS=${VISION_LLAMA_SERVER_EXTRA_ARGS:-}
@@ -59,6 +65,7 @@ services:
       - IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
       - MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/qwen3-30b-a3b-q4_k_m.gguf}
       - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - VLLM_MODEL_ID=${SUMMARIZATION_VLLM_MODEL_ID:-Qwen/Qwen3-30B-A3B-Instruct-2507-FP8}
       - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
       - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
       - LLAMA_SERVER_EXTRA_ARGS=${SUMMARIZATION_LLAMA_SERVER_EXTRA_ARGS:-}
@@ -150,3 +157,6 @@ services:
         condition: service_healthy
       summarization-server:
         condition: service_healthy
+
+volumes:
+  vllm_cache:

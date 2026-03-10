@@ -37,6 +37,7 @@ def _runtime_config(**overrides):
         runtime="llama_server",
         model_path="/models/model.gguf",
         model_name="model.gguf",
+        vllm_model_id="",
         host="0.0.0.0",
         public_port=8080,
         upstream_port=18080,
@@ -75,17 +76,32 @@ def test_build_runtime_command_for_llama_server(monkeypatch):
 def test_build_runtime_command_for_vllm():
     config = _runtime_config(
         runtime="vllm",
-        model_path="Qwen/Qwen3-30B-A3B-Instruct-2507",
+        model_path="/models/unused.gguf",
         model_name="summary-model",
+        vllm_model_id="Qwen/Qwen3-30B-A3B-Instruct-2507-FP8",
         vllm_extra_args=["--dtype", "auto"],
     )
 
     command = build_runtime_command(config)
 
-    assert command[:3] == ["vllm", "serve", "Qwen/Qwen3-30B-A3B-Instruct-2507"]
+    assert command[:3] == ["vllm", "serve", "Qwen/Qwen3-30B-A3B-Instruct-2507-FP8"]
     assert "--served-model-name" in command
     assert "summary-model" in command
     assert command[-2:] == ["--dtype", "auto"]
+
+
+def test_runtime_config_accepts_vllm_model_id_without_model_path(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "vllm")
+    monkeypatch.delenv("MODEL_PATH", raising=False)
+    monkeypatch.setenv("VLLM_MODEL_ID", "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8")
+    monkeypatch.setenv("MODEL_NAME", "vision-endpoint")
+
+    config = RuntimeConfig.from_env()
+
+    assert config.runtime == "vllm"
+    assert config.model_path == ""
+    assert config.vllm_model_id == "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
+    assert config.model_name == "vision-endpoint"
 
 
 def test_managed_runtime_starts_once_until_child_is_ready(monkeypatch):

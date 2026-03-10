@@ -69,6 +69,8 @@ Set these in `.env` as needed:
 - `ROCM_LLM_RUNTIME`: `llama_server` (managed idle teardown) or `vllm`
 - `ROCM_LLM_IDLE_TIMEOUT_S`: idle shutdown for ROCm `llama_server` endpoints
 - `INSTALL_VLLM=1`: opt-in build flag for the heavier ROCm `vLLM` image path
+- `VLLM_INSTALL_METHOD`: `wheel` (official ROCm wheel index) or `source`
+- `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
 - `EMBEDDING_MODEL`: embedding model id (HF)
 - `UPLOAD_DIR`, `MODEL_CACHE_DIR`: storage locations
 
@@ -124,6 +126,7 @@ Current AMD note:
 - The AMD Docker override now supports two ROCm LLM endpoint paths behind the same OpenAI-compatible URLs:
   - `llama_server`: AMD ROCm `llama.cpp`, managed with idle teardown
   - `vllm`: vLLM OpenAI server for ROCm (opt-in image build)
+- The `vllm` path can load Hugging Face model ids directly while still serving the existing endpoint model names expected by the backend.
 - The AMD Docker override still uses AMD's published ROCm `llama.cpp` server artifact for `gfx115X` and fails closed if ROCm cannot enumerate a supported device.
 - Current AMD defaults target ROCm `7.2` for both the backend wheels and the dedicated GGUF server image.
 

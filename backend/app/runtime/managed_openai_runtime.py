@@ -53,6 +53,7 @@ class RuntimeConfig:
     runtime: str
     model_path: str
     model_name: str
+    vllm_model_id: str
     host: str
     public_port: int
     upstream_port: int
@@ -67,17 +68,20 @@ class RuntimeConfig:
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
+        runtime = os.environ.get("MODEL_RUNTIME", "llama_server").strip() or "llama_server"
         model_path = os.environ.get("MODEL_PATH", "").strip()
-        if not model_path:
+        vllm_model_id = os.environ.get("VLLM_MODEL_ID", "").strip()
+        effective_model_source = model_path or vllm_model_id
+        if not effective_model_source:
             raise RuntimeError("MODEL_PATH is required.")
 
-        model_name = os.environ.get("MODEL_NAME", "").strip() or Path(model_path).name
-        runtime = os.environ.get("MODEL_RUNTIME", "llama_server").strip() or "llama_server"
+        model_name = os.environ.get("MODEL_NAME", "").strip() or Path(effective_model_source).name
 
         return cls(
             runtime=runtime,
             model_path=model_path,
             model_name=model_name,
+            vllm_model_id=vllm_model_id,
             host=os.environ.get("LISTEN_HOST", "0.0.0.0"),
             public_port=int(os.environ.get("PORT", "8080")),
             upstream_port=int(os.environ.get("UPSTREAM_PORT", "18080")),
@@ -115,10 +119,11 @@ def build_runtime_command(config: RuntimeConfig) -> list[str]:
         return command
 
     if config.runtime == "vllm":
+        model_source = config.vllm_model_id or config.model_path
         command = [
             "vllm",
             "serve",
-            config.model_path,
+            model_source,
             "--host",
             "127.0.0.1",
             "--port",
