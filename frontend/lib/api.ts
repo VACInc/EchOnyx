@@ -48,9 +48,8 @@ interface SettingsResponse {
   gpu_backend: string;
   model_loading: string;
   models: {
-    whisper_model: string;
-    transcription_fallback_model: string;
-    transcription_fallback_enabled: boolean;
+    asr_family: string;
+    asr_model: string;
     granite_force_cpu: boolean;
     diarization_model: string;
     vision_model: string;
@@ -62,6 +61,7 @@ interface SettingsResponse {
     summarization_endpoint_url: string;
     summarization_endpoint_model: string;
     embedding_model: string;
+    audio_event_model: string;
   };
   processing: {
     max_video_length_hours: number;

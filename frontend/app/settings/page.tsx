@@ -36,18 +36,17 @@ export default function SettingsPage() {
         </h2>
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between border-b pb-2">
-            <span className="text-slate-600 dark:text-slate-300">Transcription</span>
-            <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.whisper_model}</span>
+            <span className="text-slate-600 dark:text-slate-300">ASR</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.asr_model}</span>
           </div>
           <div className="flex items-center justify-between border-b pb-2">
-            <span className="text-slate-600 dark:text-slate-300">Transcription Fallback</span>
+            <span className="text-slate-600 dark:text-slate-300">ASR Family</span>
             <span className="font-medium text-slate-900 dark:text-slate-100">
-              {settings?.models.transcription_fallback_model}{" "}
-              {settings?.models.transcription_fallback_enabled ? "(enabled)" : "(disabled)"}
+              {settings?.models.asr_family}
             </span>
           </div>
           <div className="flex items-center justify-between border-b pb-2">
-            <span className="text-slate-600 dark:text-slate-300">Granite Force CPU</span>
+            <span className="text-slate-600 dark:text-slate-300">ASR CPU Override</span>
             <span className="font-medium text-slate-900 dark:text-slate-100">
               {settings?.models.granite_force_cpu ? "Enabled" : "Disabled"}
             </span>
@@ -63,6 +62,10 @@ export default function SettingsPage() {
           <div className="flex items-center justify-between border-b pb-2">
             <span className="text-slate-600 dark:text-slate-300">Summarization</span>
             <span className="font-medium text-slate-900 dark:text-slate-100">{summarizationLabel}</span>
+          </div>
+          <div className="flex items-center justify-between border-b pb-2">
+            <span className="text-slate-600 dark:text-slate-300">Audio Events</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.audio_event_model}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-slate-600 dark:text-slate-300">Embeddings</span>

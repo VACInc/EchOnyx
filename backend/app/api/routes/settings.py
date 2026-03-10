@@ -45,9 +45,6 @@ class ModelConfig(BaseModel):
 
     asr_family: str
     asr_model: str
-    whisper_model: str
-    transcription_fallback_model: str
-    transcription_fallback_enabled: bool
     granite_force_cpu: bool
     diarization_model: str
     vision_model: str
@@ -95,9 +92,7 @@ class SettingsUpdate(BaseModel):
     hardware_profile: HardwareProfile | None = None
     gpu_backend: GPUBackend | None = None
     model_loading: ModelLoadingStrategy | None = None
-    whisper_model: str | None = None
-    transcription_fallback_model: str | None = None
-    transcription_fallback_enabled: bool | None = None
+    asr_model: str | None = None
     granite_force_cpu: bool | None = None
     diarization_model: str | None = None
     vision_model: str | None = None
@@ -133,9 +128,6 @@ async def get_current_settings() -> SettingsResponse:
         models=ModelConfig(
             asr_family=get_asr_family(settings.whisper_model),
             asr_model=settings.whisper_model,
-            whisper_model=settings.whisper_model,
-            transcription_fallback_model=settings.transcription_fallback_model,
-            transcription_fallback_enabled=settings.transcription_fallback_enabled,
             granite_force_cpu=settings.granite_force_cpu,
             diarization_model=settings.diarization_model,
             vision_model=settings.vision_model,
@@ -221,7 +213,8 @@ async def list_available_models() -> dict:
     # For now, return recommended models
 
     return {
-        "whisper": [
+        "asr": [
+            {"name": "nvidia/canary-qwen-2.5b", "size_gb": 6.0, "recommended": True},
             {"name": "ibm-granite/granite-speech-3.3-8b", "size_gb": 16.0, "recommended": True},
             {"name": "large-v3", "size_gb": 6.0, "recommended": False},
             {"name": "large-v3-turbo", "size_gb": 3.0, "recommended": False},
