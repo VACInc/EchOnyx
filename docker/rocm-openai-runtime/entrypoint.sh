@@ -37,5 +37,10 @@ llama_server_dir="$(dirname "${llama_server_bin}")"
 export LD_LIBRARY_PATH="${llama_server_dir}:${LD_LIBRARY_PATH:-}"
 export PATH="/usr/local/bin:${PATH}"
 
+if [[ "${MODEL_RUNTIME:-llama_server}" == "vllm" ]] && ! command -v vllm >/dev/null 2>&1; then
+  echo "MODEL_RUNTIME=vllm requires a vLLM-enabled image build (set INSTALL_VLLM=1)." >&2
+  exit 1
+fi
+
 echo "Starting managed ROCm OpenAI runtime gateway (${MODEL_RUNTIME:-llama_server})" >&2
 exec python3 /opt/rocm-openai-runtime/managed_openai_runtime.py

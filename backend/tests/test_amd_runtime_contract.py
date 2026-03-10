@@ -10,7 +10,7 @@ def test_amd_compose_uses_rocm_llama_server_image_contract():
     assert "ghcr.io/ggml-org/llama.cpp:server" not in compose_text
     assert "docker/rocm-openai-runtime/Dockerfile" in compose_text
     assert "repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/" in compose_text
-    assert "VLLM_PIP_SPEC" in compose_text
+    assert "INSTALL_VLLM" in compose_text
     assert "--pool=solo" in compose_text
     assert "MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}" in compose_text
     assert "IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}" in compose_text
@@ -22,8 +22,11 @@ def test_rocm_llama_server_files_fail_closed_without_rocm():
     entrypoint_text = (ROOT / "docker/rocm-openai-runtime/entrypoint.sh").read_text(encoding="utf-8")
 
     assert "rocm/dev-ubuntu-24.04:7.2-complete" in dockerfile_text
-    assert "pip install --no-cache-dir --break-system-packages ${VLLM_PIP_SPEC}" in dockerfile_text
+    assert 'if [ "${INSTALL_VLLM}" = "1" ]' in dockerfile_text
+    assert "python3 use_existing_torch.py" in dockerfile_text
+    assert "requirements/rocm.txt" in dockerfile_text
     assert "rocminfo" in entrypoint_text
     assert "/dev/kfd" in entrypoint_text
     assert "LD_LIBRARY_PATH" in entrypoint_text
+    assert "MODEL_RUNTIME=vllm requires a vLLM-enabled image build" in entrypoint_text
     assert "refusing to start CPU fallback" in entrypoint_text

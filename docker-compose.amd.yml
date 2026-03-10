@@ -8,7 +8,12 @@ x-rocm-openai-runtime: &rocm-openai-runtime
     args:
       ROCM_DEV_IMAGE: ${ROCM_DEV_IMAGE:-rocm/dev-ubuntu-24.04:7.2-complete}
       AMD_LLAMA_PACKAGE_URL: ${AMD_LLAMA_PACKAGE_URL:-https://repo.radeon.com/rocm/llama.cpp/linux/rocm-rel-7.2/llama-b7782-ubuntu-24.04-rocm-7.2.0-gfx110X-gfx115X-gfx120X-x64.zip}
-      VLLM_PIP_SPEC: ${VLLM_PIP_SPEC:-vllm}
+      INSTALL_VLLM: ${INSTALL_VLLM:-0}
+      ROCM_WHL_URL: ${ROCM_WHL_URL:-https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/}
+      ROCM_TORCH_VERSION: ${ROCM_TORCH_VERSION:-2.10.0+rocm7.2.0.lw.gitb6ee5fde}
+      ROCM_TORCHAUDIO_VERSION: ${ROCM_TORCHAUDIO_VERSION:-2.10.0+rocm7.2.0.git5047768f}
+      ROCM_TORCHVISION_VERSION: ${ROCM_TORCHVISION_VERSION:-0.25.0+rocm7.2.0.git82df5f59}
+      ROCM_NIGHTLY: ${ROCM_NIGHTLY:-0}
   restart: unless-stopped
   devices:
     - /dev/kfd:/dev/kfd
