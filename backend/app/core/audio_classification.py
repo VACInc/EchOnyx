@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Callable
@@ -16,11 +17,15 @@ from app.core.model_manager import ModelType, get_model_manager
 logger = logging.getLogger(__name__)
 
 
-CLAP_HINT_CANDIDATES = (
+CLAP_PRIMARY_CANDIDATES = (
     {
         "key": "meeting_room_speech",
         "label": "meeting-room speech",
         "prompt": "in-person meeting room or office discussion recorded directly at the table",
+        "prompt_variants": (
+            "in-person meeting room or office discussion recorded directly at the table",
+            "unproduced conference room conversation recorded in the room",
+        ),
         "hint": "Audio most likely sounds like direct meeting-room or office speech.",
         "summary_label": "direct meeting or office speech",
         "family": "direct_speech",
@@ -29,6 +34,10 @@ CLAP_HINT_CANDIDATES = (
         "key": "broadcast_playback",
         "label": "broadcast playback",
         "prompt": "television news, sports broadcast, or talk-show audio playing from nearby speakers",
+        "prompt_variants": (
+            "television news, sports broadcast, or talk-show audio playing from nearby speakers",
+            "tv news or sports audio coming from a television in the room",
+        ),
         "hint": "Audio most likely sounds like television or broadcast playback rather than direct participant speech.",
         "summary_label": "broadcast or TV playback",
         "family": "playback",
@@ -37,6 +46,10 @@ CLAP_HINT_CANDIDATES = (
         "key": "podcast_voiceover",
         "label": "podcast voice-over",
         "prompt": "produced podcast, voice-over, or studio narration",
+        "prompt_variants": (
+            "produced podcast, voice-over, or studio narration",
+            "studio-quality voice-over or podcast host narration",
+        ),
         "hint": "Audio most likely sounds like produced narration or podcast-style speech.",
         "summary_label": "produced narration or voice-over",
         "family": "produced_speech",
@@ -45,14 +58,27 @@ CLAP_HINT_CANDIDATES = (
         "key": "software_demo",
         "label": "software demo narration",
         "prompt": "screen recording or software demo with a presenter narrating steps directly",
+        "prompt_variants": (
+            "screen recording or software demo with a presenter narrating steps directly",
+            "screen-share software walkthrough with live spoken narration",
+        ),
         "hint": "Audio most likely sounds like a presenter directly narrating a software demo or walkthrough.",
         "summary_label": "direct software-demo narration",
         "family": "direct_speech",
     },
+)
+
+CLAP_SUPPORTING_CANDIDATES = (
     {
         "key": "music_heavy",
         "label": "music-heavy content",
-        "prompt": "speech with a strong music bed or soundtrack",
+        "prompt": "spoken narration with background music or soundtrack",
+        "prompt_variants": (
+            "spoken narration with background music or soundtrack",
+            "corporate explainer narration with light underscore music",
+            "video intro or outro with speech over music",
+            "spoken presentation with faint background music",
+        ),
         "hint": "Audio includes noticeable music or soundtrack backing.",
         "summary_label": "noticeable music bed or soundtrack",
         "family": "soundtrack",
@@ -61,15 +87,126 @@ CLAP_HINT_CANDIDATES = (
         "key": "crowd_applause",
         "label": "crowd or applause",
         "prompt": "audience applause or crowd reaction",
+        "prompt_variants": (
+            "audience applause or crowd reaction",
+            "live event cheering or clapping audience",
+            "room applause after a talk or presentation",
+        ),
         "hint": "Audio includes crowd, applause, or live-event reaction cues.",
         "summary_label": "crowd or applause cues",
         "family": "event",
     },
 )
 
+CLAP_HINT_CANDIDATES = CLAP_PRIMARY_CANDIDATES + CLAP_SUPPORTING_CANDIDATES
+CLAP_CANDIDATE_BY_KEY = {candidate["key"]: candidate for candidate in CLAP_HINT_CANDIDATES}
 CLAP_BROADCAST_KEYS = {"broadcast_playback"}
 CLAP_SPEECH_KEYS = {"meeting_room_speech", "podcast_voiceover", "software_demo"}
 CLAP_ORTHOGONAL_KEYS = {"music_heavy", "crowd_applause"}
+DEFAULT_CLAP_SUPPORTING_RULES = {
+    "music_heavy": {
+        "aggregation": "top2_mean",
+        "absolute_min_score": 0.07,
+        "relative_ratio": 0.12,
+    },
+    "crowd_applause": {
+        "aggregation": "top2_mean",
+        "absolute_min_score": 0.09,
+        "relative_ratio": 0.16,
+    },
+}
+
+
+def build_default_clap_runtime_profile(min_score: float) -> dict:
+    """Build the default runtime profile for CLAP prompt and threshold selection."""
+    return {
+        "version": 1,
+        "primary_prompts": {
+            candidate["key"]: candidate["prompt"]
+            for candidate in CLAP_PRIMARY_CANDIDATES
+        },
+        "supporting_prompts": {
+            candidate["key"]: list(candidate["prompt_variants"])
+            for candidate in CLAP_SUPPORTING_CANDIDATES
+        },
+        "supporting_rules": {
+            key: {
+                **rule,
+                "absolute_min_score": max(float(min_score) * 0.5, float(rule["absolute_min_score"])),
+            }
+            for key, rule in DEFAULT_CLAP_SUPPORTING_RULES.items()
+        },
+    }
+
+
+def _deep_merge_profile(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_profile(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_clap_runtime_profile(settings) -> dict:
+    """Load a CLAP runtime profile from disk when present, otherwise use defaults."""
+    profile = build_default_clap_runtime_profile(settings.audio_event_min_score)
+    calibration_path = getattr(settings, "audio_event_calibration_path", None)
+    if not calibration_path:
+        return profile
+
+    path = Path(calibration_path)
+    if not path.exists():
+        return profile
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read CLAP calibration profile %s: %s", path, exc)
+        return profile
+
+    if not isinstance(payload, dict):
+        logger.warning("Ignoring CLAP calibration profile %s because it is not a JSON object.", path)
+        return profile
+
+    return _deep_merge_profile(profile, payload)
+
+
+def _selected_primary_candidates(profile: dict) -> tuple[dict, ...]:
+    selected = []
+    primary_prompts = profile.get("primary_prompts", {})
+    for candidate in CLAP_PRIMARY_CANDIDATES:
+        selected.append({
+            **candidate,
+            "prompt": str(primary_prompts.get(candidate["key"], candidate["prompt"])).strip()
+            or candidate["prompt"],
+        })
+    return tuple(selected)
+
+
+def _selected_supporting_prompt_specs(profile: dict) -> list[dict]:
+    prompt_map = profile.get("supporting_prompts", {})
+    prompt_specs: list[dict] = []
+
+    for candidate in CLAP_SUPPORTING_CANDIDATES:
+        raw_prompts = prompt_map.get(candidate["key"], candidate["prompt_variants"])
+        prompts = raw_prompts if isinstance(raw_prompts, list) else list(candidate["prompt_variants"])
+        normalized_prompts: list[str] = []
+        for prompt in prompts:
+            normalized = str(prompt).strip()
+            if normalized and normalized not in normalized_prompts:
+                normalized_prompts.append(normalized)
+        if not normalized_prompts:
+            normalized_prompts.append(candidate["prompt"])
+        for prompt in normalized_prompts:
+            prompt_specs.append({
+                "key": candidate["key"],
+                "label": candidate["label"],
+                "prompt": prompt,
+            })
+
+    return prompt_specs
 
 
 def _confidence_band(score: float, margin: float) -> str:
@@ -80,9 +217,53 @@ def _confidence_band(score: float, margin: float) -> str:
     return "low"
 
 
-def _score_clap_candidates(probs: torch.Tensor) -> list[dict]:
+def _aggregate_series(values: list[float], strategy: str) -> float:
+    if not values:
+        return 0.0
+    normalized = strategy.strip().lower()
+    if normalized == "max":
+        return max(values)
+    if normalized == "top2_mean":
+        ranked = sorted(values, reverse=True)
+        top_values = ranked[: min(2, len(ranked))]
+        return float(sum(top_values) / len(top_values))
+    return float(sum(values) / len(values))
+
+
+def _move_inputs_to_device(inputs: dict, device: str) -> dict:
+    if device != "cuda":
+        return inputs
+    cuda_device = torch.device("cuda")
+    return {
+        key: value.to(cuda_device) if hasattr(value, "to") else value
+        for key, value in inputs.items()
+    }
+
+
+def _run_clap_prompt_set(
+    model,
+    processor,
+    device: str,
+    waveform,
+    target_sample_rate: int,
+    prompt_texts: list[str],
+) -> torch.Tensor:
+    inputs = processor(
+        text=prompt_texts,
+        audios=waveform.squeeze(0).numpy(),
+        sampling_rate=target_sample_rate,
+        return_tensors="pt",
+        padding=True,
+    )
+    inputs = _move_inputs_to_device(inputs, device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    return torch.softmax(outputs.logits_per_audio.detach().float().cpu(), dim=-1).squeeze(0)
+
+
+def _score_clap_candidates(score_by_key: dict[str, float], candidates: tuple[dict, ...]) -> list[dict]:
     scored = []
-    for idx, candidate in enumerate(CLAP_HINT_CANDIDATES):
+    for candidate in candidates:
         scored.append(
             {
                 "key": candidate["key"],
@@ -90,7 +271,7 @@ def _score_clap_candidates(probs: torch.Tensor) -> list[dict]:
                 "summary_label": candidate["summary_label"],
                 "hint": candidate["hint"],
                 "family": candidate["family"],
-                "score": float(probs[idx].item()),
+                "score": float(score_by_key.get(candidate["key"], 0.0)),
             }
         )
     return sorted(scored, key=lambda item: item["score"], reverse=True)
@@ -115,8 +296,6 @@ def _resolve_primary_clap_context(
     primary_hint = primary["hint"]
     primary_score = primary["score"]
 
-    # Collapse the common "meeting speech" + "software demo" ambiguity into a single
-    # direct-narration signal instead of emitting two competing speech hints.
     if (
         software_score >= min_score
         and meeting_score >= min_score
@@ -126,7 +305,8 @@ def _resolve_primary_clap_context(
         primary_key = "software_demo_direct_speech"
         primary_label = "direct software-demo narration"
         primary_hint = (
-            "Audio most likely sounds like a presenter or participant directly narrating a software demo or walkthrough."
+            "Audio most likely sounds like a presenter or participant directly narrating "
+            "a software demo or walkthrough."
         )
         primary_score = max(software_score, meeting_score)
         primary_family = "direct_speech"
@@ -159,28 +339,42 @@ def _resolve_primary_clap_context(
 
 
 def _select_supporting_clap_contexts(
-    scored_candidates: list[dict],
+    supporting_score_by_key: dict[str, float],
     primary_context: dict | None,
+    profile: dict,
     min_score: float,
 ) -> list[dict]:
     if not primary_context:
         return []
 
     primary_score = float(primary_context["score"])
-    cutoff = max(min_score + 0.05, primary_score * 0.35)
+    supporting_rules = profile.get("supporting_rules", {})
     supporting = []
 
-    for item in scored_candidates:
-        if item["key"] not in CLAP_ORTHOGONAL_KEYS:
+    ranked_supporting = sorted(
+        supporting_score_by_key.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+
+    for key, score in ranked_supporting:
+        candidate = CLAP_CANDIDATE_BY_KEY.get(key)
+        if not candidate or key not in CLAP_ORTHOGONAL_KEYS:
             continue
-        if item["score"] < cutoff:
+
+        rule = supporting_rules.get(key, {})
+        absolute_min = float(rule.get("absolute_min_score", min_score))
+        relative_ratio = float(rule.get("relative_ratio", 0.35))
+        cutoff = max(absolute_min, primary_score * relative_ratio)
+        if score < cutoff:
             continue
+
         supporting.append(
             {
-                "key": item["key"],
-                "label": item["summary_label"],
-                "hint": item["hint"],
-                "score": item["score"],
+                "key": key,
+                "label": candidate["summary_label"],
+                "hint": candidate["hint"],
+                "score": float(score),
             }
         )
         if len(supporting) >= 2:
@@ -189,14 +383,38 @@ def _select_supporting_clap_contexts(
     return supporting
 
 
-def _build_clap_audio_context(probs: torch.Tensor, min_score: float) -> dict:
-    scored_candidates = _score_clap_candidates(probs)
-    primary_context, score_by_key = _resolve_primary_clap_context(scored_candidates, min_score)
-    supporting_contexts = _select_supporting_clap_contexts(scored_candidates, primary_context, min_score)
+def _build_clap_audio_context(
+    primary_score_by_key: dict[str, float],
+    supporting_score_by_key: dict[str, float],
+    profile: dict,
+    min_score: float,
+) -> dict:
+    scored_primary = _score_clap_candidates(primary_score_by_key, CLAP_PRIMARY_CANDIDATES)
+    primary_context, primary_scores = _resolve_primary_clap_context(scored_primary, min_score)
+    supporting_contexts = _select_supporting_clap_contexts(
+        supporting_score_by_key,
+        primary_context,
+        profile,
+        min_score,
+    )
+
+    combined_labels = list(scored_primary)
+    for candidate in CLAP_SUPPORTING_CANDIDATES:
+        combined_labels.append(
+            {
+                "key": candidate["key"],
+                "label": candidate["label"],
+                "summary_label": candidate["summary_label"],
+                "hint": candidate["hint"],
+                "family": candidate["family"],
+                "score": float(supporting_score_by_key.get(candidate["key"], 0.0)),
+            }
+        )
+    combined_labels.sort(key=lambda item: item["score"], reverse=True)
 
     top_labels = [
         {"label": item["label"], "score": float(item["score"])}
-        for item in scored_candidates[: min(8, len(scored_candidates))]
+        for item in combined_labels[: min(8, len(combined_labels))]
     ]
 
     hints: list[str] = []
@@ -205,7 +423,8 @@ def _build_clap_audio_context(probs: torch.Tensor, min_score: float) -> dict:
     if primary_context:
         hints.append(str(primary_context["hint"]))
         summary_parts.append(
-            f"Primary audio context: {primary_context['label']} ({primary_context['confidence']} confidence)."
+            f"Primary audio context: {primary_context['label']} "
+            f"({primary_context['confidence']} confidence)."
         )
 
     if supporting_contexts:
@@ -222,8 +441,9 @@ def _build_clap_audio_context(probs: torch.Tensor, min_score: float) -> dict:
         "primary_context": primary_context,
         "supporting_contexts": supporting_contexts,
         "summary_context": " ".join(summary_parts).strip(),
-        "tv_score": float(sum(score_by_key.get(key, 0.0) for key in CLAP_BROADCAST_KEYS)),
-        "speech_score": float(sum(score_by_key.get(key, 0.0) for key in CLAP_SPEECH_KEYS)),
+        "tv_score": float(sum(primary_scores.get(key, 0.0) for key in CLAP_BROADCAST_KEYS)),
+        "speech_score": float(sum(primary_scores.get(key, 0.0) for key in CLAP_SPEECH_KEYS)),
+        "supporting_scores": supporting_score_by_key,
     }
 
 
@@ -307,10 +527,24 @@ async def classify_audio_events(
             sample_seconds = settings.audio_event_sample_seconds
             sample_frames = int(sample_seconds * sample_rate)
             offsets = _select_offsets(total_frames, sample_frames, settings.audio_event_num_samples)
-            offsets = [max(0, min(offset, max(total_frames - sample_frames, 0))) for offset in offsets]
+            offsets = [
+                max(0, min(offset, max(total_frames - sample_frames, 0)))
+                for offset in offsets
+            ]
 
             logits_accum = None
             sample_offsets_s: list[float] = []
+            primary_window_scores = {
+                candidate["key"]: []
+                for candidate in CLAP_PRIMARY_CANDIDATES
+            }
+            supporting_window_scores = {
+                candidate["key"]: []
+                for candidate in CLAP_SUPPORTING_CANDIDATES
+            }
+            clap_profile = load_clap_runtime_profile(settings)
+            primary_candidates = _selected_primary_candidates(clap_profile)
+            supporting_prompt_specs = _selected_supporting_prompt_specs(clap_profile)
 
             if progress_callback:
                 progress_callback(10)
@@ -320,48 +554,74 @@ async def classify_audio_events(
                 if sr != target_sample_rate and sr > 0:
                     resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
                     waveform = resampler(waveform)
+
                 if bundle_type == "audio_event_clap":
-                    inputs = processor(
-                        text=[candidate["prompt"] for candidate in CLAP_HINT_CANDIDATES],
-                        audios=waveform.squeeze(0).numpy(),
-                        sampling_rate=target_sample_rate,
-                        return_tensors="pt",
-                        padding=True,
+                    primary_probs = _run_clap_prompt_set(
+                        model,
+                        processor,
+                        device,
+                        waveform,
+                        target_sample_rate,
+                        [candidate["prompt"] for candidate in primary_candidates],
                     )
+                    for prompt_idx, candidate in enumerate(primary_candidates):
+                        primary_window_scores[candidate["key"]].append(
+                            float(primary_probs[prompt_idx].item())
+                        )
+
+                    if supporting_prompt_specs:
+                        supporting_probs = _run_clap_prompt_set(
+                            model,
+                            processor,
+                            device,
+                            waveform,
+                            target_sample_rate,
+                            [spec["prompt"] for spec in supporting_prompt_specs],
+                        )
+                        window_scores_by_key = {
+                            candidate["key"]: []
+                            for candidate in CLAP_SUPPORTING_CANDIDATES
+                        }
+                        for prompt_idx, spec in enumerate(supporting_prompt_specs):
+                            window_scores_by_key[spec["key"]].append(
+                                float(supporting_probs[prompt_idx].item())
+                            )
+                        for key, values in window_scores_by_key.items():
+                            supporting_window_scores[key].append(max(values) if values else 0.0)
                 else:
                     inputs = processor(
                         waveform.squeeze(0).numpy(),
                         sampling_rate=target_sample_rate,
                         return_tensors="pt",
                     )
-                if device == "cuda":
-                    inputs = {k: v.to(torch.device("cuda")) for k, v in inputs.items()}
-                with torch.no_grad():
-                    outputs = model(**inputs)
-                if bundle_type == "audio_event_clap":
-                    logits = outputs.logits_per_audio.detach().float().cpu()
-                else:
+                    inputs = _move_inputs_to_device(inputs, device)
+                    with torch.no_grad():
+                        outputs = model(**inputs)
                     logits = outputs.logits.detach().float().cpu()
-                logits_accum = logits if logits_accum is None else logits_accum + logits
+                    logits_accum = logits if logits_accum is None else logits_accum + logits
+
                 sample_offsets_s.append(offset / sample_rate)
                 if progress_callback:
                     progress_callback(10 + (80 * idx / max(len(offsets), 1)))
 
-            if logits_accum is None:
-                return {
-                    "hints": [],
-                    "top_labels": [],
-                    "tv_score": 0.0,
-                    "speech_score": 0.0,
-                    "sample_offsets_s": [],
-                }
-
-            avg_logits = logits_accum / max(len(offsets), 1)
-            probs = torch.softmax(avg_logits, dim=-1).squeeze(0)
-
             if bundle_type == "audio_event_clap":
+                primary_score_by_key = {
+                    key: _aggregate_series(scores, "mean")
+                    for key, scores in primary_window_scores.items()
+                }
+                supporting_rules = clap_profile.get("supporting_rules", {})
+                supporting_score_by_key = {}
+                for key, scores in supporting_window_scores.items():
+                    rule = supporting_rules.get(key, {})
+                    supporting_score_by_key[key] = _aggregate_series(
+                        scores,
+                        str(rule.get("aggregation", "top2_mean")),
+                    )
+
                 clap_context = _build_clap_audio_context(
-                    probs,
+                    primary_score_by_key,
+                    supporting_score_by_key,
+                    clap_profile,
                     min_score=settings.audio_event_min_score,
                 )
                 hints = clap_context["hints"]
@@ -372,21 +632,49 @@ async def classify_audio_events(
                 supporting_contexts = clap_context["supporting_contexts"]
                 summary_context = clap_context["summary_context"]
             else:
+                if logits_accum is None:
+                    return {
+                        "hints": [],
+                        "top_labels": [],
+                        "tv_score": 0.0,
+                        "speech_score": 0.0,
+                        "primary_context": None,
+                        "supporting_contexts": [],
+                        "summary_context": "",
+                        "sample_offsets_s": [],
+                    }
+
+                avg_logits = logits_accum / max(len(offsets), 1)
+                probs = torch.softmax(avg_logits, dim=-1).squeeze(0)
                 topk = min(8, probs.numel())
                 scores, indices = torch.topk(probs, k=topk)
                 top_labels = []
                 id2label = model.config.id2label
-                for score, idx in zip(scores.tolist(), indices.tolist(), strict=False):
-                    label = id2label.get(idx, str(idx))
+                for score, item_idx in zip(scores.tolist(), indices.tolist(), strict=False):
+                    label = id2label.get(item_idx, str(item_idx))
                     top_labels.append({"label": label, "score": float(score)})
 
                 tv_score = 0.0
                 speech_score = 0.0
-                for idx, score in enumerate(probs.tolist()):
-                    label = id2label.get(idx, "").lower()
-                    if any(keyword in label for keyword in ("television", "tv", "broadcast", "radio", "news", "talk show")):
+                for item_idx, score in enumerate(probs.tolist()):
+                    label = id2label.get(item_idx, "").lower()
+                    if any(
+                        keyword in label
+                        for keyword in ("television", "tv", "broadcast", "radio", "news", "talk show")
+                    ):
                         tv_score += score
-                    if any(keyword in label for keyword in ("speech", "conversation", "narration", "monologue", "lecture", "meeting", "presentation")):
+                    if any(
+                        keyword in label
+                        for keyword in (
+                            "speech",
+                            "conversation",
+                            "narration",
+                            "monologue",
+                            "lecture",
+                            "meeting",
+                            "presentation",
+                        )
+                    ):
                         speech_score += score
 
                 hints = []

@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     summarization_endpoint_timeout_s: float = 600.0
     embedding_model: str = "Qwen/Qwen3-Embedding-8B"
     audio_event_model: str = "laion/clap-htsat-fused"
+    audio_event_calibration_path: Path = Field(default=Path("/data/models/audio_event_calibration.json"))
     audio_event_sample_seconds: float = 8.0
     audio_event_num_samples: int = 6
     audio_event_min_score: float = 0.15
