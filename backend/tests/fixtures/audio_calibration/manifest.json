@@ -1,0 +1,18 @@
+{
+  "fixtures": [
+    {
+      "media_path": "voiceover_no_music.wav",
+      "expected_primary_key": "podcast_voiceover",
+      "expected_supporting_keys": [],
+      "label": "voiceover_no_music"
+    },
+    {
+      "media_path": "voiceover_with_music.wav",
+      "expected_primary_key": "podcast_voiceover",
+      "expected_supporting_keys": [
+        "music_heavy"
+      ],
+      "label": "voiceover_with_music"
+    }
+  ]
+}

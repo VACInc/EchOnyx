@@ -115,6 +115,16 @@ Manifest shape:
 
 Relative `media_path` values are resolved from the manifest directory. The command accepts audio or video files and will extract temporary audio automatically when needed.
 
+The repo now ships a checked-in baseline profile at `backend/app/assets/audio_event_calibration.json`, generated from the small labeled fixture pack in `backend/tests/fixtures/audio_calibration/`. That packaged baseline loads automatically when `/data/models/audio_event_calibration.json` is absent, and a custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides it.
+
+Regenerate the packaged baseline with:
+
+```bash
+python -m app.core.audio_calibration \
+  --manifest backend/tests/fixtures/audio_calibration/manifest.json \
+  --output backend/app/assets/audio_event_calibration.json
+```
+
 ## Operations Guide (Operator Focus)
 
 ### Upload + Processing

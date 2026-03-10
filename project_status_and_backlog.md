@@ -32,6 +32,10 @@
   - the same narrated benchmark clip now emits both `produced narration or voice-over` and `noticeable music bed or soundtrack`
   - the saved audio-event artifact shows soundtrack support scoring around `0.94` for that clip
   - the post-run GPU idle check still returned to `0%` use at about `607-609 MHz`
+- The repo now includes a checked-in CLAP baseline fixture pack and packaged baseline profile:
+  - fixture manifest: `backend/tests/fixtures/audio_calibration/manifest.json`
+  - packaged runtime baseline: `backend/app/assets/audio_event_calibration.json`
+  - custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides the packaged baseline when present
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 
@@ -60,8 +64,7 @@
 
 ## Product And Pipeline Enhancements
 
-- Tune CLAP prompt and threshold mapping so direct speech, software-demo narration, produced voice-over, playback, and soundtrack cues separate cleanly on small real fixtures.
-- Add a small labeled fixture set plus an auto-calibration pass that writes `AUDIO_EVENT_CALIBRATION_PATH` profiles instead of relying only on built-in heuristics.
+- Expand the checked-in CLAP fixture pack beyond the initial voice-over and soundtrack cases so direct speech, software-demo narration, playback, and applause cues are also calibrated on real labeled clips.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.

@@ -298,7 +298,7 @@ async def test_classify_audio_events_collapses_direct_speech_overlap(monkeypatch
     assert result["speech_score"] > result["tv_score"]
     assert any(item["key"] == "music_heavy" for item in result["supporting_contexts"])
     assert any("noticeable music" in hint for hint in result["hints"])
-    assert "Supporting audio cues: noticeable music bed or soundtrack." in result["summary_context"]
+    assert "noticeable music bed or soundtrack" in result["summary_context"]
     assert manager.released is True
 
 
@@ -349,10 +349,31 @@ async def test_classify_audio_events_detects_intermittent_music_with_supporting_
     assert result["primary_context"]["label"] == "direct software-demo narration"
     assert any(item["key"] == "music_heavy" for item in result["supporting_contexts"])
     assert result["supporting_contexts"][0]["score"] >= 0.15
-    assert "Supporting audio cues: noticeable music bed or soundtrack." in result["summary_context"]
+    assert "noticeable music bed or soundtrack" in result["summary_context"]
 
 
-def test_load_clap_runtime_profile_merges_override(tmp_path):
+def test_load_clap_runtime_profile_merges_override(monkeypatch, tmp_path):
+    packaged_path = tmp_path / "packaged_audio_event_calibration.json"
+    packaged_path.write_text(
+        json.dumps(
+            {
+                "primary_prompts": {
+                    "podcast_voiceover": "packaged narration baseline",
+                },
+                "supporting_prompts": {
+                    "music_heavy": ["packaged soundtrack baseline"],
+                },
+                "supporting_rules": {
+                    "music_heavy": {
+                        "aggregation": "top2_mean",
+                        "absolute_min_score": 0.07,
+                        "relative_ratio": 0.12,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     calibration_path = tmp_path / "audio_event_calibration.json"
     calibration_path.write_text(
         json.dumps(
@@ -380,9 +401,42 @@ def test_load_clap_runtime_profile_merges_override(tmp_path):
         audio_event_calibration_path=calibration_path,
     )
 
+    monkeypatch.setattr(audio_classification, "PACKAGED_CLAP_RUNTIME_PROFILE_PATH", packaged_path)
     profile = audio_classification.load_clap_runtime_profile(settings)
 
     assert profile["primary_prompts"]["software_demo"] == "custom software walkthrough narration"
     assert profile["supporting_prompts"]["music_heavy"] == ["custom faint background music prompt"]
     assert profile["supporting_rules"]["music_heavy"]["aggregation"] == "max"
     assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.03)
+    assert profile["primary_prompts"]["podcast_voiceover"] == "packaged narration baseline"
+
+
+def test_load_clap_runtime_profile_uses_packaged_baseline_when_override_missing(monkeypatch, tmp_path):
+    packaged_path = tmp_path / "packaged_audio_event_calibration.json"
+    packaged_path.write_text(
+        json.dumps(
+            {
+                "supporting_prompts": {
+                    "music_heavy": ["packaged soundtrack baseline"],
+                },
+                "supporting_rules": {
+                    "music_heavy": {
+                        "aggregation": "mean",
+                        "absolute_min_score": 0.03,
+                        "relative_ratio": 0.05,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = types.SimpleNamespace(
+        audio_event_min_score=0.15,
+        audio_event_calibration_path=tmp_path / "missing_profile.json",
+    )
+
+    monkeypatch.setattr(audio_classification, "PACKAGED_CLAP_RUNTIME_PROFILE_PATH", packaged_path)
+    profile = audio_classification.load_clap_runtime_profile(settings)
+
+    assert profile["supporting_prompts"]["music_heavy"] == ["packaged soundtrack baseline"]
+    assert profile["supporting_rules"]["music_heavy"]["aggregation"] == "mean"

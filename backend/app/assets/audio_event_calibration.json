@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "primary_prompts": {
+    "meeting_room_speech": "in-person meeting room or office discussion recorded directly at the table",
+    "broadcast_playback": "television news, sports broadcast, or talk-show audio playing from nearby speakers",
+    "podcast_voiceover": "produced podcast, voice-over, or studio narration",
+    "software_demo": "screen recording or software demo with a presenter narrating steps directly"
+  },
+  "supporting_prompts": {
+    "music_heavy": [
+      "corporate explainer narration with light underscore music",
+      "spoken narration with background music or soundtrack"
+    ],
+    "crowd_applause": [
+      "audience applause or crowd reaction"
+    ]
+  },
+  "supporting_rules": {
+    "music_heavy": {
+      "aggregation": "mean",
+      "absolute_min_score": 0.03,
+      "relative_ratio": 0.05
+    },
+    "crowd_applause": {
+      "aggregation": "mean",
+      "absolute_min_score": 0.03,
+      "relative_ratio": 0.05
+    }
+  },
+  "metrics": {
+    "fixtures_evaluated": 2,
+    "labels": [
+      "voiceover_no_music",
+      "voiceover_with_music"
+    ]
+  }
+}

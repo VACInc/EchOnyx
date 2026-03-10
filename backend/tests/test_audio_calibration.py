@@ -235,5 +235,28 @@ async def test_calibrate_audio_events_manifest_writes_profile(monkeypatch, tmp_p
     assert written["metrics"]["fixtures_evaluated"] == 3
 
 
+def test_repo_audio_calibration_fixture_pack_is_checked_in():
+    manifest_path = Path(__file__).resolve().parent / "fixtures" / "audio_calibration" / "manifest.json"
+
+    fixtures = audio_calibration.load_audio_calibration_manifest(manifest_path)
+
+    assert [fixture.label for fixture in fixtures] == [
+        "voiceover_no_music",
+        "voiceover_with_music",
+    ]
+    for fixture in fixtures:
+        assert fixture.media_path.exists()
+
+
+def test_repo_audio_calibration_profile_matches_fixture_pack():
+    profile_path = Path(__file__).resolve().parents[1] / "app" / "assets" / "audio_event_calibration.json"
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+
+    assert profile["metrics"]["fixtures_evaluated"] == 2
+    assert profile["metrics"]["labels"] == ["voiceover_no_music", "voiceover_with_music"]
+    assert "music_heavy" in profile["supporting_prompts"]
+    assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.03)
+
+
 async def _async_result(value):
     return value

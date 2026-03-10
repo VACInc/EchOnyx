@@ -15,6 +15,9 @@ from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
+PACKAGED_CLAP_RUNTIME_PROFILE_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "audio_event_calibration.json"
+)
 
 
 CLAP_PRIMARY_CANDIDATES = (
@@ -149,28 +152,40 @@ def _deep_merge_profile(base: dict, override: dict) -> dict:
     return merged
 
 
+def _read_profile_payload(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read CLAP calibration profile %s: %s", path, exc)
+        return None
+
+    if not isinstance(payload, dict):
+        logger.warning("Ignoring CLAP calibration profile %s because it is not a JSON object.", path)
+        return None
+
+    return payload
+
+
 def load_clap_runtime_profile(settings) -> dict:
     """Load a CLAP runtime profile from disk when present, otherwise use defaults."""
     profile = build_default_clap_runtime_profile(settings.audio_event_min_score)
+    packaged_payload = _read_profile_payload(PACKAGED_CLAP_RUNTIME_PROFILE_PATH)
+    if packaged_payload:
+        profile = _deep_merge_profile(profile, packaged_payload)
+
     calibration_path = getattr(settings, "audio_event_calibration_path", None)
     if not calibration_path:
         return profile
 
     path = Path(calibration_path)
-    if not path.exists():
+    if not path.exists() or path.resolve() == PACKAGED_CLAP_RUNTIME_PROFILE_PATH.resolve():
         return profile
 
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("Failed to read CLAP calibration profile %s: %s", path, exc)
-        return profile
+    payload = _read_profile_payload(path)
+    if payload:
+        profile = _deep_merge_profile(profile, payload)
 
-    if not isinstance(payload, dict):
-        logger.warning("Ignoring CLAP calibration profile %s because it is not a JSON object.", path)
-        return profile
-
-    return _deep_merge_profile(profile, payload)
+    return profile
 
 
 def _selected_primary_candidates(profile: dict) -> tuple[dict, ...]:
