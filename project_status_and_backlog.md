@@ -21,6 +21,15 @@
 - For this hardware, the practical tradeoff today is:
   - `llama_server`: slower cold loads, but operationally reliable
   - `vllm`: promising future path, but currently too heavy and fragile for default use
+- The CLAP audio-event path is now live and is producing a single structured primary context for summarization instead of a noisy flat hint list.
+- Live Strix Halo benchmark on March 10, 2026:
+  - CLAP classified a narrated demo clip as `produced narration or voice-over` with high confidence
+  - the summary with audio context added explicit narration context and one extra evidence-based key point compared with the no-audio version
+  - the same summary call took about `27.3s` with audio context versus `13.7s` without it on a warm summarization endpoint
+- Current CLAP limitation from that benchmark:
+  - a light synthetic music bed did not clear the supporting-cue threshold, so soundtrack sensitivity still needs calibration
+- Post-benchmark idle validation remained clean on Strix Halo:
+  - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 
 ## High Priority Requirements
 
@@ -47,9 +56,9 @@
 
 ## Product And Pipeline Enhancements
 
-- Replace the current audio-event classifier with a CLAP-based raw-audio hint stage so meeting, broadcast, podcast, and demo-style cues come from the audio itself rather than only a closed AudioSet label map.
+- Tune CLAP prompt and threshold mapping so direct speech, software-demo narration, produced voice-over, playback, and soundtrack cues separate cleanly on small real fixtures.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
-- If audio-event classification stays, benchmark candidate models on Strix Halo ROCm and NVIDIA, including accuracy on small real video fixtures plus latency and VRAM impact.
+- Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.
 - Multi-index retrieval routing (transcript, slides, vision) with reranking for better long-video QA.
 - Optional live transcription plus audio capture or mixing mode for real-time meetings and demos.
