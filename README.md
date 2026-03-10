@@ -107,22 +107,24 @@ Manifest shape:
       "media_path": "/abs/path/to/demo-with-music.mp4",
       "expected_primary_key": "podcast_voiceover",
       "expected_supporting_keys": ["music_heavy"],
-      "label": "demo_with_music"
+      "label": "demo_with_music",
+      "use_for_calibration": true
     }
   ]
 }
 ```
 
 Relative `media_path` values are resolved from the manifest directory. The command accepts audio or video files and will extract temporary audio automatically when needed.
+Set `use_for_calibration` to `false` for exploratory fixtures you want to keep in the pack without letting them tune the default profile yet.
 
 The repo now ships:
 
-- a checked-in six-clip fixture pack in `backend/tests/fixtures/audio_calibration/`
+- a checked-in fixture pack in `backend/tests/fixtures/audio_calibration/` with both validated and exploratory clips
 - a conservative packaged baseline profile at `backend/app/assets/audio_event_calibration.json`
 
 That packaged baseline loads automatically when `/data/models/audio_event_calibration.json` is absent, and a custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides it.
 
-Current note: the larger fixture pack is useful for benchmarking and future recalibration, but the default packaged profile intentionally remains conservative. On live Strix Halo validation, the synthetic meeting/broadcast/software clips still collapsed toward `podcast_voiceover` in raw CLAP-only classification, so the broader candidate profile is not promoted as the default yet.
+Current note: the default packaged profile intentionally remains conservative. Live Strix Halo validation on March 10, 2026 confirmed that the real weather-radio and applause fixtures are audio-separable enough to keep in the active calibration path, while the current real meeting and software-demo fixtures remain exploratory because raw CLAP audio-only classification still collapses them toward produced narration.
 
 Regenerate the packaged baseline with:
 

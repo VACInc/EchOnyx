@@ -1,19 +1,38 @@
-This fixture pack contains a small CLAP calibration baseline covering all
-current primary classes plus the two supporting cues. The current mix is:
+This fixture pack now separates validated calibration fixtures from exploratory
+real-world clips.
 
-- `meeting_room_speech.wav`: short meeting-style speech
-- `meeting_with_applause.wav`: meeting-style speech with applause support
-- `broadcast_playback.wav`: broadcast-style announcement playback
-- `software_demo_narration.wav`: narration-driven software walkthrough
-- `voiceover_no_music.wav`: produced narration with no supporting soundtrack cue
-- `voiceover_with_music.wav`: produced narration with a light music bed
+Validated calibration fixtures (`use_for_calibration: true` in the manifest):
 
-They are intentionally small and are used to:
+- `voiceover_no_music.wav`: controlled clean narration baseline
+- `voiceover_with_music.wav`: controlled narration with a light music bed
+- `broadcast_weather_radio.wav`: real NOAA weather-radio clip
+- `applause_real.wav`: real applause-only crowd cue
 
-- validate the calibration CLI against real media artifacts
-- provide a checked-in baseline profile for soundtrack sensitivity
-- broaden the calibration set beyond only voice-over examples
-- keep the end-user upload flow fully automatic
+Exploratory real fixtures (`use_for_calibration: false`):
+
+- `meeting_room_real.wav`: public-domain congressional hearing clip
+- `software_demo_real.wav`: Wikimedia content-translation screencast narration
+
+Why the split:
+
+- the real weather-radio and applause clips survived live Strix Halo validation
+- the real meeting and software-demo clips still collapsed toward produced narration in raw CLAP audio-only classification
+- the exploratory clips remain checked in so future prompt/model work can benchmark against them without distorting the default calibration path
+
+Source and license notes:
+
+- `broadcast_weather_radio.wav`
+  - source: <https://commons.wikimedia.org/wiki/File:NOAA_Weather_Radio_WXL40.ogg>
+  - license: `CC BY-SA 3.0`
+- `applause_real.wav`
+  - source: <https://commons.wikimedia.org/wiki/File:Applause.ogg>
+  - license: `CC BY-SA 3.0`
+- `meeting_room_real.wav`
+  - source: <https://commons.wikimedia.org/wiki/File:Rep._Greg_Walden_Opens_a_House_Energy_and_Commerce_Committee_Hearing_on_Facebook.ogg>
+  - license: public domain
+- `software_demo_real.wav`
+  - source: <https://commons.wikimedia.org/wiki/File:Content_Translation_Screencast_(English).webm>
+  - license: `CC BY-SA 4.0`
 
 Regenerate the baseline profile with:
 

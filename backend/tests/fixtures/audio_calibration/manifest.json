@@ -1,36 +1,13 @@
 {
   "fixtures": [
     {
-      "media_path": "meeting_room_speech.wav",
-      "expected_primary_key": "meeting_room_speech",
-      "expected_supporting_keys": [],
-      "label": "meeting_room_speech"
-    },
-    {
-      "media_path": "meeting_with_applause.wav",
-      "expected_primary_key": "meeting_room_speech",
-      "expected_supporting_keys": [
-        "crowd_applause"
-      ],
-      "label": "meeting_with_applause"
-    },
-    {
-      "media_path": "broadcast_playback.wav",
-      "expected_primary_key": "broadcast_playback",
-      "expected_supporting_keys": [],
-      "label": "broadcast_playback"
-    },
-    {
-      "media_path": "software_demo_narration.wav",
-      "expected_primary_key": "software_demo",
-      "expected_supporting_keys": [],
-      "label": "software_demo_narration"
-    },
-    {
       "media_path": "voiceover_no_music.wav",
       "expected_primary_key": "podcast_voiceover",
       "expected_supporting_keys": [],
-      "label": "voiceover_no_music"
+      "label": "voiceover_no_music",
+      "use_for_calibration": true,
+      "source_type": "synthetic",
+      "notes": "Controlled clean narration baseline."
     },
     {
       "media_path": "voiceover_with_music.wav",
@@ -38,7 +15,52 @@
       "expected_supporting_keys": [
         "music_heavy"
       ],
-      "label": "voiceover_with_music"
+      "label": "voiceover_with_music",
+      "use_for_calibration": true,
+      "source_type": "synthetic",
+      "notes": "Controlled narration baseline with a light music bed."
+    },
+    {
+      "media_path": "broadcast_weather_radio.wav",
+      "expected_primary_key": "broadcast_playback",
+      "expected_supporting_keys": [],
+      "label": "broadcast_weather_radio",
+      "use_for_calibration": true,
+      "source_url": "https://commons.wikimedia.org/wiki/File:NOAA_Weather_Radio_WXL40.ogg",
+      "license": "CC BY-SA 3.0",
+      "notes": "Validated live on Strix Halo as broadcast or TV playback."
+    },
+    {
+      "media_path": "applause_real.wav",
+      "expected_primary_key": null,
+      "expected_supporting_keys": [
+        "crowd_applause"
+      ],
+      "label": "applause_real",
+      "use_for_calibration": true,
+      "source_url": "https://commons.wikimedia.org/wiki/File:Applause.ogg",
+      "license": "CC BY-SA 3.0",
+      "notes": "Validated live on Strix Halo as a crowd or applause supporting cue."
+    },
+    {
+      "media_path": "meeting_room_real.wav",
+      "expected_primary_key": "meeting_room_speech",
+      "expected_supporting_keys": [],
+      "label": "meeting_room_real",
+      "use_for_calibration": false,
+      "source_url": "https://commons.wikimedia.org/wiki/File:Rep._Greg_Walden_Opens_a_House_Energy_and_Commerce_Committee_Hearing_on_Facebook.ogg",
+      "license": "Public domain",
+      "notes": "Exploratory real clip. Live CLAP still collapsed it toward produced narration."
+    },
+    {
+      "media_path": "software_demo_real.wav",
+      "expected_primary_key": "software_demo",
+      "expected_supporting_keys": [],
+      "label": "software_demo_real",
+      "use_for_calibration": false,
+      "source_url": "https://commons.wikimedia.org/wiki/File:Content_Translation_Screencast_(English).webm",
+      "license": "CC BY-SA 4.0",
+      "notes": "Exploratory real clip. Summary is useful, but audio-only separation remains unproven."
     }
   ]
 }

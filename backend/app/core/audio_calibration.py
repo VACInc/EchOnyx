@@ -39,6 +39,7 @@ class AudioCalibrationFixture:
     expected_primary_key: str | None
     expected_supporting_keys: tuple[str, ...]
     label: str
+    use_for_calibration: bool = True
 
 
 def load_audio_calibration_manifest(manifest_path: Path) -> list[AudioCalibrationFixture]:
@@ -72,10 +73,18 @@ def load_audio_calibration_manifest(manifest_path: Path) -> list[AudioCalibratio
                     sorted(str(value).strip() for value in expected_supporting_raw if str(value).strip())
                 ),
                 label=str(item.get("label") or media_path.stem),
+                use_for_calibration=bool(item.get("use_for_calibration", True)),
             )
         )
 
     return fixtures
+
+
+def select_calibration_fixtures(fixtures: list[AudioCalibrationFixture]) -> list[AudioCalibrationFixture]:
+    selected = [fixture for fixture in fixtures if fixture.use_for_calibration]
+    if not selected:
+        raise ValueError("Manifest must include at least one fixture with use_for_calibration=true.")
+    return selected
 
 
 async def _materialize_audio_path(
@@ -381,7 +390,7 @@ async def calibrate_audio_events_manifest(
     *,
     scratch_dir: Path | None = None,
 ) -> dict:
-    fixtures = load_audio_calibration_manifest(manifest_path)
+    fixtures = select_calibration_fixtures(load_audio_calibration_manifest(manifest_path))
     observations = await collect_clap_fixture_observations(fixtures, scratch_dir=scratch_dir)
     settings = get_settings()
     profile = calibrate_clap_profile_from_observations(

@@ -177,6 +177,72 @@ def test_load_audio_calibration_manifest_resolves_relative_media_paths(tmp_path)
     assert fixtures[0].media_path == fixture_path.resolve()
     assert fixtures[0].expected_primary_key == "podcast_voiceover"
     assert fixtures[0].expected_supporting_keys == ("music_heavy",)
+    assert fixtures[0].use_for_calibration is True
+
+
+def test_load_audio_calibration_manifest_preserves_exploratory_fixtures(tmp_path):
+    fixture_path = tmp_path / "fixtures" / "meeting.wav"
+    fixture_path.parent.mkdir()
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "fixtures": [
+                    {
+                        "media_path": "fixtures/meeting.wav",
+                        "expected_primary_key": "meeting_room_speech",
+                        "expected_supporting_keys": [],
+                        "label": "meeting_room_real",
+                        "use_for_calibration": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fixtures = audio_calibration.load_audio_calibration_manifest(manifest_path)
+
+    assert fixtures[0].media_path == fixture_path.resolve()
+    assert fixtures[0].use_for_calibration is False
+
+
+def test_select_calibration_fixtures_skips_exploratory_entries():
+    fixtures = [
+        audio_calibration.AudioCalibrationFixture(
+            media_path=Path("/tmp/voiceover.wav"),
+            expected_primary_key="podcast_voiceover",
+            expected_supporting_keys=(),
+            label="voiceover",
+            use_for_calibration=True,
+        ),
+        audio_calibration.AudioCalibrationFixture(
+            media_path=Path("/tmp/meeting.wav"),
+            expected_primary_key="meeting_room_speech",
+            expected_supporting_keys=(),
+            label="meeting_room_real",
+            use_for_calibration=False,
+        ),
+    ]
+
+    selected = audio_calibration.select_calibration_fixtures(fixtures)
+
+    assert [fixture.label for fixture in selected] == ["voiceover"]
+
+
+def test_select_calibration_fixtures_requires_at_least_one_enabled_fixture():
+    fixtures = [
+        audio_calibration.AudioCalibrationFixture(
+            media_path=Path("/tmp/meeting.wav"),
+            expected_primary_key="meeting_room_speech",
+            expected_supporting_keys=(),
+            label="meeting_room_real",
+            use_for_calibration=False,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="use_for_calibration=true"):
+        audio_calibration.select_calibration_fixtures(fixtures)
 
 
 def test_calibrate_clap_profile_from_observations_selects_music_prompt_and_rule(monkeypatch):
@@ -209,6 +275,14 @@ async def test_calibrate_audio_events_manifest_writes_profile(monkeypatch, tmp_p
                         "expected_primary_key": "podcast_voiceover",
                         "expected_supporting_keys": ["music_heavy"],
                         "label": "voiceover_music",
+                        "use_for_calibration": True,
+                    },
+                    {
+                        "media_path": "/tmp/exploratory_meeting.wav",
+                        "expected_primary_key": "meeting_room_speech",
+                        "expected_supporting_keys": [],
+                        "label": "meeting_room_real",
+                        "use_for_calibration": False,
                     }
                 ]
             }
@@ -241,12 +315,18 @@ def test_repo_audio_calibration_fixture_pack_is_checked_in():
     fixtures = audio_calibration.load_audio_calibration_manifest(manifest_path)
 
     assert [fixture.label for fixture in fixtures] == [
-        "meeting_room_speech",
-        "meeting_with_applause",
-        "broadcast_playback",
-        "software_demo_narration",
         "voiceover_no_music",
         "voiceover_with_music",
+        "broadcast_weather_radio",
+        "applause_real",
+        "meeting_room_real",
+        "software_demo_real",
+    ]
+    assert [fixture.label for fixture in audio_calibration.select_calibration_fixtures(fixtures)] == [
+        "voiceover_no_music",
+        "voiceover_with_music",
+        "broadcast_weather_radio",
+        "applause_real",
     ]
     for fixture in fixtures:
         assert fixture.media_path.exists()

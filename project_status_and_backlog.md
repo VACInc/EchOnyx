@@ -36,17 +36,20 @@
   - fixture manifest: `backend/tests/fixtures/audio_calibration/manifest.json`
   - packaged runtime baseline: `backend/app/assets/audio_event_calibration.json`
   - custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides the packaged baseline when present
-- The checked-in CLAP fixture pack has now been expanded to cover:
-  - `meeting_room_speech`
-  - `meeting_with_applause`
-  - `broadcast_playback`
-  - `software_demo_narration`
-  - `voiceover_no_music`
-  - `voiceover_with_music`
-- Live Strix Halo validation of the expanded synthetic pack showed a hard limitation:
-  - raw CLAP-only classification still collapsed the synthetic meeting, broadcast, and software-demo clips toward `podcast_voiceover`
-  - the broader auto-generated candidate profile did not outperform the conservative voice-over baseline enough to become the default packaged profile
-  - the larger pack is still useful as a benchmark set and for future model/prompt work
+- The checked-in CLAP fixture pack now distinguishes validated calibration fixtures from exploratory real clips:
+  - validated calibration path:
+    - `voiceover_no_music`
+    - `voiceover_with_music`
+    - `broadcast_weather_radio`
+    - `applause_real`
+  - exploratory fixtures kept out of default calibration for now:
+    - `meeting_room_real`
+    - `software_demo_real`
+- Live Strix Halo validation on March 10, 2026 established:
+  - the real NOAA weather-radio clip separated correctly as `broadcast playback`
+  - the real applause clip separated correctly as a `crowd_applause` supporting cue
+  - the current real meeting and software-demo clips still collapsed toward produced narration in raw CLAP audio-only classification
+  - those exploratory real clips remain useful for benchmarking and future model or prompt work, but should not tune the default calibration path yet
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 
@@ -75,7 +78,7 @@
 
 ## Product And Pipeline Enhancements
 
-- Replace or supplement the synthetic CLAP fixture pack with cleaner real-world labeled audio clips for meeting-room speech, broadcast playback, and software-demo narration so the benchmark reflects actual deployment acoustics.
+- Keep sourcing better real meeting-room and software-demo fixtures until CLAP can separate them cleanly enough to promote them from exploratory to validated calibration inputs.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.
