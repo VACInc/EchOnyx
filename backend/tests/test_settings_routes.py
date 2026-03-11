@@ -8,6 +8,27 @@ from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy
 
 @pytest.mark.asyncio
 async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypatch):
+    runtime_plan = {
+        "accelerator_count": 1,
+        "total_accelerator_memory_gb": 124.94,
+        "effective_memory_budget_gb": 93.7,
+        "placement_mode": "unified_memory_apu",
+        "worker_model_loading": "parallel",
+        "keep_resident_models": ["whisper", "diarization", "embedding", "audio_event"],
+        "can_keep_all_worker_models_loaded": True,
+        "can_keep_endpoint_models_loaded": False,
+        "requires_endpoint_idle_teardown": True,
+        "endpoint_idle_timeout_recommendation_s": 120,
+        "estimated_memory_by_model_gb": {
+            "whisper": 6.0,
+            "diarization": 2.0,
+            "embedding": 16.0,
+            "audio_event": 2.5,
+            "vision": 24.0,
+            "summarization": 24.0,
+        },
+        "notes": ["planner note"],
+    }
     fake_settings = types.SimpleNamespace(
         hardware_profile=HardwareProfile.STRIX_HALO,
         gpu_backend=GPUBackend.ROCM,
@@ -61,7 +82,7 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
             "runtime_planner_enabled": True,
             "runtime_memory_ceiling_gb": None,
             "gpu_memory_fraction": 0.75,
-            "runtime_plan": {},
+            "runtime_plan": runtime_plan,
         },
     )
 
@@ -72,6 +93,8 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.models.audio_event_model == "laion/clap-htsat-fused"
     assert response.models.rocm_llm_runtime == "llama_server"
     assert response.models.rocm_llm_idle_timeout_s == 120
+    assert response.runtime_planner.accelerator_count == 1
+    assert response.runtime_planner.total_accelerator_memory_gb == 124.94
     assert response.runtime_planner.worker_model_loading == "parallel"
     assert "transcription_fallback_model" not in response.models.model_dump()
     assert "transcription_fallback_enabled" not in response.models.model_dump()

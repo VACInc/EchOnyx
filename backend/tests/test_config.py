@@ -113,7 +113,10 @@ def test_validate_hardware_requirements_accepts_rocm_ready_strix_halo(monkeypatc
     validate_hardware_requirements(settings)
 
 
-def test_settings_default_to_managed_llama_server_runtime():
+def test_settings_default_to_managed_llama_server_runtime(monkeypatch):
+    monkeypatch.delenv("RUNTIME_MEMORY_CEILING_GB", raising=False)
+    monkeypatch.delenv("GPU_MEMORY_FRACTION", raising=False)
+    monkeypatch.delenv("RUNTIME_PLANNER_ENABLED", raising=False)
     settings = Settings()
 
     assert settings.rocm_llm_runtime == ROCmLLMRuntime.LLAMA_SERVER

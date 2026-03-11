@@ -20,7 +20,6 @@ from app.config import (
     get_settings,
 )
 from app.core.model_manager import reset_model_manager
-from app.runtime.planner import build_runtime_plan
 
 router = APIRouter()
 
@@ -277,7 +276,7 @@ async def get_current_settings() -> SettingsResponse:
     """Get current application settings."""
     settings = get_settings()
     hardware_info = get_hardware_info()
-    runtime_plan = build_runtime_plan(settings, hardware_info).to_dict()
+    runtime_plan = hardware_info["runtime_plan"]
 
     return SettingsResponse(
         hardware_profile=_enum_value(settings.hardware_profile) if settings.hardware_profile else "unknown",
