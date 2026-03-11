@@ -292,10 +292,10 @@ def get_model_loading_strategy(profile: HardwareProfile) -> ModelLoadingStrategy
 def get_settings() -> Settings:
     """Get cached settings instance with auto-detected hardware."""
     settings = Settings()
+    gpu_info = detect_gpu_info()
 
     # Auto-detect hardware if not explicitly set
     if settings.hardware_profile is None or settings.gpu_backend is None:
-        gpu_info = detect_gpu_info()
         detected_profile, detected_backend = auto_detect_hardware_profile(gpu_info)
 
         if settings.hardware_profile is None:

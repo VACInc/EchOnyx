@@ -11,6 +11,7 @@ from app.config import (
     Settings,
     auto_detect_hardware_profile,
     detect_gpu_info,
+    get_settings,
     validate_hardware_requirements,
 )
 
@@ -119,3 +120,34 @@ def test_settings_default_to_managed_llama_server_runtime():
     assert settings.rocm_llm_idle_timeout_s == 120
     assert settings.runtime_planner_enabled is True
     assert settings.runtime_memory_ceiling_gb is None
+
+
+def test_get_settings_uses_runtime_planner_with_explicit_hardware(monkeypatch):
+    get_settings.cache_clear()
+
+    monkeypatch.setenv("HARDWARE_PROFILE", "strix_halo")
+    monkeypatch.setenv("GPU_BACKEND", "rocm")
+    monkeypatch.setenv("RUNTIME_PLANNER_ENABLED", "true")
+
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: True),
+        version=types.SimpleNamespace(hip="7.2.0"),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    monkeypatch.setattr(
+        "app.config.detect_gpu_info",
+        lambda: {
+            "amd_gpus": [{"name": "AMD GPU", "vram_gb": 16}],
+            "nvidia_gpus": [],
+            "total_vram_gb": 16,
+            "unified_memory_gb": 128,
+        },
+    )
+
+    settings = get_settings()
+
+    assert settings.hardware_profile == HardwareProfile.STRIX_HALO
+    assert settings.gpu_backend == GPUBackend.ROCM
+
+    get_settings.cache_clear()
