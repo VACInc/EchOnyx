@@ -18,6 +18,7 @@ CHUNK_TOKEN_REGEX = re.compile(r"[a-z0-9]{2,}")
 
 # Global ChromaDB client
 _chroma_client: chromadb.ClientAPI | None = None
+_embedding_inference_lock = asyncio.Lock()
 
 
 def _has_embedding_rows(result: dict) -> bool:
@@ -71,18 +72,19 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
         List of embedding vectors
     """
     manager = get_model_manager()
-    model = await manager.get_model(ModelType.EMBEDDING)
-    try:
-        loop = asyncio.get_event_loop()
+    async with _embedding_inference_lock:
+        model = await manager.get_model(ModelType.EMBEDDING)
+        try:
+            loop = asyncio.get_event_loop()
 
-        def do_embed():
-            embeddings = model.encode(texts, convert_to_numpy=True)
-            return embeddings.tolist()
+            def do_embed():
+                embeddings = model.encode(texts, convert_to_numpy=True)
+                return embeddings.tolist()
 
-        return await loop.run_in_executor(None, do_embed)
+            return await loop.run_in_executor(None, do_embed)
 
-    finally:
-        await manager.release_model(ModelType.EMBEDDING)
+        finally:
+            await manager.release_model(ModelType.EMBEDDING)
 
 
 def _coerce_documents(result: dict) -> list[str]:

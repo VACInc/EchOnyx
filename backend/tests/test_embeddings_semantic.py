@@ -1,3 +1,7 @@
+import asyncio
+import threading
+import time
+
 import chromadb
 import pytest
 from chromadb.config import Settings as ChromaSettings
@@ -203,3 +207,57 @@ async def test_generate_embeddings_releases_embedding_model(monkeypatch):
         ("encode", ["budget roadmap"]),
         ("release_model", ModelType.EMBEDDING),
     ]
+
+
+@pytest.mark.asyncio
+async def test_generate_embeddings_serializes_concurrent_encode_calls(monkeypatch):
+    class DummyArray:
+        def __init__(self, texts):
+            self._texts = texts
+
+        def tolist(self):
+            return [[0.1, 0.2] for _ in self._texts]
+
+    class DummyModel:
+        def __init__(self):
+            self._lock = threading.Lock()
+            self.concurrent = 0
+            self.peak = 0
+
+        def encode(self, texts, convert_to_numpy=True):
+            assert convert_to_numpy is True
+            with self._lock:
+                self.concurrent += 1
+                self.peak = max(self.peak, self.concurrent)
+            time.sleep(0.05)
+            with self._lock:
+                self.concurrent -= 1
+            return DummyArray(texts)
+
+    class DummyManager:
+        def __init__(self):
+            self.model = DummyModel()
+            self.get_calls = 0
+            self.release_calls = 0
+
+        async def get_model(self, model_type):
+            assert model_type == ModelType.EMBEDDING
+            self.get_calls += 1
+            return self.model
+
+        async def release_model(self, model_type):
+            assert model_type == ModelType.EMBEDDING
+            self.release_calls += 1
+
+    manager = DummyManager()
+    monkeypatch.setattr(embeddings, "get_model_manager", lambda: manager)
+    embeddings._embedding_inference_lock = asyncio.Lock()
+
+    await asyncio.gather(
+        embeddings.generate_embeddings(["first"]),
+        embeddings.generate_embeddings(["second"]),
+    )
+
+    assert manager.model.peak == 1
+    assert manager.get_calls == 2
+    assert manager.release_calls == 2
