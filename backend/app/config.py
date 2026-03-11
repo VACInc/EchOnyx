@@ -177,6 +177,7 @@ def detect_gpu_info() -> dict:
         "nvidia_gpus": [],
         "amd_gpus": [],
         "total_vram_gb": 0,
+        "system_memory_gb": 0,
     }
 
     # Check for NVIDIA GPUs
@@ -234,6 +235,7 @@ def detect_gpu_info() -> dict:
                 if line.startswith("MemTotal:"):
                     total_ram_kb = int(line.split()[1])
                     total_ram_gb = total_ram_kb / (1024**2)
+                    gpu_info["system_memory_gb"] = total_ram_gb
                     # If we have lots of RAM and AMD GPU, might be Strix Halo
                     if total_ram_gb >= 96 and gpu_info["amd_gpus"] and not gpu_info["nvidia_gpus"]:
                         gpu_info["unified_memory_gb"] = total_ram_gb

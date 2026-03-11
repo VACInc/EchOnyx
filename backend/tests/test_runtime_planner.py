@@ -82,3 +82,21 @@ def test_runtime_plan_marks_multi_gpu_placement():
 
     assert plan.placement_mode == "multi_gpu"
     assert any("Multiple GPUs were detected" in note for note in plan.notes)
+
+
+def test_runtime_plan_falls_back_to_host_memory_for_strix_halo():
+    plan = build_runtime_plan(
+        _settings(),
+        _gpu_info(
+            amd_gpus=[],
+            unified_memory_gb=None,
+            total_vram_gb=0.0,
+            system_memory_gb=128.0,
+        ),
+    )
+
+    assert plan.accelerator_count == 1
+    assert plan.total_accelerator_memory_gb == 128.0
+    assert plan.effective_memory_budget_gb == 96.0
+    assert plan.worker_model_loading == ModelLoadingStrategy.PARALLEL
+    assert any("inferred Strix Halo unified memory from host RAM" in note for note in plan.notes)

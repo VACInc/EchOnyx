@@ -124,7 +124,7 @@ def estimate_model_memory_by_type_gb(settings: "Settings") -> dict[str, float]:
 
 def _resolve_total_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -> float:
     if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
-        unified = gpu_info.get("unified_memory_gb")
+        unified = gpu_info.get("unified_memory_gb") or gpu_info.get("system_memory_gb")
         if unified:
             return _round_gb(unified)
     return _round_gb(gpu_info.get("total_vram_gb", 0.0))
@@ -188,6 +188,12 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     budget_gb = _resolve_effective_budget_gb(settings, total_memory_gb, notes)
     placement = _placement_mode(settings, gpu_info)
     accelerator_count = len(gpu_info.get("nvidia_gpus", [])) + len(gpu_info.get("amd_gpus", []))
+    if accelerator_count == 0 and getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
+        accelerator_count = 1
+        if gpu_info.get("system_memory_gb") and not gpu_info.get("unified_memory_gb"):
+            notes.append(
+                "Planner inferred Strix Halo unified memory from host RAM because direct ROCm memory telemetry was unavailable."
+            )
 
     endpoint_models = []
     worker_models = ["whisper", "diarization", "embedding", "audio_event", "vision", "summarization"]
