@@ -77,22 +77,80 @@ async def test_semantic_index_search_and_similarity(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_index_video_content_skips_low_signal_and_duplicate_chunks(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        embeddings,
+        "_chroma_client",
+        chromadb.PersistentClient(
+            path=str(tmp_path / "chroma"),
+            settings=ChromaSettings(anonymized_telemetry=False, allow_reset=True),
+        ),
+    )
+
+    async def fake_generate_embeddings(texts: list[str]) -> list[list[float]]:
+        return [_fake_embedding_for(text) for text in texts]
+
+    monkeypatch.setattr(embeddings, "generate_embeddings", fake_generate_embeddings)
+
+    video_id = "33333333-3333-3333-3333-333333333333"
+    indexed = await embeddings.index_video_content(
+        video_id=video_id,
+        transcript={
+            "segments": [
+                {"start": 0.0, "end": 4.0, "text": "Budget approved for launch.", "speaker": "Speaker 1"},
+            ]
+        },
+        summary={
+            "executive_summary": "Budget approved for launch.",
+            "key_points": ["Budget approved for launch."],
+            "topics": [{"timestamp": "00:00:00", "topic": "Budget", "summary": "Budget approved for launch."}],
+        },
+        slides=[
+            {"timestamp": 0.0, "title": "", "content": ""},
+            {"timestamp": 1.0, "title": "", "content": ":"},
+        ],
+    )
+
+    stored = embeddings.get_collection().get(where={"video_id": video_id}, include=["documents", "metadatas"])
+    documents = stored["documents"]
+
+    assert indexed == 3
+    assert documents.count("Budget approved for launch.") == 1
+    assert "Speaker 1: Budget approved for launch." in documents
+    assert "Budget: Budget approved for launch." in documents
+    assert all(document.strip() not in {"", ":"} for document in documents)
+
+
+@pytest.mark.asyncio
 async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch):
     calls: dict[str, object] = {}
 
     class FakeCollection:
         def get(self, where=None, include=None):
             calls["include"] = include
-            return {"documents": ["Roadmap review and budget planning."]}
+            return {
+                "documents": [
+                    "Roadmap review and budget planning.",
+                    ":",
+                ],
+                "metadatas": [
+                    {"type": "summary"},
+                    {"type": "slide"},
+                ],
+            }
 
         def query(self, query_embeddings=None, n_results: int = 0, include=None):
             calls["query_embeddings"] = query_embeddings
             calls["n_results"] = n_results
             return {
                 "ids": [["source_chunk", "other_chunk"]],
+                "documents": [[
+                    "Roadmap review and budget planning.",
+                    "Roadmap review and budget planning overlap.",
+                ]],
                 "metadatas": [[
-                    {"video_id": "source-video"},
-                    {"video_id": "other-video"},
+                    {"video_id": "source-video", "type": "summary"},
+                    {"video_id": "other-video", "type": "summary"},
                 ]],
                 "distances": [[0.0, 0.2]],
             }
@@ -106,7 +164,7 @@ async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch)
 
     similar = await embeddings.find_similar_content("source-video", n_results=1)
 
-    assert calls["include"] == ["documents"]
+    assert calls["include"] == ["documents", "metadatas"]
     assert calls["texts"] == ["Roadmap review and budget planning."]
     assert calls["query_embeddings"] == [[0.4, 0.6]]
     assert similar == [{"video_id": "other-video", "score": pytest.approx(0.8)}]

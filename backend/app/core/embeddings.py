@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -13,6 +14,7 @@ from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
+CHUNK_TOKEN_REGEX = re.compile(r"[a-z0-9]{2,}")
 
 # Global ChromaDB client
 _chroma_client: chromadb.ClientAPI | None = None
@@ -107,6 +109,54 @@ def _build_similarity_query_text(documents: list[str], max_documents: int = 4, m
     return "\n\n".join(selected)
 
 
+def _normalize_chunk_text(text: str) -> str:
+    return " ".join(str(text).split()).strip()
+
+
+def _chunk_token_count(text: str) -> int:
+    return len(CHUNK_TOKEN_REGEX.findall(text.lower()))
+
+
+def _is_meaningful_chunk(text: str, content_type: str) -> bool:
+    normalized = _normalize_chunk_text(text)
+    if not normalized:
+        return False
+    if not any(char.isalpha() for char in normalized):
+        return False
+    if normalized.strip(":;-|/ ") == "":
+        return False
+
+    token_count = _chunk_token_count(normalized)
+    minimum_tokens = 3 if content_type in {"transcript", "summary", "topic"} else 2
+    minimum_chars = 18 if content_type in {"transcript", "summary"} else 12
+    return token_count >= minimum_tokens or len(normalized) >= minimum_chars
+
+
+def _append_chunk(
+    *,
+    chunks: list[str],
+    metadatas: list[dict[str, Any]],
+    ids: list[str],
+    seen_texts: set[str],
+    text: str,
+    metadata: dict[str, Any],
+    chunk_id: str,
+) -> None:
+    normalized = _normalize_chunk_text(text)
+    content_type = str(metadata.get("type") or "")
+    if not _is_meaningful_chunk(normalized, content_type):
+        return
+
+    dedupe_key = normalized.lower()
+    if dedupe_key in seen_texts:
+        return
+
+    seen_texts.add(dedupe_key)
+    chunks.append(normalized)
+    metadatas.append(metadata)
+    ids.append(chunk_id)
+
+
 async def index_video_content(
     video_id: str,
     transcript: dict,
@@ -140,6 +190,7 @@ async def index_video_content(
     chunks = []
     metadatas = []
     ids = []
+    seen_texts: set[str] = set()
 
     # Chunk transcript segments
     segments = transcript.get("segments", [])
@@ -166,15 +217,20 @@ async def index_video_content(
         if current_length >= chunk_size:
             chunk_text = " ".join(current_chunk)
             chunk_id = f"{video_id}_transcript_{len(chunks)}"
-
-            chunks.append(chunk_text)
-            metadatas.append({
-                "video_id": video_id,
-                "type": "transcript",
-                "timestamp": chunk_start_time,
-                "speaker": segment.get("speaker"),
-            })
-            ids.append(chunk_id)
+            _append_chunk(
+                chunks=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                seen_texts=seen_texts,
+                text=chunk_text,
+                metadata={
+                    "video_id": video_id,
+                    "type": "transcript",
+                    "timestamp": chunk_start_time,
+                    "speaker": segment.get("speaker"),
+                },
+                chunk_id=chunk_id,
+            )
 
             # Start new chunk with overlap
             overlap_segments = []
@@ -193,63 +249,99 @@ async def index_video_content(
     if current_chunk:
         chunk_text = " ".join(current_chunk)
         chunk_id = f"{video_id}_transcript_{len(chunks)}"
-        chunks.append(chunk_text)
-        metadatas.append({
-            "video_id": video_id,
-            "type": "transcript",
-            "timestamp": chunk_start_time,
-        })
-        ids.append(chunk_id)
+        _append_chunk(
+            chunks=chunks,
+            metadatas=metadatas,
+            ids=ids,
+            seen_texts=seen_texts,
+            text=chunk_text,
+            metadata={
+                "video_id": video_id,
+                "type": "transcript",
+                "timestamp": chunk_start_time,
+            },
+            chunk_id=chunk_id,
+        )
 
     # Add summary content
     if summary:
         # Executive summary
         exec_summary = summary.get("executive_summary", "")
         if exec_summary:
-            chunks.append(exec_summary)
-            metadatas.append({
-                "video_id": video_id,
-                "type": "summary",
-                "section": "executive_summary",
-            })
-            ids.append(f"{video_id}_summary_exec")
+            _append_chunk(
+                chunks=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                seen_texts=seen_texts,
+                text=exec_summary,
+                metadata={
+                    "video_id": video_id,
+                    "type": "summary",
+                    "section": "executive_summary",
+                },
+                chunk_id=f"{video_id}_summary_exec",
+            )
 
         # Key points
         key_points = summary.get("key_points", [])
-        if key_points:
-            chunks.append(" ".join(key_points))
-            metadatas.append({
-                "video_id": video_id,
-                "type": "summary",
-                "section": "key_points",
-            })
-            ids.append(f"{video_id}_summary_keypoints")
+        for idx, point in enumerate(key_points):
+            point_text = _normalize_chunk_text(str(point or ""))
+            if not point_text:
+                continue
+            _append_chunk(
+                chunks=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                seen_texts=seen_texts,
+                text=point_text,
+                metadata={
+                    "video_id": video_id,
+                    "type": "summary",
+                    "section": "key_points",
+                },
+                chunk_id=f"{video_id}_summary_keypoint_{idx}",
+            )
 
         # Topics
         for idx, topic in enumerate(summary.get("topics", [])):
-            topic_text = f"{topic.get('topic', '')}: {topic.get('summary', '')}"
-            chunks.append(topic_text)
-            metadatas.append({
-                "video_id": video_id,
-                "type": "topic",
-                "timestamp": topic.get("timestamp"),
-                "topic_name": topic.get("topic"),
-            })
-            ids.append(f"{video_id}_topic_{idx}")
+            topic_name = _normalize_chunk_text(str(topic.get("topic", "") or ""))
+            topic_summary = _normalize_chunk_text(str(topic.get("summary", "") or ""))
+            topic_text = ": ".join(part for part in (topic_name, topic_summary) if part)
+            _append_chunk(
+                chunks=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                seen_texts=seen_texts,
+                text=topic_text,
+                metadata={
+                    "video_id": video_id,
+                    "type": "topic",
+                    "timestamp": topic.get("timestamp"),
+                    "topic_name": topic.get("topic"),
+                },
+                chunk_id=f"{video_id}_topic_{idx}",
+            )
 
     # Add slide content
     if slides:
         for idx, slide in enumerate(slides):
-            slide_text = f"{slide.get('title', '')}: {slide.get('content', '')}"
-            if slide_text.strip():
-                chunks.append(slide_text)
-                metadatas.append({
+            slide_title = _normalize_chunk_text(str(slide.get("title", "") or ""))
+            slide_content = _normalize_chunk_text(str(slide.get("content", "") or ""))
+            slide_text = ": ".join(part for part in (slide_title, slide_content) if part)
+            _append_chunk(
+                chunks=chunks,
+                metadatas=metadatas,
+                ids=ids,
+                seen_texts=seen_texts,
+                text=slide_text,
+                metadata={
                     "video_id": video_id,
                     "type": "slide",
                     "timestamp": slide.get("timestamp"),
                     "slide_title": slide.get("title"),
-                })
-                ids.append(f"{video_id}_slide_{idx}")
+                },
+                chunk_id=f"{video_id}_slide_{idx}",
+            )
 
     if not chunks:
         logger.warning(f"No content to index for video {video_id}")
@@ -354,17 +446,11 @@ async def find_similar_content(
     # directly from the persistent Chroma collection has proven brittle on the
     # live Strix Halo instance.
     results = collection.get(
-        where={"$and": [{"video_id": video_id}, {"type": "summary"}]},
-        include=["documents"],
+        where={"video_id": video_id},
+        include=["documents", "metadatas"],
     )
 
-    source_documents = _coerce_documents(results)
-    if not source_documents:
-        results = collection.get(
-            where={"$and": [{"video_id": video_id}, {"type": "transcript"}]},
-            include=["documents"],
-        )
-        source_documents = _coerce_documents(results)
+    source_documents = _select_similarity_source_documents(results)
 
     query_text = _build_similarity_query_text(source_documents)
     if not query_text:
@@ -376,18 +462,60 @@ async def find_similar_content(
     similar = collection.query(
         query_embeddings=query_embedding,
         n_results=max(n_results * 6, 24),
-        include=["metadatas", "distances"],
+        include=["documents", "metadatas", "distances"],
     )
 
-    # Aggregate by video_id
-    video_scores: dict[str, float] = {}
+    # Aggregate by video_id with per-chunk type weighting and multi-hit support.
+    score_buckets: dict[str, list[float]] = {}
+    metadatas = similar.get("metadatas", [[]])
+    documents = similar.get("documents", [[]])
+    distances = similar.get("distances", [[]])
     for idx in range(len(similar["ids"][0])):
-        vid = similar["metadatas"][0][idx].get("video_id")
-        if vid and vid != video_id:
-            score = 1 - similar["distances"][0][idx]
-            if vid not in video_scores or score > video_scores[vid]:
-                video_scores[vid] = score
+        metadata = metadatas[0][idx]
+        vid = metadata.get("video_id")
+        if not vid or vid == video_id:
+            continue
+        document = documents[0][idx] if documents and documents[0] else ""
+        if not _is_meaningful_chunk(str(document or ""), str(metadata.get("type") or "")):
+            continue
+        similarity = 1 - distances[0][idx]
+        weighted_similarity = similarity * _similarity_type_weight(str(metadata.get("type") or ""))
+        score_buckets.setdefault(vid, []).append(weighted_similarity)
 
-    # Sort and return top results
+    video_scores: dict[str, float] = {}
+    for vid, scores in score_buckets.items():
+        top_scores = sorted(scores, reverse=True)[:2]
+        if not top_scores:
+            continue
+        video_scores[vid] = (top_scores[0] * 0.7) + ((sum(top_scores) / len(top_scores)) * 0.3)
+
     sorted_videos = sorted(video_scores.items(), key=lambda x: x[1], reverse=True)
     return [{"video_id": vid, "score": score} for vid, score in sorted_videos[:n_results]]
+
+
+def _select_similarity_source_documents(result: dict) -> list[str]:
+    documents = result.get("documents") or []
+    metadatas = result.get("metadatas") or []
+    if not documents:
+        return []
+
+    weighted_documents: list[tuple[float, str]] = []
+    for index, document in enumerate(documents):
+        normalized = _normalize_chunk_text(str(document or ""))
+        metadata = metadatas[index] if index < len(metadatas) else {}
+        content_type = str(metadata.get("type") or "")
+        if not _is_meaningful_chunk(normalized, content_type):
+            continue
+        weighted_documents.append((_similarity_type_weight(content_type), normalized))
+
+    weighted_documents.sort(key=lambda item: item[0], reverse=True)
+    return [document for _, document in weighted_documents]
+
+
+def _similarity_type_weight(content_type: str) -> float:
+    return {
+        "summary": 1.0,
+        "topic": 0.95,
+        "transcript": 0.85,
+        "slide": 0.5,
+    }.get(content_type, 0.7)

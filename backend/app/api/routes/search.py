@@ -44,6 +44,13 @@ SEARCH_STOPWORDS = {
     "were",
     "would",
 }
+CONTENT_TYPE_WEIGHTS = {
+    "transcript": 1.0,
+    "topic": 0.92,
+    "summary": 0.86,
+    "slide": 0.55,
+    "similarity": 0.9,
+}
 
 
 class SearchResult(BaseModel):
@@ -116,17 +123,25 @@ async def search(
         q=q,
         videos=videos,
         speaker=speaker,
-        limit=limit,
+        limit=max(limit * 6, 24),
     )
-    if semantic_results:
-        return SearchResponse(query=q, results=semantic_results, total=len(semantic_results))
-
-    # Fall back to transcript substring matching for older videos that were never indexed.
-    results = _fallback_text_search(videos=videos, q=q, speaker=speaker, limit=limit)
+    lexical_results = _fallback_text_search(
+        videos=videos,
+        q=q,
+        speaker=speaker,
+        limit=max(limit * 6, 24),
+    )
+    results = _merge_search_results(
+        query=q,
+        semantic_results=semantic_results,
+        lexical_results=lexical_results,
+        limit=limit,
+        per_video_limit=3,
+    )
 
     return SearchResponse(
         query=q,
-        results=results[:limit],
+        results=results,
         total=len(results),
     )
 
@@ -154,14 +169,25 @@ async def ask_question(
             confidence=0.0,
         )
 
-    sources = await _semantic_search(
+    semantic_sources = await _semantic_search(
         q=question.question,
         videos=videos,
         speaker=None,
-        limit=5,
+        limit=12,
     )
-    if not sources:
-        sources = _fallback_text_search(videos=videos, q=question.question, speaker=None, limit=5)
+    lexical_sources = _fallback_text_search(
+        videos=videos,
+        q=question.question,
+        speaker=None,
+        limit=12,
+    )
+    sources = _merge_search_results(
+        query=question.question,
+        semantic_results=semantic_sources,
+        lexical_results=lexical_sources,
+        limit=5,
+        per_video_limit=1 if len(videos) > 1 else 5,
+    )
 
     if not sources:
         return RAGAnswer(
@@ -225,19 +251,25 @@ async def find_similar(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
+    result = await db.execute(select(Video).where(Video.id != vid))
+    all_candidates = result.scalars().all()
+    lexical_similar = _fallback_similar_videos(video, all_candidates, max(limit * 4, 20))
+
+    semantic_similar: list[dict] = []
     try:
-        similar_videos = []
         if _semantic_search_available():
-            similar_videos = await asyncio.wait_for(
-                find_similar_content(str(video.id), n_results=limit),
+            semantic_similar = await asyncio.wait_for(
+                find_similar_content(str(video.id), n_results=max(limit * 4, 20)),
                 timeout=SEMANTIC_SEARCH_TIMEOUT_S,
             )
     except Exception:
-        result = await db.execute(select(Video).where(Video.id != vid))
-        similar_videos = _fallback_similar_videos(video, result.scalars().all(), limit)
-    if not similar_videos:
-        result = await db.execute(select(Video).where(Video.id != vid))
-        similar_videos = _fallback_similar_videos(video, result.scalars().all(), limit)
+        semantic_similar = []
+
+    similar_videos = _merge_similar_candidates(
+        semantic_matches=semantic_similar,
+        lexical_matches=lexical_similar,
+        limit=limit,
+    )
     if not similar_videos:
         return SearchResponse(
             query=f"similar to: {video.title or video.original_filename}",
@@ -245,12 +277,7 @@ async def find_similar(
             total=0,
         )
 
-    similar_ids = [item["video_id"] for item in similar_videos]
-    result = await db.execute(select(Video).where(Video.id.in_([uuid.UUID(item) for item in similar_ids])))
-    matched_videos = {
-        str(item.id): item
-        for item in result.scalars().all()
-    }
+    matched_videos = {str(item.id): item for item in all_candidates}
 
     results = []
     for item in similar_videos:
@@ -432,6 +459,168 @@ def _fallback_text_search(
         reverse=True,
     )
     return [result for _, result in ranked_results[:limit]]
+
+
+def _merge_search_results(
+    *,
+    query: str,
+    semantic_results: Sequence[SearchResult],
+    lexical_results: Sequence[SearchResult],
+    limit: int,
+    per_video_limit: int | None = None,
+) -> list[SearchResult]:
+    if not semantic_results and not lexical_results:
+        return []
+
+    query_lower = query.lower().strip()
+    query_tokens = _search_tokens(query)
+    merged: dict[tuple[str, str], dict[str, object]] = {}
+
+    def ingest(result: SearchResult, *, source: str) -> None:
+        normalized_text = _normalize_result_text(result.text)
+        if not normalized_text:
+            return
+        key = (result.video_id, normalized_text.lower())
+        entry = merged.get(key)
+        if entry is None:
+            merged[key] = {
+                "result": result,
+                "semantic": source == "semantic",
+                "lexical": source == "lexical",
+            }
+            return
+
+        entry["semantic"] = bool(entry["semantic"]) or source == "semantic"
+        entry["lexical"] = bool(entry["lexical"]) or source == "lexical"
+        existing = entry["result"]
+        if _prefer_search_result(result, existing):
+            entry["result"] = result
+
+    for result in semantic_results:
+        ingest(result, source="semantic")
+    for result in lexical_results:
+        ingest(result, source="lexical")
+
+    scored: list[SearchResult] = []
+    for entry in merged.values():
+        result = entry["result"]
+        if _is_low_signal_result(result) and not entry["lexical"]:
+            continue
+        reranked = result.model_copy(deep=True)
+        reranked.relevance_score = _hybrid_search_score(
+            query=query,
+            query_lower=query_lower,
+            query_tokens=query_tokens,
+            result=reranked,
+            from_semantic=bool(entry["semantic"]),
+            from_lexical=bool(entry["lexical"]),
+        )
+        if reranked.relevance_score <= 0:
+            continue
+        scored.append(reranked)
+
+    scored.sort(
+        key=lambda result: (
+            result.relevance_score,
+            _result_content_type_weight(result),
+            1 if result.timestamp is not None else 0,
+            result.timestamp or 0.0,
+            len(_normalize_result_text(result.text)),
+        ),
+        reverse=True,
+    )
+    if per_video_limit is None or per_video_limit <= 0:
+        return scored[:limit]
+
+    limited: list[SearchResult] = []
+    per_video_counts: dict[str, int] = {}
+    for result in scored:
+        count = per_video_counts.get(result.video_id, 0)
+        if count >= per_video_limit:
+            continue
+        per_video_counts[result.video_id] = count + 1
+        limited.append(result)
+        if len(limited) >= limit:
+            break
+    return limited
+
+
+def _hybrid_search_score(
+    *,
+    query: str,
+    query_lower: str,
+    query_tokens: set[str],
+    result: SearchResult,
+    from_semantic: bool,
+    from_lexical: bool,
+) -> float:
+    semantic_component = min(max(result.relevance_score, 0.0), 1.0) if from_semantic else 0.0
+    text_for_match = " ".join(
+        part for part in (result.video_title, result.text, result.context or "")
+        if part
+    )
+    lexical_component = min(
+        _lexical_match_score(query, query_lower, query_tokens, text_for_match),
+        3.0,
+    ) / 3.0
+
+    score = (semantic_component * 0.6) + (lexical_component * 0.9)
+    if from_semantic and from_lexical:
+        score += 0.2
+    if query_lower and query_lower in result.text.lower():
+        score += 0.15
+    if query_tokens and query_tokens <= _search_tokens(result.text):
+        score += 0.1
+    if _is_low_signal_result(result):
+        score -= 0.35
+
+    return max(score * _result_content_type_weight(result), 0.0)
+
+
+def _result_content_type(result: SearchResult) -> str:
+    context = (result.context or "").lower()
+    if context.startswith("summary section"):
+        return "summary"
+    if context.startswith("topic"):
+        return "topic"
+    if context.startswith("slide"):
+        return "slide"
+    if context == "similarity":
+        return "similarity"
+    if result.speaker is not None or result.timestamp is not None:
+        return "transcript"
+    return "transcript"
+
+
+def _result_content_type_weight(result: SearchResult) -> float:
+    return CONTENT_TYPE_WEIGHTS.get(_result_content_type(result), 0.8)
+
+
+def _normalize_result_text(text: str) -> str:
+    return " ".join(str(text).split()).strip()
+
+
+def _is_low_signal_result(result: SearchResult) -> bool:
+    text = _normalize_result_text(result.text)
+    if not text:
+        return True
+    if text.strip(":;-|/ ") == "":
+        return True
+    if not any(char.isalnum() for char in text):
+        return True
+    if _result_content_type(result) == "slide" and len(_search_tokens(text)) < 2:
+        return True
+    return False
+
+
+def _prefer_search_result(candidate: SearchResult, existing: SearchResult) -> bool:
+    candidate_type_weight = _result_content_type_weight(candidate)
+    existing_type_weight = _result_content_type_weight(existing)
+    if candidate_type_weight != existing_type_weight:
+        return candidate_type_weight > existing_type_weight
+    if _is_low_signal_result(candidate) != _is_low_signal_result(existing):
+        return not _is_low_signal_result(candidate)
+    return len(_normalize_result_text(candidate.text)) > len(_normalize_result_text(existing.text))
 
 
 def _build_semantic_context(video: Video, text: str, metadata: dict) -> str:
@@ -731,6 +920,39 @@ def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], l
 
     scored.sort(key=lambda item: item["score"], reverse=True)
     return scored[:limit]
+
+
+def _merge_similar_candidates(
+    *,
+    semantic_matches: Sequence[dict],
+    lexical_matches: Sequence[dict],
+    limit: int,
+) -> list[dict]:
+    merged: dict[str, dict[str, float]] = {}
+
+    for item in semantic_matches:
+        video_id = str(item.get("video_id") or "")
+        if not video_id:
+            continue
+        merged.setdefault(video_id, {"semantic": 0.0, "lexical": 0.0})
+        merged[video_id]["semantic"] = max(merged[video_id]["semantic"], float(item.get("score") or 0.0))
+
+    for item in lexical_matches:
+        video_id = str(item.get("video_id") or "")
+        if not video_id:
+            continue
+        merged.setdefault(video_id, {"semantic": 0.0, "lexical": 0.0})
+        merged[video_id]["lexical"] = max(merged[video_id]["lexical"], float(item.get("score") or 0.0))
+
+    ranked: list[dict] = []
+    for video_id, signals in merged.items():
+        score = (signals["semantic"] * 0.75) + (signals["lexical"] * 0.45)
+        if signals["semantic"] and signals["lexical"]:
+            score += 0.1
+        ranked.append({"video_id": video_id, "score": score})
+
+    ranked.sort(key=lambda item: item["score"], reverse=True)
+    return ranked[:limit]
 
 
 def _normalize_tag_filter(tags: Sequence[str] | None) -> list[str]:

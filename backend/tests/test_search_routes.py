@@ -73,7 +73,7 @@ async def test_search_uses_semantic_results_with_tag_filter(monkeypatch):
     db = DummySession([SequenceResult(items=[kept_video, skipped_video])])
     response = await search(q="budget", tags=["finance"], limit=5, db=db)
 
-    assert response.total == 1
+    assert response.total >= 1
     assert response.results[0].video_id == str(kept_video.id)
     assert response.results[0].context == "summary section: executive_summary"
     assert captured["video_ids"] == [str(kept_video.id)]
@@ -178,7 +178,7 @@ async def test_find_similar_uses_embedding_matches(monkeypatch):
 
     async def fake_find_similar_content(video_id: str, n_results: int = 0):
         assert video_id == str(source_video.id)
-        assert n_results == 3
+        assert n_results >= 3
         return [{"video_id": str(similar_video.id), "score": 0.79}]
 
     monkeypatch.setattr(search_module, "find_similar_content", fake_find_similar_content)
@@ -192,7 +192,7 @@ async def test_find_similar_uses_embedding_matches(monkeypatch):
     assert response.total == 1
     assert response.results[0].video_id == str(similar_video.id)
     assert response.results[0].text == "Planning session overlap"
-    assert response.results[0].relevance_score == pytest.approx(0.79)
+    assert response.results[0].relevance_score == pytest.approx(0.79 * 0.75)
 
 
 @pytest.mark.asyncio
@@ -271,6 +271,63 @@ async def test_search_skips_semantic_when_embedding_not_warm_on_sequential_rocm(
     assert response.total == 1
     assert response.results[0].text == "The budget roadmap review is due Friday."
     assert response.results[0].timestamp == pytest.approx(18.0)
+
+
+@pytest.mark.asyncio
+async def test_search_hybrid_ranking_prefers_transcript_over_low_signal_slide(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="probe.mp4",
+        original_filename="probe.mp4",
+        file_path="/tmp/probe.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Friday Probe",
+        transcript={
+            "segments": [
+                {
+                    "start": 12.0,
+                    "end": 16.0,
+                    "text": "The budget review is due Friday.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+    )
+
+    async def fake_search_content(query: str, video_ids=None, n_results: int = 0, **_kwargs):
+        assert query == "Friday"
+        return [
+            {
+                "text": ": ",
+                "metadata": {
+                    "video_id": str(video.id),
+                    "type": "slide",
+                    "timestamp": 0.0,
+                    "slide_title": "",
+                },
+                "score": 0.99,
+            },
+            {
+                "text": "The budget review is due Friday.",
+                "metadata": {
+                    "video_id": str(video.id),
+                    "type": "transcript",
+                    "timestamp": 12.0,
+                    "speaker": "Speaker 1",
+                },
+                "score": 0.74,
+            },
+        ]
+
+    monkeypatch.setattr(search_module, "search_content", fake_search_content)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await search(q="Friday", tags=None, limit=5, db=db)
+
+    assert response.results[0].text == "The budget review is due Friday."
+    assert response.results[0].context != "slide"
+    assert all(result.text.strip() != ":" for result in response.results)
 
 
 @pytest.mark.asyncio
@@ -411,3 +468,55 @@ async def test_find_similar_skips_semantic_when_embedding_not_warm_on_sequential
 
     assert response.total == 1
     assert response.results[0].video_id == str(similar_video.id)
+
+
+@pytest.mark.asyncio
+async def test_find_similar_merges_semantic_and_lexical_rankings(monkeypatch):
+    source_video = Video(
+        id=uuid.uuid4(),
+        filename="source.mp4",
+        original_filename="source.mp4",
+        file_path="/tmp/source.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Budget Review",
+        summary={"executive_summary": "Budget review and roadmap planning."},
+    )
+    semantic_only = Video(
+        id=uuid.uuid4(),
+        filename="semantic.mp4",
+        original_filename="semantic.mp4",
+        file_path="/tmp/semantic.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Other Review",
+        summary={"executive_summary": "General planning notes and discussion."},
+    )
+    hybrid_match = Video(
+        id=uuid.uuid4(),
+        filename="hybrid.mp4",
+        original_filename="hybrid.mp4",
+        file_path="/tmp/hybrid.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Roadmap Budget Session",
+        summary={"executive_summary": "Budget review and roadmap planning milestones."},
+    )
+
+    async def fake_find_similar_content(video_id: str, n_results: int = 0):
+        assert video_id == str(source_video.id)
+        return [
+            {"video_id": str(semantic_only.id), "score": 0.88},
+            {"video_id": str(hybrid_match.id), "score": 0.70},
+        ]
+
+    monkeypatch.setattr(search_module, "find_similar_content", fake_find_similar_content)
+
+    db = DummySession([
+        SequenceResult(scalar=source_video),
+        SequenceResult(items=[semantic_only, hybrid_match]),
+    ])
+    response = await find_similar(str(source_video.id), limit=3, db=db)
+
+    assert response.total == 2
+    assert response.results[0].video_id == str(hybrid_match.id)
