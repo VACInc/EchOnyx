@@ -167,7 +167,7 @@ async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch)
     assert calls["include"] == ["documents", "metadatas"]
     assert calls["texts"] == ["Roadmap review and budget planning."]
     assert calls["query_embeddings"] == [[0.4, 0.6]]
-    assert similar == [{"video_id": "other-video", "score": pytest.approx(0.8)}]
+    assert similar == [{"video_id": "other-video", "score": pytest.approx(0.8 * 0.78)}]
 
 
 @pytest.mark.asyncio

@@ -44,6 +44,7 @@ SEARCH_STOPWORDS = {
     "were",
     "would",
 }
+MIN_DUPLICATE_SIGNATURE_TOKENS = 4
 CONTENT_TYPE_WEIGHTS = {
     "transcript": 1.0,
     "topic": 0.92,
@@ -137,6 +138,7 @@ async def search(
         lexical_results=lexical_results,
         limit=limit,
         per_video_limit=3,
+        video_map={str(video.id): video for video in videos},
     )
 
     return SearchResponse(
@@ -187,6 +189,7 @@ async def ask_question(
         lexical_results=lexical_sources,
         limit=5,
         per_video_limit=1 if len(videos) > 1 else 5,
+        video_map={str(video.id): video for video in videos},
     )
 
     if not sources:
@@ -468,6 +471,7 @@ def _merge_search_results(
     lexical_results: Sequence[SearchResult],
     limit: int,
     per_video_limit: int | None = None,
+    video_map: dict[str, Video] | None = None,
 ) -> list[SearchResult]:
     if not semantic_results and not lexical_results:
         return []
@@ -523,12 +527,14 @@ def _merge_search_results(
         key=lambda result: (
             result.relevance_score,
             _result_content_type_weight(result),
+            _result_video_sort_timestamp(result, video_map),
             1 if result.timestamp is not None else 0,
             result.timestamp or 0.0,
             len(_normalize_result_text(result.text)),
         ),
         reverse=True,
     )
+    scored = _collapse_duplicate_results(scored, video_map=video_map)
     if per_video_limit is None or per_video_limit <= 0:
         return scored[:limit]
 
@@ -623,6 +629,107 @@ def _prefer_search_result(candidate: SearchResult, existing: SearchResult) -> bo
     return len(_normalize_result_text(candidate.text)) > len(_normalize_result_text(existing.text))
 
 
+def _result_video_sort_timestamp(result: SearchResult, video_map: dict[str, Video] | None) -> float:
+    if not video_map:
+        return 0.0
+    video = video_map.get(result.video_id)
+    if not video or not getattr(video, "created_at", None):
+        return 0.0
+    created_at = video.created_at
+    return float(created_at.timestamp())
+
+
+def _collapse_duplicate_results(
+    results: Sequence[SearchResult],
+    *,
+    video_map: dict[str, Video] | None,
+) -> list[SearchResult]:
+    deduped: dict[str, SearchResult] = {}
+    passthrough: list[SearchResult] = []
+
+    for result in results:
+        signature = _duplicate_result_signature(result)
+        if not signature:
+            passthrough.append(result)
+            continue
+        existing = deduped.get(signature)
+        if existing is None or _prefer_duplicate_result(result, existing, video_map):
+            deduped[signature] = result
+
+    combined = passthrough + list(deduped.values())
+    combined.sort(
+        key=lambda result: (
+            result.relevance_score,
+            _result_content_type_weight(result),
+            _result_video_sort_timestamp(result, video_map),
+            1 if result.timestamp is not None else 0,
+            result.timestamp or 0.0,
+            len(_normalize_result_text(result.text)),
+        ),
+        reverse=True,
+    )
+    return combined
+
+
+def _duplicate_result_signature(result: SearchResult) -> str | None:
+    normalized_text = _normalize_duplicate_text(result.text)
+    tokens = _search_tokens(normalized_text)
+    if len(tokens) < MIN_DUPLICATE_SIGNATURE_TOKENS:
+        return None
+    return f"{_result_content_type(result)}:{' '.join(sorted(tokens))}"
+
+
+def _normalize_duplicate_text(text: str) -> str:
+    words = _normalize_result_text(text).split()
+    collapsed: list[str] = []
+    index = 0
+    while index < len(words):
+        token = re.sub(r"[^A-Za-z0-9]", "", words[index])
+        if len(token) != 1:
+            collapsed.append(words[index])
+            index += 1
+            continue
+
+        letters = [token]
+        cursor = index + 1
+        while cursor < len(words):
+            next_token = re.sub(r"[^A-Za-z0-9]", "", words[cursor])
+            if len(next_token) != 1:
+                break
+            letters.append(next_token)
+            cursor += 1
+        if len(letters) >= 3:
+            collapsed.append("".join(letters))
+            index = cursor
+            continue
+
+        collapsed.append(words[index])
+        index += 1
+
+    return " ".join(collapsed)
+
+
+def _prefer_duplicate_result(
+    candidate: SearchResult,
+    existing: SearchResult,
+    video_map: dict[str, Video] | None,
+) -> bool:
+    if abs(candidate.relevance_score - existing.relevance_score) > 0.05:
+        return candidate.relevance_score > existing.relevance_score
+
+    candidate_weight = _result_content_type_weight(candidate)
+    existing_weight = _result_content_type_weight(existing)
+    if candidate_weight != existing_weight:
+        return candidate_weight > existing_weight
+
+    candidate_created_at = _result_video_sort_timestamp(candidate, video_map)
+    existing_created_at = _result_video_sort_timestamp(existing, video_map)
+    if candidate_created_at != existing_created_at:
+        return candidate_created_at > existing_created_at
+
+    return len(_normalize_result_text(candidate.text)) > len(_normalize_result_text(existing.text))
+
+
 def _build_semantic_context(video: Video, text: str, metadata: dict) -> str:
     content_type = str(metadata.get("type") or "")
     if content_type == "transcript" and video.transcript:
@@ -694,25 +801,21 @@ def _video_similarity_text(video: Video) -> str:
     parts: list[str] = []
     if video.title:
         parts.append(video.title)
-    if video.summary:
-        executive_summary = video.summary.get("executive_summary")
-        if executive_summary:
-            parts.append(str(executive_summary))
-        key_points = video.summary.get("key_points") or []
-        if isinstance(key_points, list):
-            parts.extend(str(point) for point in key_points if point)
-        topics = video.summary.get("topics") or []
-        if isinstance(topics, list):
-            for topic in topics[:6]:
-                parts.append(str(topic.get("topic") or ""))
-                parts.append(str(topic.get("summary") or ""))
-    if video.slides:
-        for slide in video.slides[:6]:
-            parts.append(str(slide.get("title") or ""))
-            parts.append(str(slide.get("content") or ""))
+
     if video.transcript:
         for segment in (video.transcript.get("segments") or [])[:24]:
             parts.append(str(segment.get("text") or ""))
+
+    if video.summary:
+        key_points = video.summary.get("key_points") or []
+        if isinstance(key_points, list):
+            parts.extend(str(point) for point in key_points if point)
+
+        if not parts or len(parts) <= 1:
+            executive_summary = video.summary.get("executive_summary")
+            if executive_summary:
+                parts.append(str(executive_summary))
+
     return " ".join(part for part in parts if part).strip()
 
 
@@ -900,7 +1003,7 @@ def _lexical_match_score(
 
 
 def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], limit: int) -> list[dict]:
-    source_tokens = _similarity_tokens(_video_similarity_text(source_video))
+    source_tokens = _search_tokens(_video_similarity_text(source_video))
     if not source_tokens:
         return []
 
@@ -909,13 +1012,15 @@ def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], l
         candidate_id = str(candidate.id)
         if candidate_id == str(source_video.id):
             continue
-        candidate_tokens = _similarity_tokens(_video_similarity_text(candidate))
+        candidate_tokens = _search_tokens(_video_similarity_text(candidate))
         if not candidate_tokens:
             continue
         overlap = source_tokens & candidate_tokens
         if not overlap:
             continue
-        score = len(overlap) / len(source_tokens | candidate_tokens)
+        source_coverage = len(overlap) / len(source_tokens)
+        candidate_precision = len(overlap) / len(candidate_tokens)
+        score = (source_coverage * 0.7) + (candidate_precision * 0.3)
         scored.append({"video_id": candidate_id, "score": score})
 
     scored.sort(key=lambda item: item["score"], reverse=True)
@@ -946,9 +1051,13 @@ def _merge_similar_candidates(
 
     ranked: list[dict] = []
     for video_id, signals in merged.items():
+        if not signals["semantic"] and signals["lexical"] < 0.12:
+            continue
         score = (signals["semantic"] * 0.75) + (signals["lexical"] * 0.45)
         if signals["semantic"] and signals["lexical"]:
             score += 0.1
+        if score <= 0:
+            continue
         ranked.append({"video_id": video_id, "score": score})
 
     ranked.sort(key=lambda item: item["score"], reverse=True)

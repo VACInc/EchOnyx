@@ -1,5 +1,6 @@
 import uuid
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -331,6 +332,83 @@ async def test_search_hybrid_ranking_prefers_transcript_over_low_signal_slide(mo
 
 
 @pytest.mark.asyncio
+async def test_search_collapses_cross_video_duplicates_preferring_newer_video(monkeypatch):
+    older_video = Video(
+        id=uuid.uuid4(),
+        filename="older.mp4",
+        original_filename="older.mp4",
+        file_path="/tmp/older.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Older Probe",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "The budget review is due Friday R O C M is enabled on Strix Halo.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+        created_at=datetime.now(UTC) - timedelta(days=1),
+    )
+    newer_video = Video(
+        id=uuid.uuid4(),
+        filename="newer.mp4",
+        original_filename="newer.mp4",
+        file_path="/tmp/newer.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Newer Probe",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "The budget review is due Friday ROCM is enabled on Strix Halo.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+        created_at=datetime.now(UTC),
+    )
+
+    async def fake_search_content(query: str, video_ids=None, n_results: int = 0, **_kwargs):
+        assert query == "Friday"
+        return [
+            {
+                "text": "The budget review is due Friday R O C M is enabled on Strix Halo.",
+                "metadata": {
+                    "video_id": str(older_video.id),
+                    "type": "transcript",
+                    "timestamp": 0.0,
+                    "speaker": "Speaker 1",
+                },
+                "score": 0.92,
+            },
+            {
+                "text": "The budget review is due Friday ROCM is enabled on Strix Halo.",
+                "metadata": {
+                    "video_id": str(newer_video.id),
+                    "type": "transcript",
+                    "timestamp": 0.0,
+                    "speaker": "Speaker 1",
+                },
+                "score": 0.92,
+            },
+        ]
+
+    monkeypatch.setattr(search_module, "search_content", fake_search_content)
+
+    db = DummySession([SequenceResult(items=[older_video, newer_video])])
+    response = await search(q="Friday", tags=None, limit=5, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(newer_video.id)
+
+
+@pytest.mark.asyncio
 async def test_ask_question_falls_back_to_lexical_matches_when_semantic_is_unavailable(monkeypatch):
     video = Video(
         id=uuid.uuid4(),
@@ -520,3 +598,76 @@ async def test_find_similar_merges_semantic_and_lexical_rankings(monkeypatch):
 
     assert response.total == 2
     assert response.results[0].video_id == str(hybrid_match.id)
+
+
+@pytest.mark.asyncio
+async def test_find_similar_prefers_transcript_overlap_over_generic_summary(monkeypatch):
+    source_video = Video(
+        id=uuid.uuid4(),
+        filename="source.mp4",
+        original_filename="source.mp4",
+        file_path="/tmp/source.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Deploy Verification",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 6.0,
+                    "text": "Please verify deployment and confirm the action items after launch.",
+                },
+            ]
+        },
+        summary={
+            "executive_summary": "A professional presentation with narration and background music.",
+        },
+    )
+    transcript_match = Video(
+        id=uuid.uuid4(),
+        filename="good.mp4",
+        original_filename="good.mp4",
+        file_path="/tmp/good.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Launch Verification",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 6.0,
+                    "text": "Confirm the deployment verification and review the remaining action items.",
+                },
+            ]
+        },
+        summary={
+            "executive_summary": "A professional presentation with narration and background music.",
+        },
+    )
+    generic_match = Video(
+        id=uuid.uuid4(),
+        filename="generic.mp4",
+        original_filename="generic.mp4",
+        file_path="/tmp/generic.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Generic Narration",
+        summary={
+            "executive_summary": "A professional presentation with narration and background music.",
+        },
+    )
+
+    async def fake_find_similar_content(video_id: str, n_results: int = 0):
+        assert video_id == str(source_video.id)
+        return []
+
+    monkeypatch.setattr(search_module, "find_similar_content", fake_find_similar_content)
+
+    db = DummySession([
+        SequenceResult(scalar=source_video),
+        SequenceResult(items=[transcript_match, generic_match]),
+    ])
+    response = await find_similar(str(source_video.id), limit=3, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(transcript_match.id)

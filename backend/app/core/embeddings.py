@@ -479,7 +479,7 @@ async def find_similar_content(
         if not _is_meaningful_chunk(str(document or ""), str(metadata.get("type") or "")):
             continue
         similarity = 1 - distances[0][idx]
-        weighted_similarity = similarity * _similarity_type_weight(str(metadata.get("type") or ""))
+        weighted_similarity = similarity * _similarity_match_weight(metadata)
         score_buckets.setdefault(vid, []).append(weighted_similarity)
 
     video_scores: dict[str, float] = {}
@@ -506,16 +506,23 @@ def _select_similarity_source_documents(result: dict) -> list[str]:
         content_type = str(metadata.get("type") or "")
         if not _is_meaningful_chunk(normalized, content_type):
             continue
-        weighted_documents.append((_similarity_type_weight(content_type), normalized))
+        weighted_documents.append((_similarity_match_weight(metadata), normalized))
 
     weighted_documents.sort(key=lambda item: item[0], reverse=True)
     return [document for _, document in weighted_documents]
 
 
-def _similarity_type_weight(content_type: str) -> float:
-    return {
-        "summary": 1.0,
-        "topic": 0.95,
-        "transcript": 0.85,
-        "slide": 0.5,
-    }.get(content_type, 0.7)
+def _similarity_match_weight(metadata: dict[str, Any]) -> float:
+    content_type = str(metadata.get("type") or "")
+    section = str(metadata.get("section") or "")
+    if content_type == "summary" and section == "key_points":
+        return 1.0
+    if content_type == "transcript":
+        return 0.98
+    if content_type == "summary":
+        return 0.78
+    if content_type == "topic":
+        return 0.68
+    if content_type == "slide":
+        return 0.45
+    return 0.65
