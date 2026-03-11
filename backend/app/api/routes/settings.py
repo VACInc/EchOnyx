@@ -38,7 +38,7 @@ def _stringify_env_value(value: Any) -> str:
 
 
 def _resolve_env_file_path() -> Path:
-    env_file = get_settings().model_config.get("env_file", ".env")
+    env_file = Settings.model_config.get("env_file", ".env")
     if isinstance(env_file, (list, tuple)):
         env_file = env_file[0]
     return Path(env_file or ".env")
@@ -55,6 +55,18 @@ def _write_env_updates(path: Path, updates: dict[str, Any]) -> None:
         key_to_index[key] = index
 
     for key, value in updates.items():
+        if value is None:
+            if key in key_to_index:
+                lines.pop(key_to_index[key])
+                key_to_index = {}
+                for index, line in enumerate(lines):
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or "=" not in line:
+                        continue
+                    current_key = line.split("=", 1)[0].strip()
+                    key_to_index[current_key] = index
+            continue
+
         updated_line = f"{key}={_stringify_env_value(value)}"
         if key in key_to_index:
             lines[key_to_index[key]] = updated_line
@@ -330,7 +342,10 @@ async def update_settings(update: SettingsUpdate) -> SettingsResponse:
     if env_updates:
         _write_env_updates(_resolve_env_file_path(), env_updates)
         for key, value in env_updates.items():
-            os.environ[key] = _stringify_env_value(value)
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = _stringify_env_value(value)
         await _reload_runtime_state()
     return await get_current_settings()
 

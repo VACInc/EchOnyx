@@ -1,3 +1,4 @@
+import os
 import types
 
 import pytest
@@ -150,6 +151,42 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
     assert captured["reloaded"] is True
 
 
+@pytest.mark.asyncio
+async def test_update_settings_removes_nullable_env_fields(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "WHISPER_MODEL=nvidia/canary-qwen-2.5b\nRUNTIME_MEMORY_CEILING_GB=20\n",
+        encoding="utf-8",
+    )
+
+    async def fake_reload():
+        return None
+
+    async def fake_get_current_settings():
+        return types.SimpleNamespace(
+            hardware_profile="strix_halo",
+            gpu_backend="rocm",
+            model_loading="parallel",
+            models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
+            runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
+            processing=types.SimpleNamespace(max_video_length_hours=4),
+        )
+
+    monkeypatch.setattr(settings_module, "_resolve_env_file_path", lambda: env_path)
+    monkeypatch.setattr(settings_module, "_reload_runtime_state", fake_reload)
+    monkeypatch.setattr(settings_module, "get_current_settings", fake_get_current_settings)
+
+    os.environ["RUNTIME_MEMORY_CEILING_GB"] = "20"
+
+    await settings_module.update_settings(
+        settings_module.SettingsUpdate(runtime_memory_ceiling_gb=None)
+    )
+
+    persisted = env_path.read_text(encoding="utf-8")
+    assert "RUNTIME_MEMORY_CEILING_GB" not in persisted
+    assert "RUNTIME_MEMORY_CEILING_GB" not in os.environ
+
+
 def test_write_env_updates_preserves_comments(tmp_path):
     env_path = tmp_path / ".env"
     env_path.write_text("# comment\nWHISPER_MODEL=large-v3\n", encoding="utf-8")
@@ -163,3 +200,20 @@ def test_write_env_updates_preserves_comments(tmp_path):
     assert "# comment" in payload
     assert "WHISPER_MODEL=medium" in payload
     assert "GPU_MEMORY_FRACTION=0.5" in payload
+
+
+def test_write_env_updates_removes_none_values(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "# comment\nWHISPER_MODEL=large-v3\nRUNTIME_MEMORY_CEILING_GB=20\n",
+        encoding="utf-8",
+    )
+
+    settings_module._write_env_updates(env_path, {
+        "RUNTIME_MEMORY_CEILING_GB": None,
+    })
+
+    payload = env_path.read_text(encoding="utf-8")
+    assert "# comment" in payload
+    assert "WHISPER_MODEL=large-v3" in payload
+    assert "RUNTIME_MEMORY_CEILING_GB" not in payload
