@@ -15,6 +15,7 @@ from app.config import (
     HardwareProfile,
     ModelLoadingStrategy,
     ROCmLLMRuntime,
+    Settings,
     get_asr_family,
     get_hardware_info,
     get_settings,
