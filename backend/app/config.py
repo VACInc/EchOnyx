@@ -8,6 +8,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.runtime.planner import build_runtime_plan
+
 
 class HardwareProfile(str, Enum):
     STRIX_HALO = "strix_halo"
@@ -51,6 +53,8 @@ class Settings(BaseSettings):
     cuda_visible_devices: str = ""
     vulkan_device: int = 0
     gpu_memory_fraction: float = 0.75
+    runtime_planner_enabled: bool = True
+    runtime_memory_ceiling_gb: float | None = None
     rocm_llm_runtime: ROCmLLMRuntime = ROCmLLMRuntime.LLAMA_SERVER
     rocm_llm_idle_timeout_s: int = 120
 
@@ -299,10 +303,8 @@ def get_settings() -> Settings:
         if settings.gpu_backend is None:
             settings.gpu_backend = detected_backend
 
-    # Set model loading strategy based on hardware
-    if settings.hardware_profile == HardwareProfile.STRIX_HALO:
-        settings.model_loading = ModelLoadingStrategy.SEQUENTIAL
-    elif settings.model_loading == ModelLoadingStrategy.SEQUENTIAL:
+    # Set model loading strategy based on hardware defaults before runtime planning.
+    if settings.model_loading == ModelLoadingStrategy.SEQUENTIAL:
         settings.model_loading = get_model_loading_strategy(settings.hardware_profile)
 
     # Auto-attach mmproj/chat format for Qwen3VL GGUFs when not explicitly set
@@ -318,6 +320,12 @@ def get_settings() -> Settings:
     # Adjust batch concurrent jobs based on hardware
     if settings.hardware_profile == HardwareProfile.MULTI_GPU:
         settings.batch_concurrent_jobs = max(2, settings.batch_concurrent_jobs)
+
+    if settings.runtime_planner_enabled:
+        runtime_plan = build_runtime_plan(settings, gpu_info)
+        settings.model_loading = runtime_plan.worker_model_loading
+        if runtime_plan.requires_endpoint_idle_teardown and settings.rocm_llm_idle_timeout_s <= 0:
+            settings.rocm_llm_idle_timeout_s = runtime_plan.endpoint_idle_timeout_recommendation_s
 
     validate_hardware_requirements(settings)
 
@@ -359,4 +367,8 @@ def get_hardware_info() -> dict:
         "model_loading_strategy": settings.model_loading.value,
         "rocm_llm_runtime": settings.rocm_llm_runtime.value,
         "rocm_llm_idle_timeout_s": settings.rocm_llm_idle_timeout_s,
+        "runtime_planner_enabled": settings.runtime_planner_enabled,
+        "runtime_memory_ceiling_gb": settings.runtime_memory_ceiling_gb,
+        "gpu_memory_fraction": settings.gpu_memory_fraction,
+        "runtime_plan": build_runtime_plan(settings, gpu_info).to_dict(),
     }

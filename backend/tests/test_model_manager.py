@@ -67,6 +67,12 @@ async def test_load_whisper_canary_failure_raises_without_fallback(monkeypatch, 
         model_loading=ModelLoadingStrategy.SEQUENTIAL,
     )
     monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        model_manager_module,
+        "build_runtime_plan",
+        lambda *_args, **_kwargs: types.SimpleNamespace(keep_resident_models=(), worker_model_loading=ModelLoadingStrategy.SEQUENTIAL),
+    )
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
 
     class FakeSALM:
         @staticmethod
@@ -83,3 +89,32 @@ async def test_load_whisper_canary_failure_raises_without_fallback(monkeypatch, 
 
     with pytest.raises(RuntimeError, match="canary load failed"):
         await manager._load_whisper()
+
+
+@pytest.mark.asyncio
+async def test_release_model_keeps_resident_models_loaded(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CPU,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        model_manager_module,
+        "build_runtime_plan",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            keep_resident_models=("whisper",),
+            worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        ),
+    )
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+
+    manager = ModelManager()
+    manager._loaded_models[model_manager_module.ModelType.WHISPER] = object()
+
+    await manager.release_model(model_manager_module.ModelType.WHISPER)
+
+    assert model_manager_module.ModelType.WHISPER in manager._loaded_models

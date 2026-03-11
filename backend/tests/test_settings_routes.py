@@ -25,6 +25,9 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         summarization_endpoint_model="summary-endpoint",
         embedding_model="Qwen/Qwen3-Embedding-8B",
         audio_event_model="laion/clap-htsat-fused",
+        runtime_planner_enabled=True,
+        gpu_memory_fraction=0.75,
+        runtime_memory_ceiling_gb=None,
         rocm_llm_runtime="llama_server",
         rocm_llm_idle_timeout_s=120,
         max_video_length_hours=4,
@@ -41,6 +44,26 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         summary_chunk_overlap_minutes=0.6,
     )
     monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(
+        settings_module,
+        "get_hardware_info",
+        lambda: {
+            "detected_gpus": {"nvidia": [], "amd": [{"name": "AMD GPU", "vram_gb": 16.0}]},
+            "unified_memory_gb": 128.0,
+            "total_vram_gb": 16.0,
+            "active_profile": "strix_halo",
+            "active_backend": "rocm",
+            "whisper_backend": "rocm",
+            "asr_family": "canary",
+            "model_loading_strategy": "parallel",
+            "rocm_llm_runtime": "llama_server",
+            "rocm_llm_idle_timeout_s": 120,
+            "runtime_planner_enabled": True,
+            "runtime_memory_ceiling_gb": None,
+            "gpu_memory_fraction": 0.75,
+            "runtime_plan": {},
+        },
+    )
 
     response = await settings_module.get_current_settings()
 
@@ -49,6 +72,7 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.models.audio_event_model == "laion/clap-htsat-fused"
     assert response.models.rocm_llm_runtime == "llama_server"
     assert response.models.rocm_llm_idle_timeout_s == 120
+    assert response.runtime_planner.worker_model_loading == "parallel"
     assert "transcription_fallback_model" not in response.models.model_dump()
     assert "transcription_fallback_enabled" not in response.models.model_dump()
 
@@ -61,3 +85,58 @@ async def test_list_available_models_uses_asr_key():
     assert "whisper" not in response
     assert response["asr"][0]["name"] == "nvidia/canary-qwen-2.5b"
     assert response["audio_event"][0]["name"] == "laion/clap-htsat-fused"
+
+
+@pytest.mark.asyncio
+async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("WHISPER_MODEL=large-v3\nGPU_MEMORY_FRACTION=0.75\n", encoding="utf-8")
+    captured = {}
+
+    async def fake_reload():
+        captured["reloaded"] = True
+
+    monkeypatch.setattr(settings_module, "_resolve_env_file_path", lambda: env_path)
+    monkeypatch.setattr(settings_module, "_reload_runtime_state", fake_reload)
+    async def fake_get_current_settings():
+        return types.SimpleNamespace(
+            hardware_profile="strix_halo",
+            gpu_backend="rocm",
+            model_loading="parallel",
+            models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
+            runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
+            processing=types.SimpleNamespace(max_video_length_hours=4),
+        )
+
+    monkeypatch.setattr(settings_module, "get_current_settings", fake_get_current_settings)
+
+    await settings_module.update_settings(
+        settings_module.SettingsUpdate(
+            asr_model="nvidia/canary-qwen-2.5b",
+            runtime_planner_enabled=True,
+            gpu_memory_fraction=0.6,
+            runtime_memory_ceiling_gb=96,
+        )
+    )
+
+    persisted = env_path.read_text(encoding="utf-8")
+    assert "WHISPER_MODEL=nvidia/canary-qwen-2.5b" in persisted
+    assert "RUNTIME_PLANNER_ENABLED=true" in persisted
+    assert "GPU_MEMORY_FRACTION=0.6" in persisted
+    assert "RUNTIME_MEMORY_CEILING_GB=96.0" in persisted
+    assert captured["reloaded"] is True
+
+
+def test_write_env_updates_preserves_comments(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text("# comment\nWHISPER_MODEL=large-v3\n", encoding="utf-8")
+
+    settings_module._write_env_updates(env_path, {
+        "WHISPER_MODEL": "medium",
+        "GPU_MEMORY_FRACTION": 0.5,
+    })
+
+    payload = env_path.read_text(encoding="utf-8")
+    assert "# comment" in payload
+    assert "WHISPER_MODEL=medium" in payload
+    assert "GPU_MEMORY_FRACTION=0.5" in payload

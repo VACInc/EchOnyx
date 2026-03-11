@@ -1,8 +1,11 @@
 """Settings and configuration endpoints."""
 
+from __future__ import annotations
+
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -16,12 +19,56 @@ from app.config import (
     get_hardware_info,
     get_settings,
 )
+from app.core.model_manager import reset_model_manager
+from app.runtime.planner import build_runtime_plan
 
 router = APIRouter()
 
 
 def _enum_value(value) -> str:
     return getattr(value, "value", value)
+
+
+def _stringify_env_value(value: Any) -> str:
+    enum_value = getattr(value, "value", value)
+    if enum_value is None:
+        return ""
+    if isinstance(enum_value, bool):
+        return "true" if enum_value else "false"
+    return str(enum_value)
+
+
+def _resolve_env_file_path() -> Path:
+    env_file = get_settings().model_config.get("env_file", ".env")
+    if isinstance(env_file, (list, tuple)):
+        env_file = env_file[0]
+    return Path(env_file or ".env")
+
+
+def _write_env_updates(path: Path, updates: dict[str, Any]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    key_to_index: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        key_to_index[key] = index
+
+    for key, value in updates.items():
+        updated_line = f"{key}={_stringify_env_value(value)}"
+        if key in key_to_index:
+            lines[key_to_index[key]] = updated_line
+        else:
+            lines.append(updated_line)
+
+    payload = "\n".join(lines).rstrip()
+    path.write_text(f"{payload}\n" if payload else "", encoding="utf-8")
+
+
+async def _reload_runtime_state() -> None:
+    get_settings.cache_clear()
+    await reset_model_manager()
 
 
 class GPUInfo(BaseModel):
@@ -45,6 +92,10 @@ class HardwareInfo(BaseModel):
     model_loading_strategy: str
     rocm_llm_runtime: str
     rocm_llm_idle_timeout_s: int
+    runtime_planner_enabled: bool
+    runtime_memory_ceiling_gb: float | None
+    gpu_memory_fraction: float
+    runtime_plan: dict[str, Any]
 
 
 class ModelConfig(BaseModel):
@@ -66,6 +117,26 @@ class ModelConfig(BaseModel):
     audio_event_model: str
     rocm_llm_runtime: str
     rocm_llm_idle_timeout_s: int
+
+
+class RuntimePlannerConfig(BaseModel):
+    """Runtime planner state and user-configurable limits."""
+
+    enabled: bool
+    gpu_memory_fraction: float
+    memory_ceiling_gb: float | None
+    accelerator_count: int
+    total_accelerator_memory_gb: float
+    effective_memory_budget_gb: float
+    placement_mode: str
+    worker_model_loading: str
+    keep_resident_models: list[str]
+    can_keep_all_worker_models_loaded: bool
+    can_keep_endpoint_models_loaded: bool
+    requires_endpoint_idle_teardown: bool
+    endpoint_idle_timeout_recommendation_s: int
+    estimated_memory_by_model_gb: dict[str, float]
+    notes: list[str]
 
 
 class ProcessingConfig(BaseModel):
@@ -92,6 +163,7 @@ class SettingsResponse(BaseModel):
     gpu_backend: str
     model_loading: str
     models: ModelConfig
+    runtime_planner: RuntimePlannerConfig
     processing: ProcessingConfig
 
 
@@ -101,6 +173,9 @@ class SettingsUpdate(BaseModel):
     hardware_profile: HardwareProfile | None = None
     gpu_backend: GPUBackend | None = None
     model_loading: ModelLoadingStrategy | None = None
+    runtime_planner_enabled: bool | None = None
+    gpu_memory_fraction: float | None = None
+    runtime_memory_ceiling_gb: float | None = None
     rocm_llm_runtime: ROCmLLMRuntime | None = None
     rocm_llm_idle_timeout_s: int | None = None
     asr_model: str | None = None
@@ -114,6 +189,8 @@ class SettingsUpdate(BaseModel):
     summarization_model: str | None = None
     summarization_endpoint_url: str | None = None
     summarization_endpoint_model: str | None = None
+    embedding_model: str | None = None
+    audio_event_model: str | None = None
     max_video_length_hours: int | None = None
     keyframe_extraction_interval: int | None = None
     frame_persistence_seconds: float | None = None
@@ -122,15 +199,85 @@ class SettingsUpdate(BaseModel):
     frame_dedupe_threshold: float | None = None
     frame_resize_width: int | None = None
     max_keyframes: int | None = None
+    min_speech_duration: float | None = None
     batch_concurrent_jobs: int | None = None
     summary_chunk_minutes: float | None = None
     summary_chunk_overlap_minutes: float | None = None
+
+
+ENV_FIELD_MAP: dict[str, str] = {
+    "hardware_profile": "HARDWARE_PROFILE",
+    "gpu_backend": "GPU_BACKEND",
+    "model_loading": "MODEL_LOADING",
+    "runtime_planner_enabled": "RUNTIME_PLANNER_ENABLED",
+    "gpu_memory_fraction": "GPU_MEMORY_FRACTION",
+    "runtime_memory_ceiling_gb": "RUNTIME_MEMORY_CEILING_GB",
+    "rocm_llm_runtime": "ROCM_LLM_RUNTIME",
+    "rocm_llm_idle_timeout_s": "ROCM_LLM_IDLE_TIMEOUT_S",
+    "asr_model": "WHISPER_MODEL",
+    "granite_force_cpu": "GRANITE_FORCE_CPU",
+    "diarization_model": "DIARIZATION_MODEL",
+    "vision_model": "VISION_MODEL",
+    "vision_mmproj": "VISION_MMPROJ",
+    "vision_chat_format": "VISION_CHAT_FORMAT",
+    "vision_endpoint_url": "VISION_ENDPOINT_URL",
+    "vision_endpoint_model": "VISION_ENDPOINT_MODEL",
+    "summarization_model": "SUMMARIZATION_MODEL",
+    "summarization_endpoint_url": "SUMMARIZATION_ENDPOINT_URL",
+    "summarization_endpoint_model": "SUMMARIZATION_ENDPOINT_MODEL",
+    "embedding_model": "EMBEDDING_MODEL",
+    "audio_event_model": "AUDIO_EVENT_MODEL",
+    "max_video_length_hours": "MAX_VIDEO_LENGTH_HOURS",
+    "keyframe_extraction_interval": "KEYFRAME_EXTRACTION_INTERVAL",
+    "frame_persistence_seconds": "FRAME_PERSISTENCE_SECONDS",
+    "frame_change_threshold": "FRAME_CHANGE_THRESHOLD",
+    "frame_stability_threshold": "FRAME_STABILITY_THRESHOLD",
+    "frame_dedupe_threshold": "FRAME_DEDUPE_THRESHOLD",
+    "frame_resize_width": "FRAME_RESIZE_WIDTH",
+    "max_keyframes": "MAX_KEYFRAMES",
+    "min_speech_duration": "MIN_SPEECH_DURATION",
+    "batch_concurrent_jobs": "BATCH_CONCURRENT_JOBS",
+    "summary_chunk_minutes": "SUMMARY_CHUNK_MINUTES",
+    "summary_chunk_overlap_minutes": "SUMMARY_CHUNK_OVERLAP_MINUTES",
+}
+
+
+def _collect_env_updates(update: SettingsUpdate) -> dict[str, Any]:
+    updates: dict[str, Any] = {}
+    payload = update.model_dump(exclude_unset=True)
+    for field_name, value in payload.items():
+        env_name = ENV_FIELD_MAP.get(field_name)
+        if env_name:
+            updates[env_name] = value
+    return updates
+
+
+def _runtime_planner_response(settings, runtime_plan: dict) -> RuntimePlannerConfig:
+    return RuntimePlannerConfig(
+        enabled=settings.runtime_planner_enabled,
+        gpu_memory_fraction=settings.gpu_memory_fraction,
+        memory_ceiling_gb=settings.runtime_memory_ceiling_gb,
+        accelerator_count=runtime_plan["accelerator_count"],
+        total_accelerator_memory_gb=runtime_plan["total_accelerator_memory_gb"],
+        effective_memory_budget_gb=runtime_plan["effective_memory_budget_gb"],
+        placement_mode=runtime_plan["placement_mode"],
+        worker_model_loading=runtime_plan["worker_model_loading"],
+        keep_resident_models=runtime_plan["keep_resident_models"],
+        can_keep_all_worker_models_loaded=runtime_plan["can_keep_all_worker_models_loaded"],
+        can_keep_endpoint_models_loaded=runtime_plan["can_keep_endpoint_models_loaded"],
+        requires_endpoint_idle_teardown=runtime_plan["requires_endpoint_idle_teardown"],
+        endpoint_idle_timeout_recommendation_s=runtime_plan["endpoint_idle_timeout_recommendation_s"],
+        estimated_memory_by_model_gb=runtime_plan["estimated_memory_by_model_gb"],
+        notes=runtime_plan["notes"],
+    )
 
 
 @router.get("", response_model=SettingsResponse)
 async def get_current_settings() -> SettingsResponse:
     """Get current application settings."""
     settings = get_settings()
+    hardware_info = get_hardware_info()
+    runtime_plan = build_runtime_plan(settings, hardware_info).to_dict()
 
     return SettingsResponse(
         hardware_profile=_enum_value(settings.hardware_profile) if settings.hardware_profile else "unknown",
@@ -154,6 +301,7 @@ async def get_current_settings() -> SettingsResponse:
             rocm_llm_runtime=_enum_value(settings.rocm_llm_runtime),
             rocm_llm_idle_timeout_s=settings.rocm_llm_idle_timeout_s,
         ),
+        runtime_planner=_runtime_planner_response(settings, runtime_plan),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,
             keyframe_extraction_interval=settings.keyframe_extraction_interval,
@@ -179,15 +327,12 @@ async def update_settings(update: SettingsUpdate) -> SettingsResponse:
     Note: Some settings may require a restart to take effect.
     Settings are persisted to the .env file.
     """
-    # TODO: Implement settings persistence
-    # For now, return current settings (updates would need restart)
-
-    # In a production implementation, we would:
-    # 1. Validate the new settings
-    # 2. Write them to .env file
-    # 3. Optionally reload configuration
-    # 4. Return the updated settings
-
+    env_updates = _collect_env_updates(update)
+    if env_updates:
+        _write_env_updates(_resolve_env_file_path(), env_updates)
+        for key, value in env_updates.items():
+            os.environ[key] = _stringify_env_value(value)
+        await _reload_runtime_state()
     return await get_current_settings()
 
 
@@ -216,15 +361,18 @@ async def get_hardware() -> HardwareInfo:
         whisper_backend=info["whisper_backend"],
         asr_family=info["asr_family"],
         model_loading_strategy=info["model_loading_strategy"],
+        rocm_llm_runtime=info["rocm_llm_runtime"],
+        rocm_llm_idle_timeout_s=info["rocm_llm_idle_timeout_s"],
+        runtime_planner_enabled=info["runtime_planner_enabled"],
+        runtime_memory_ceiling_gb=info["runtime_memory_ceiling_gb"],
+        gpu_memory_fraction=info["gpu_memory_fraction"],
+        runtime_plan=info["runtime_plan"],
     )
 
 
 @router.get("/models/available")
 async def list_available_models() -> dict:
     """List available models for each component."""
-    # TODO: Scan model cache directory for available GGUF files
-    # For now, return recommended models
-
     return {
         "asr": [
             {"name": "nvidia/canary-qwen-2.5b", "size_gb": 6.0, "recommended": True},
@@ -261,16 +409,14 @@ async def list_available_models() -> dict:
 @router.get("/models/status")
 async def get_model_download_status() -> dict:
     """Get status of all model downloads (in progress or completed)."""
-    from app.core.model_downloader import get_all_download_progress, MODEL_REGISTRY
+    from app.core.model_downloader import MODEL_REGISTRY, get_all_download_progress
 
     settings = get_settings()
     cache_dir = settings.model_cache_dir
     loaded_models = _loaded_models_from_state(cache_dir)
 
-    # Get download progress for active downloads
     download_progress = get_all_download_progress()
 
-    # Check which models are already downloaded
     models_status = {}
     required_models = {
         "whisper": settings.whisper_model,
@@ -298,7 +444,6 @@ async def get_model_download_status() -> dict:
             }
             continue
 
-        # Check if it's a GGUF model that needs to be downloaded
         if model_name.endswith(".gguf"):
             model_path = cache_dir / model_name
             if model_path.exists():
@@ -312,7 +457,6 @@ async def get_model_download_status() -> dict:
             elif model_name in download_progress:
                 models_status[model_type] = _normalize_progress_status(download_progress[model_name])
             else:
-                # Model needs to be downloaded but hasn't started
                 size_gb = MODEL_REGISTRY.get(model_name, {}).get("size_gb", 0)
                 models_status[model_type] = {
                     "model_name": model_name,
@@ -320,8 +464,6 @@ async def get_model_download_status() -> dict:
                     "expected_size_gb": size_gb,
                 }
         else:
-            # HuggingFace model (whisper, diarization, embedding)
-            # These download automatically on first use; detect cache when possible.
             if model_name in download_progress:
                 models_status[model_type] = _normalize_progress_status(download_progress[model_name])
             elif _hf_model_cached(model_name):
@@ -342,8 +484,8 @@ async def get_model_download_status() -> dict:
     return {
         "models": models_status,
         "active_downloads": [
-            v for v in download_progress.values()
-            if v.get("status") == "downloading"
+            value for value in download_progress.values()
+            if value.get("status") == "downloading"
         ],
     }
 
@@ -390,7 +532,7 @@ def _hf_model_cached(model_name: str) -> bool:
     snapshots = repo_dir / "snapshots"
     if snapshots.exists():
         try:
-            return any(p.is_dir() for p in snapshots.iterdir())
+            return any(path.is_dir() for path in snapshots.iterdir())
         except OSError:
             return False
     return False

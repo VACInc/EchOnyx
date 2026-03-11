@@ -117,3 +117,5 @@ def test_settings_default_to_managed_llama_server_runtime():
 
     assert settings.rocm_llm_runtime == ROCmLLMRuntime.LLAMA_SERVER
     assert settings.rocm_llm_idle_timeout_s == 120
+    assert settings.runtime_planner_enabled is True
+    assert settings.runtime_memory_ceiling_gb is None

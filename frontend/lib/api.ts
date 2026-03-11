@@ -65,6 +65,23 @@ interface SettingsResponse {
     rocm_llm_runtime: string;
     rocm_llm_idle_timeout_s: number;
   };
+  runtime_planner: {
+    enabled: boolean;
+    gpu_memory_fraction: number;
+    memory_ceiling_gb: number | null;
+    accelerator_count: number;
+    total_accelerator_memory_gb: number;
+    effective_memory_budget_gb: number;
+    placement_mode: string;
+    worker_model_loading: string;
+    keep_resident_models: string[];
+    can_keep_all_worker_models_loaded: boolean;
+    can_keep_endpoint_models_loaded: boolean;
+    requires_endpoint_idle_teardown: boolean;
+    endpoint_idle_timeout_recommendation_s: number;
+    estimated_memory_by_model_gb: Record<string, number>;
+    notes: string[];
+  };
   processing: {
     max_video_length_hours: number;
     keyframe_extraction_interval: number;
@@ -79,6 +96,13 @@ interface SettingsResponse {
     summary_chunk_minutes: number;
     summary_chunk_overlap_minutes: number;
   };
+}
+
+interface SettingsUpdatePayload {
+  asr_model?: string;
+  runtime_planner_enabled?: boolean;
+  gpu_memory_fraction?: number;
+  runtime_memory_ceiling_gb?: number | null;
 }
 
 interface SummaryResponse {
@@ -256,6 +280,19 @@ export const api = {
     return fetchApi<SettingsResponse>("/api/settings");
   },
 
+  async updateSettings(payload: SettingsUpdatePayload) {
+    return fetchApi<SettingsResponse>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getAvailableModels() {
+    return fetchApi<{
+      asr: Array<{ name: string; size_gb: number; recommended: boolean }>;
+    }>("/api/settings/models/available");
+  },
+
   async getHardwareInfo() {
     return fetchApi<{
       nvidia_gpus: Array<{ name: string; vram_gb: number }>;
@@ -265,7 +302,14 @@ export const api = {
       active_profile: string;
       active_backend: string;
       whisper_backend: string;
+      asr_family: string;
       model_loading_strategy: string;
+      rocm_llm_runtime: string;
+      rocm_llm_idle_timeout_s: number;
+      runtime_planner_enabled: boolean;
+      runtime_memory_ceiling_gb: number | null;
+      gpu_memory_fraction: number;
+      runtime_plan: SettingsResponse["runtime_planner"];
     }>("/api/settings/hardware");
   },
 

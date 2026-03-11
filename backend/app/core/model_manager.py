@@ -9,7 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, get_settings
+from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, detect_gpu_info, get_settings
+from app.runtime.planner import build_runtime_plan
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,7 @@ class ModelManager:
 
     def __init__(self):
         self.settings = get_settings()
+        self.runtime_plan = build_runtime_plan(self.settings, detect_gpu_info())
         self._loaded_models: dict[ModelType, Any] = {}
         self._lock = asyncio.Lock()
         self._loaded_state_path = self.settings.model_cache_dir / ".loaded_models.json"
@@ -251,6 +253,14 @@ class ModelManager:
     def is_sequential(self) -> bool:
         """Check if we're in sequential loading mode."""
         return self.settings.model_loading == ModelLoadingStrategy.SEQUENTIAL
+
+    @property
+    def resident_model_types(self) -> set[ModelType]:
+        resident: set[ModelType] = set()
+        for model_name in self.runtime_plan.keep_resident_models:
+            if model_name in ModelType._value2member_map_:
+                resident.add(ModelType(model_name))
+        return resident
 
     @property
     def requires_strict_accelerator(self) -> bool:
@@ -272,7 +282,7 @@ class ModelManager:
 
             # In sequential mode, unload other models first
             if self.is_sequential:
-                await self._unload_all()
+                await self._unload_for_request(model_type)
 
             # Load the requested model
             model = await self._load_model(model_type)
@@ -288,6 +298,8 @@ class ModelManager:
         In parallel mode, models stay loaded.
         """
         if self.is_sequential:
+            if model_type in self.resident_model_types:
+                return
             async with self._lock:
                 await self._unload_model(model_type)
 
@@ -704,6 +716,15 @@ class ModelManager:
         for model_type in list(self._loaded_models.keys()):
             await self._unload_model(model_type)
 
+    async def _unload_for_request(self, requested_type: ModelType) -> None:
+        resident_models = self.resident_model_types
+        for loaded_type in list(self._loaded_models.keys()):
+            if loaded_type == requested_type:
+                continue
+            if loaded_type in resident_models:
+                continue
+            await self._unload_model(loaded_type)
+
     def get_loaded_models(self) -> list[str]:
         """Get list of currently loaded model types."""
         return [m.value for m in self._loaded_models.keys()]
@@ -733,3 +754,12 @@ def get_model_manager() -> ModelManager:
     if _model_manager is None:
         _model_manager = ModelManager()
     return _model_manager
+
+
+async def reset_model_manager() -> None:
+    """Drop the global model manager so new settings take effect immediately."""
+    global _model_manager
+    if _model_manager is not None:
+        async with _model_manager._lock:
+            await _model_manager._unload_all()
+    _model_manager = None
