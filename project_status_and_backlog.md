@@ -52,6 +52,15 @@
   - those exploratory real clips remain useful for benchmarking and future model or prompt work, but should not tune the default calibration path yet
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
+- Live Strix Halo duplicate handling is now in place:
+  - duplicate policy and thresholds are configurable through `/api/settings` and the Settings UI
+  - completed videos reject accidental reruns unless `force=true` is used explicitly
+  - exact duplicate uploads are marked in `videos.duplicate_info`, skip standalone indexing, and are suppressed from default search results
+  - explicit `video_id` or `video_ids` search and ask requests still allow targeting suppressed duplicates directly
+- Live Strix Halo validation on March 12, 2026 confirmed:
+  - two repeated uploads of the same spoken probe were both classified as `exact_duplicate` with `score: 1.0`
+  - default search for that probe content returned only the representative video after suppression
+  - `/api/videos/{id}` now reports an active rerun as `queued` or `processing` instead of incorrectly preferring an older completed job
 
 ## High Priority Requirements
 
