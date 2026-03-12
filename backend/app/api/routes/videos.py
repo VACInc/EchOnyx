@@ -108,6 +108,24 @@ async def _get_latest_completed_job(db: AsyncSession, video_id: uuid.UUID) -> Jo
     return result.scalar_one_or_none()
 
 
+async def _get_display_job(db: AsyncSession, video_id: uuid.UUID) -> Job | None:
+    active_job = await _get_active_job(db, video_id)
+    if active_job:
+        return active_job
+
+    completed_job = await _get_latest_completed_job(db, video_id)
+    if completed_job:
+        return completed_job
+
+    job_result = await db.execute(
+        select(Job)
+        .where(Job.video_id == video_id)
+        .order_by(Job.created_at.desc())
+        .limit(1)
+    )
+    return job_result.scalar_one_or_none()
+
+
 @router.post("/upload", response_model=VideoResponse)
 async def upload_video(
     file: Annotated[UploadFile, File(description="Video file to upload")],
@@ -235,22 +253,7 @@ async def list_videos(
     video_responses = []
     dirty_jobs = False
     for video in videos:
-        completed_job = await _get_latest_completed_job(db, video.id)
-        if completed_job:
-            job = completed_job
-        else:
-            active_job = await _get_active_job(db, video.id)
-            if active_job:
-                job = active_job
-            else:
-                job_query = (
-                    select(Job)
-                    .where(Job.video_id == video.id)
-                    .order_by(Job.created_at.desc())
-                    .limit(1)
-                )
-                job_result = await db.execute(job_query)
-                job = job_result.scalar_one_or_none()
+        job = await _get_display_job(db, video.id)
         file_missing = not Path(video.file_path).exists()
         status = job.status if job else "uploaded"
 
@@ -345,22 +348,7 @@ async def get_video(
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
 
-    completed_job = await _get_latest_completed_job(db, video.id)
-    if completed_job:
-        job = completed_job
-    else:
-        active_job = await _get_active_job(db, video.id)
-        if active_job:
-            job = active_job
-        else:
-            job_query = (
-                select(Job)
-                .where(Job.video_id == video.id)
-                .order_by(Job.created_at.desc())
-                .limit(1)
-            )
-            job_result = await db.execute(job_query)
-            job = job_result.scalar_one_or_none()
+    job = await _get_display_job(db, video.id)
 
     file_missing = not Path(video.file_path).exists()
     status = job.status if job else "uploaded"
