@@ -16,6 +16,7 @@
 - Semantic search + question answering across all content
 - User labels (tags) and label-scoped search/ask
 - Retry (resume) and Reset (reprocess) pipeline controls
+- Duplicate detection with configurable suppression thresholds
 
 ## Quick Start (Docker)
 
@@ -143,6 +144,12 @@ python -m app.core.audio_calibration \
 ### Retry vs Reset
 - **Retry**: resumes from the last successful step (idempotent).
 - **Reset**: restarts the entire pipeline from scratch.
+- Completed videos do not rerun by accident. A full rerun now requires an explicit forced reset or reprocess action.
+
+### Duplicate Handling
+- Duplicate policy is configurable in Settings.
+- Default behavior collapses exact duplicates out of default search results while keeping one representative indexed.
+- Suppressed duplicates can still be targeted directly with explicit `video_id` / `video_ids` search and ask requests.
 
 ### Labels (Tags)
 - Add labels on a video’s detail page.
