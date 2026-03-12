@@ -29,3 +29,4 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 - Completed videos require an explicit forced rerun; reset/reprocess is not implicit anymore.
 - Duplicate scoring is computed after summarization and before embedding so suppressed duplicates do not get indexed as separate search representatives.
 - The runtime planner now uses current free GPU memory plus NVIDIA topology data when choosing preferred worker and endpoint placement.
+- For the current model set, plan around `24 GB` free as the rough NVIDIA floor, `32 GB` free as the practical single-GPU target, and about `100 GB` free if you expect the whole stack to stay resident on one GPU.

@@ -175,6 +175,13 @@ Use the Search page to:
 | Multi-GPU | Multiple NVIDIA GPUs | Parallel |
 | CPU Only | Fallback for systems without GPU | Sequential |
 
+Current NVIDIA planning note:
+- Rough floor for the current model set is about `24 GB` free on at least one GPU.
+- Practical single-GPU target is about `32 GB` free.
+- Keeping the whole current stack resident on one GPU needs about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
+- The planner now prefers the largest currently free GPU first, then falls back to multi-GPU placement based on free memory and topology.
+- Full live CUDA deployment and end-to-end acceptance are still pending.
+
 Current AMD note:
 - Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.
 - The AMD Docker override now supports two ROCm LLM endpoint paths behind the same OpenAI-compatible URLs:

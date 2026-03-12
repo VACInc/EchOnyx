@@ -66,6 +66,11 @@
   - the 6000 had about `97 GB` free and is the correct first-choice placement when the current model set fits on one GPU
   - the planner now uses current free memory and `nvidia-smi topo -m` data, not only static total VRAM
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
+  - current NVIDIA sizing guidance for the shipped model set is:
+    - rough floor: about `24 GB` free on one GPU
+    - practical single-GPU target: about `32 GB` free
+    - single-GPU fully resident target: about `100 GB` free at the default memory fraction
+  - full live CUDA deployment and end-to-end acceptance are still pending
 
 ## High Priority Requirements
 
