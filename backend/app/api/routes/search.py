@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import GPUBackend, ModelLoadingStrategy, get_settings
+from app.core.duplicates import is_duplicate_suppressed
 from app.core.embeddings import find_similar_content, search_content
 from app.core.model_manager import ModelType, get_model_manager
 from app.core.summarizer import complete_with_summarization_model
@@ -282,7 +283,10 @@ async def find_similar(
         raise HTTPException(status_code=404, detail="Video not found")
 
     result = await db.execute(select(Video).where(Video.id != vid))
-    all_candidates = result.scalars().all()
+    all_candidates = [
+        candidate for candidate in result.scalars().all()
+        if not is_duplicate_suppressed(candidate)
+    ]
     lexical_similar = _fallback_similar_videos(video, all_candidates, max(limit * 4, 20))
 
     semantic_similar: list[dict] = []
@@ -402,9 +406,12 @@ async def _load_candidate_videos(
     if tag_filter:
         videos = [video for video in videos if _video_has_tags(video.tags, tag_filter)]
 
+    explicit_selection = bool(id_filters)
+
     return [
         video for video in videos
-        if video.transcript is not None or video.summary is not None or video.slides is not None
+        if (video.transcript is not None or video.summary is not None or video.slides is not None)
+        and (explicit_selection or not is_duplicate_suppressed(video))
     ]
 
 

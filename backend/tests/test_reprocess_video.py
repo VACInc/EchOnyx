@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.routes.videos import reprocess_video
 from app.models.job import Job, JobStatus
@@ -67,3 +68,36 @@ async def test_reprocess_video_returns_active_job():
         assert response.status == JobStatus.PROCESSING.value
         assert db.added == []
         assert db.flushed == 0
+
+
+@pytest.mark.asyncio
+async def test_reprocess_video_requires_force_for_completed_video():
+    video_id = uuid.uuid4()
+    completed_job = Job(video_id=video_id, status=JobStatus.COMPLETED.value)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir) / f"{video_id}.mp4"
+        file_path.write_text("data")
+
+        video = Video(
+            id=video_id,
+            filename=file_path.name,
+            original_filename="sample.mp4",
+            file_path=str(file_path),
+            file_size=123,
+            mime_type="video/mp4",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        db = DummySession([
+            DummyResult([video]),
+            DummyResult([]),
+            DummyResult([completed_job]),
+        ])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await reprocess_video(str(video_id), db)
+
+        assert exc_info.value.status_code == 409
+        assert "force=true" in exc_info.value.detail
+        assert db.added == []

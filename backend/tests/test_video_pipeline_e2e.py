@@ -207,6 +207,7 @@ async def test_process_video_pipeline_with_real_sample_video(
         ProcessingSession([
             SequenceResult(scalar=video),
             SequenceResult(scalar=job),
+            SequenceResult(items=[]),
         ])
     ))
     monkeypatch.setattr("app.workers.tasks.log_gpu_memory", lambda *_args, **_kwargs: None)

@@ -30,6 +30,13 @@ class ROCmLLMRuntime(str, Enum):
     VLLM = "vllm"
 
 
+class DuplicateHandlingPolicy(str, Enum):
+    OFF = "off"
+    WARN = "warn"
+    COLLAPSE_EXACT = "collapse_exact"
+    COLLAPSE_PROBABLE = "collapse_probable"
+
+
 class ModelLoadingStrategy(str, Enum):
     SEQUENTIAL = "sequential"  # Load/unload models as needed (memory constrained)
     PARALLEL = "parallel"  # Keep all models loaded (high VRAM)
@@ -57,6 +64,9 @@ class Settings(BaseSettings):
     runtime_memory_ceiling_gb: float | None = None
     rocm_llm_runtime: ROCmLLMRuntime = ROCmLLMRuntime.LLAMA_SERVER
     rocm_llm_idle_timeout_s: int = 120
+    duplicate_detection_policy: DuplicateHandlingPolicy = DuplicateHandlingPolicy.COLLAPSE_EXACT
+    duplicate_exact_threshold: float = 0.95
+    duplicate_probable_threshold: float = 0.85
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/video_summarizer"

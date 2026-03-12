@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.config import (
+    DuplicateHandlingPolicy,
     GPUBackend,
     HardwareProfile,
     ModelLoadingStrategy,
@@ -168,6 +169,14 @@ class ProcessingConfig(BaseModel):
     summary_chunk_overlap_minutes: float
 
 
+class DuplicateConfig(BaseModel):
+    """Duplicate detection configuration."""
+
+    policy: str
+    exact_threshold: float
+    probable_threshold: float
+
+
 class SettingsResponse(BaseModel):
     """Full settings response."""
 
@@ -176,6 +185,7 @@ class SettingsResponse(BaseModel):
     model_loading: str
     models: ModelConfig
     runtime_planner: RuntimePlannerConfig
+    duplicates: DuplicateConfig
     processing: ProcessingConfig
 
 
@@ -190,6 +200,9 @@ class SettingsUpdate(BaseModel):
     runtime_memory_ceiling_gb: float | None = None
     rocm_llm_runtime: ROCmLLMRuntime | None = None
     rocm_llm_idle_timeout_s: int | None = None
+    duplicate_detection_policy: DuplicateHandlingPolicy | None = None
+    duplicate_exact_threshold: float | None = None
+    duplicate_probable_threshold: float | None = None
     asr_model: str | None = None
     granite_force_cpu: bool | None = None
     diarization_model: str | None = None
@@ -226,6 +239,9 @@ ENV_FIELD_MAP: dict[str, str] = {
     "runtime_memory_ceiling_gb": "RUNTIME_MEMORY_CEILING_GB",
     "rocm_llm_runtime": "ROCM_LLM_RUNTIME",
     "rocm_llm_idle_timeout_s": "ROCM_LLM_IDLE_TIMEOUT_S",
+    "duplicate_detection_policy": "DUPLICATE_DETECTION_POLICY",
+    "duplicate_exact_threshold": "DUPLICATE_EXACT_THRESHOLD",
+    "duplicate_probable_threshold": "DUPLICATE_PROBABLE_THRESHOLD",
     "asr_model": "WHISPER_MODEL",
     "granite_force_cpu": "GRANITE_FORCE_CPU",
     "diarization_model": "DIARIZATION_MODEL",
@@ -314,6 +330,11 @@ async def get_current_settings() -> SettingsResponse:
             rocm_llm_idle_timeout_s=settings.rocm_llm_idle_timeout_s,
         ),
         runtime_planner=_runtime_planner_response(settings, runtime_plan),
+        duplicates=DuplicateConfig(
+            policy=_enum_value(settings.duplicate_detection_policy),
+            exact_threshold=settings.duplicate_exact_threshold,
+            probable_threshold=settings.duplicate_probable_threshold,
+        ),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,
             keyframe_extraction_interval=settings.keyframe_extraction_interval,

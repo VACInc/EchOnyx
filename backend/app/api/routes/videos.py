@@ -443,6 +443,7 @@ async def update_video_tags(
 async def reprocess_video(
     video_id: str,
     db: AsyncSession = Depends(get_db),
+    force: Annotated[bool, Query(description="Force a rerun even if the video already completed")] = False,
 ) -> VideoResponse:
     """Reprocess an existing video (creates a new job)."""
     try:
@@ -474,6 +475,13 @@ async def reprocess_video(
             tags=video.tags,
             status=active_job.status,
             created_at=video.created_at.isoformat(),
+        )
+
+    completed_job = await _get_latest_completed_job(db, video.id)
+    if completed_job and not force:
+        raise HTTPException(
+            status_code=409,
+            detail="Video is already completed. Use force=true to rerun it explicitly.",
         )
 
     # Create new processing job
@@ -508,9 +516,10 @@ async def reprocess_video(
 async def reset_video(
     video_id: str,
     db: AsyncSession = Depends(get_db),
+    force: Annotated[bool, Query(description="Force a reset even if the video already completed")] = False,
 ) -> VideoResponse:
     """Reset processing by creating a fresh job for the video."""
-    return await reprocess_video(video_id, db)
+    return await reprocess_video(video_id=video_id, force=force, db=db)
 
 
 @router.post("/{video_id}/retry", response_model=VideoResponse)

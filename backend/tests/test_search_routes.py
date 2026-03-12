@@ -88,6 +88,96 @@ async def test_search_uses_semantic_results_with_tag_filter(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_search_skips_suppressed_duplicate_videos_by_default(monkeypatch):
+    kept_video = Video(
+        id=uuid.uuid4(),
+        filename="keep.mp4",
+        original_filename="keep.mp4",
+        file_path="/tmp/keep.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Representative",
+        summary={"executive_summary": "Budget review"},
+    )
+    duplicate_video = Video(
+        id=uuid.uuid4(),
+        filename="dup.mp4",
+        original_filename="dup.mp4",
+        file_path="/tmp/dup.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Duplicate",
+        summary={"executive_summary": "Budget review"},
+        duplicate_info={"suppressed": True, "representative_video_id": str(kept_video.id)},
+    )
+
+    async def fake_search_content(query: str, video_ids=None, n_results: int = 0, **_kwargs):
+        return [
+            {
+                "text": "Budget review",
+                "metadata": {
+                    "video_id": str(kept_video.id),
+                    "type": "summary",
+                    "section": "executive_summary",
+                },
+                "score": 0.9,
+            },
+        ]
+
+    monkeypatch.setattr(search_module, "search_content", fake_search_content)
+
+    db = DummySession([SequenceResult(items=[kept_video, duplicate_video])])
+    response = await search(q="budget", tags=None, limit=5, db=db)
+
+    assert response.total == 1
+    assert response.results[0].video_id == str(kept_video.id)
+
+
+@pytest.mark.asyncio
+async def test_ask_question_keeps_explicit_duplicate_video_selection(monkeypatch):
+    duplicate_video = Video(
+        id=uuid.uuid4(),
+        filename="dup.mp4",
+        original_filename="dup.mp4",
+        file_path="/tmp/dup.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Duplicate",
+        transcript={
+            "segments": [
+                {
+                    "start": 12.0,
+                    "end": 16.0,
+                    "text": "The budget review is due Friday.",
+                    "speaker": "Speaker 1",
+                },
+            ]
+        },
+        duplicate_info={"suppressed": True},
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_search_content(query: str, video_ids=None, n_results: int = 0, **_kwargs):
+        captured["video_ids"] = video_ids
+        return []
+
+    async def fake_complete(messages, max_tokens: int = 0, temperature: float = 0.0):
+        return "The budget review is due Friday."
+
+    monkeypatch.setattr(search_module, "search_content", fake_search_content)
+    monkeypatch.setattr(search_module, "complete_with_summarization_model", fake_complete)
+
+    db = DummySession([SequenceResult(items=[duplicate_video])])
+    response = await ask_question(
+        RAGQuestion(question="When is the budget review due?", video_ids=[str(duplicate_video.id)]),
+        db=db,
+    )
+
+    assert response.sources[0].video_id == str(duplicate_video.id)
+    assert captured["video_ids"] == [str(duplicate_video.id)]
+
+
+@pytest.mark.asyncio
 async def test_ask_question_uses_all_requested_video_ids(monkeypatch):
     video_one = Video(
         id=uuid.uuid4(),

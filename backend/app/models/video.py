@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, BigInteger, String, Text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -48,6 +49,7 @@ class Video(Base, TimestampMixin):
     speakers: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     slides: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    duplicate_info: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSON), nullable=True)
 
     # Relationships
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="video", cascade="all, delete-orphan")

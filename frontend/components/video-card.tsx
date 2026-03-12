@@ -113,9 +113,18 @@ export function VideoCard({ video, job }: VideoCardProps) {
   const handleReset = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    const isCompletedReset = video.status === "completed";
+    if (isCompletedReset) {
+      const confirmed = window.confirm(
+        "This video already completed. Rerun it anyway?",
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
     setIsResetting(true);
     try {
-      await api.resetVideo(video.id);
+      await api.resetVideo(video.id, { force: isCompletedReset });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
     } catch (error) {
       console.error("Failed to reset video:", error);

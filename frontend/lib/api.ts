@@ -82,6 +82,11 @@ interface SettingsResponse {
     estimated_memory_by_model_gb: Record<string, number>;
     notes: string[];
   };
+  duplicates: {
+    policy: string;
+    exact_threshold: number;
+    probable_threshold: number;
+  };
   processing: {
     max_video_length_hours: number;
     keyframe_extraction_interval: number;
@@ -103,6 +108,9 @@ interface SettingsUpdatePayload {
   runtime_planner_enabled?: boolean;
   gpu_memory_fraction?: number;
   runtime_memory_ceiling_gb?: number | null;
+  duplicate_detection_policy?: string;
+  duplicate_exact_threshold?: number;
+  duplicate_probable_threshold?: number;
 }
 
 interface SummaryResponse {
@@ -216,14 +224,18 @@ export const api = {
     });
   },
 
-  async reprocessVideo(id: string) {
-    return fetchApi<VideoResponse>(`/api/videos/${id}/reprocess`, {
+  async reprocessVideo(id: string, options?: { force?: boolean }) {
+    const query = new URLSearchParams();
+    if (options?.force) query.set("force", "true");
+    return fetchApi<VideoResponse>(`/api/videos/${id}/reprocess${query.size ? `?${query}` : ""}`, {
       method: "POST",
     });
   },
 
-  async resetVideo(id: string) {
-    return fetchApi<VideoResponse>(`/api/videos/${id}/reset`, {
+  async resetVideo(id: string, options?: { force?: boolean }) {
+    const query = new URLSearchParams();
+    if (options?.force) query.set("force", "true");
+    return fetchApi<VideoResponse>(`/api/videos/${id}/reset${query.size ? `?${query}` : ""}`, {
       method: "POST",
     });
   },

@@ -24,6 +24,9 @@ export default function SettingsPage() {
   const [plannerEnabled, setPlannerEnabled] = useState(true);
   const [gpuMemoryFraction, setGpuMemoryFraction] = useState("0.75");
   const [memoryCeilingGb, setMemoryCeilingGb] = useState("");
+  const [duplicatePolicy, setDuplicatePolicy] = useState("collapse_exact");
+  const [duplicateExactThreshold, setDuplicateExactThreshold] = useState("0.95");
+  const [duplicateProbableThreshold, setDuplicateProbableThreshold] = useState("0.85");
   const [saveMessage, setSaveMessage] = useState("");
 
   useEffect(() => {
@@ -36,6 +39,9 @@ export default function SettingsPage() {
         ? ""
         : settings.runtime_planner.memory_ceiling_gb.toString()
     );
+    setDuplicatePolicy(settings.duplicates.policy);
+    setDuplicateExactThreshold(settings.duplicates.exact_threshold.toString());
+    setDuplicateProbableThreshold(settings.duplicates.probable_threshold.toString());
   }, [settings]);
 
   const saveMutation = useMutation({
@@ -45,6 +51,9 @@ export default function SettingsPage() {
         runtime_planner_enabled: plannerEnabled,
         gpu_memory_fraction: Number(gpuMemoryFraction),
         runtime_memory_ceiling_gb: memoryCeilingGb === "" ? null : Number(memoryCeilingGb),
+        duplicate_detection_policy: duplicatePolicy,
+        duplicate_exact_threshold: Number(duplicateExactThreshold),
+        duplicate_probable_threshold: Number(duplicateProbableThreshold),
       }),
     onSuccess: async () => {
       setSaveMessage("Saved");
@@ -145,6 +154,43 @@ export default function SettingsPage() {
               <p className="text-sm text-slate-500 dark:text-slate-400">Current ASR Family</p>
               <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{settings?.models.asr_family}</p>
             </div>
+            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Duplicate Policy</span>
+              <select
+                value={duplicatePolicy}
+                onChange={(event) => setDuplicatePolicy(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              >
+                <option value="off">Off</option>
+                <option value="warn">Warn only</option>
+                <option value="collapse_exact">Collapse exact duplicates</option>
+                <option value="collapse_probable">Collapse probable duplicates</option>
+              </select>
+            </label>
+            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Exact Threshold</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={duplicateExactThreshold}
+                onChange={(event) => setDuplicateExactThreshold(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              />
+            </label>
+            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Probable Threshold</span>
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={duplicateProbableThreshold}
+                onChange={(event) => setDuplicateProbableThreshold(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              />
+            </label>
           </div>
           {saveMessage ? (
             <p className="text-sm text-slate-600 dark:text-slate-300">{saveMessage}</p>

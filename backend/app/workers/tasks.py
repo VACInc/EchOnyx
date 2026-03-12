@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import shared_task
-from sqlalchemy import select
+from sqlalchemy import exists, select
 
 from app.database import get_worker_async_session_maker
 from app.models.job import Batch, Job, JobStatus, JobStep, JOB_STEP_ORDER
@@ -498,6 +498,31 @@ async def _process_video_async(task, video_id: str, job_id: str):
                 await update_step_state(JobStep.SUMMARIZATION, 100, mark_complete=True)
                 log_gpu_memory("after summarization")
 
+            from app.config import get_settings
+            from app.core.duplicates import best_duplicate_match
+
+            duplicate_match = None
+            if merged_transcript or summary:
+                candidate_result = await session.execute(
+                    select(Video).where(
+                        Video.id != video.id,
+                        exists(
+                            select(1).where(
+                                Job.video_id == Video.id,
+                                Job.status == JobStatus.COMPLETED.value,
+                            )
+                        ),
+                    )
+                )
+                duplicate_match = best_duplicate_match(
+                    source_video=video,
+                    candidate_videos=candidate_result.scalars().all(),
+                    settings=get_settings(),
+                )
+            async with progress_lock:
+                video.duplicate_info = duplicate_match
+                await session.commit()
+
             # Step 8: Generate embeddings for search
             if step_completed(JobStep.EMBEDDING):
                 logger.info("Skipping embedding (already completed)")
@@ -506,14 +531,23 @@ async def _process_video_async(task, video_id: str, job_id: str):
                 await notify_job_step(job_id, JobStep.EMBEDDING.value, 0)
                 log_gpu_memory("before embedding")
 
-                from app.core.embeddings import index_video_content
+                from app.core.embeddings import delete_video_content, index_video_content
 
-                await index_video_content(
-                    video_id=str(video.id),
-                    transcript=merged_transcript,
-                    summary=summary,
-                    slides=slides,
-                )
+                if duplicate_match and duplicate_match.get("suppressed"):
+                    delete_video_content(str(video.id))
+                    logger.info(
+                        "Skipping embedding for duplicate video %s matched to %s at score %.4f",
+                        video.id,
+                        duplicate_match.get("representative_video_id"),
+                        float(duplicate_match.get("score") or 0.0),
+                    )
+                else:
+                    await index_video_content(
+                        video_id=str(video.id),
+                        transcript=merged_transcript,
+                        summary=summary,
+                        slides=slides,
+                    )
 
                 await update_step_state(JobStep.EMBEDDING, 100, mark_complete=True)
                 log_gpu_memory("after embedding")

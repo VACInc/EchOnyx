@@ -4,7 +4,7 @@ import types
 import pytest
 
 from app.api.routes import settings as settings_module
-from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy
+from app.config import DuplicateHandlingPolicy, GPUBackend, HardwareProfile, ModelLoadingStrategy
 
 
 @pytest.mark.asyncio
@@ -52,6 +52,9 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         runtime_memory_ceiling_gb=None,
         rocm_llm_runtime="llama_server",
         rocm_llm_idle_timeout_s=120,
+        duplicate_detection_policy=DuplicateHandlingPolicy.COLLAPSE_EXACT,
+        duplicate_exact_threshold=0.95,
+        duplicate_probable_threshold=0.85,
         max_video_length_hours=4,
         keyframe_extraction_interval=5,
         frame_persistence_seconds=3.0,
@@ -97,6 +100,9 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.runtime_planner.accelerator_count == 1
     assert response.runtime_planner.total_accelerator_memory_gb == 124.94
     assert response.runtime_planner.worker_model_loading == "parallel"
+    assert response.duplicates.policy == "collapse_exact"
+    assert response.duplicates.exact_threshold == 0.95
+    assert response.duplicates.probable_threshold == 0.85
     assert "transcription_fallback_model" not in response.models.model_dump()
     assert "transcription_fallback_enabled" not in response.models.model_dump()
 
@@ -129,6 +135,7 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
             model_loading="parallel",
             models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
             runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
+            duplicates=types.SimpleNamespace(policy="collapse_probable"),
             processing=types.SimpleNamespace(max_video_length_hours=4),
         )
 
@@ -140,6 +147,9 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
             runtime_planner_enabled=True,
             gpu_memory_fraction=0.6,
             runtime_memory_ceiling_gb=96,
+            duplicate_detection_policy=DuplicateHandlingPolicy.COLLAPSE_PROBABLE,
+            duplicate_exact_threshold=0.96,
+            duplicate_probable_threshold=0.88,
         )
     )
 
@@ -148,6 +158,9 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
     assert "RUNTIME_PLANNER_ENABLED=true" in persisted
     assert "GPU_MEMORY_FRACTION=0.6" in persisted
     assert "RUNTIME_MEMORY_CEILING_GB=96.0" in persisted
+    assert "DUPLICATE_DETECTION_POLICY=collapse_probable" in persisted
+    assert "DUPLICATE_EXACT_THRESHOLD=0.96" in persisted
+    assert "DUPLICATE_PROBABLE_THRESHOLD=0.88" in persisted
     assert captured["reloaded"] is True
 
 
@@ -169,6 +182,7 @@ async def test_update_settings_removes_nullable_env_fields(monkeypatch, tmp_path
             model_loading="parallel",
             models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
             runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
+            duplicates=types.SimpleNamespace(policy="collapse_exact"),
             processing=types.SimpleNamespace(max_video_length_hours=4),
         )
 

@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator
 from functools import lru_cache
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -70,3 +71,14 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_schema_updates(conn)
+
+
+async def _ensure_schema_updates(conn) -> None:
+    video_columns = {
+        column["name"]
+        for column in await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_columns("videos"))
+    }
+
+    if "duplicate_info" not in video_columns:
+        await conn.execute(text("ALTER TABLE videos ADD COLUMN duplicate_info JSON"))
