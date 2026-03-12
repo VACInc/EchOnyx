@@ -5,7 +5,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.api.routes import search as search_module
-from app.api.routes.search import RAGQuestion, ask_question, find_similar, search
+from app.api.routes.search import (
+    RAGQuestion,
+    SearchWarmRequest,
+    ask_question,
+    find_similar,
+    search,
+    warm_search_runtime,
+)
 from app.models.video import Video
 from tests.helpers import SequenceResult
 
@@ -671,3 +678,56 @@ async def test_find_similar_prefers_transcript_overlap_over_generic_summary(monk
 
     assert response.total == 1
     assert response.results[0].video_id == str(transcript_match.id)
+
+
+@pytest.mark.asyncio
+async def test_warm_search_runtime_loads_embedding(monkeypatch):
+    events: list[tuple[str, object]] = []
+
+    class WarmManager:
+        async def get_model(self, model_type):
+            events.append(("get_model", model_type))
+            return object()
+
+        async def release_model(self, model_type):
+            events.append(("release_model", model_type))
+
+    monkeypatch.setattr(search_module, "get_model_manager", lambda: WarmManager())
+
+    response = await warm_search_runtime(SearchWarmRequest(mode="search"))
+
+    assert response.mode == "search"
+    assert response.warmed == ["embedding"]
+    assert events == [
+        ("get_model", search_module.ModelType.EMBEDDING),
+        ("release_model", search_module.ModelType.EMBEDDING),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_warm_search_runtime_loads_embedding_and_summarization(monkeypatch):
+    events: list[tuple[str, object]] = []
+
+    class WarmManager:
+        async def get_model(self, model_type):
+            events.append(("get_model", model_type))
+            return object()
+
+        async def release_model(self, model_type):
+            events.append(("release_model", model_type))
+
+    async def fake_warm_summarization():
+        events.append(("warm_summarization", None))
+
+    monkeypatch.setattr(search_module, "get_model_manager", lambda: WarmManager())
+    monkeypatch.setattr(search_module, "_warm_summarization_runtime", fake_warm_summarization)
+
+    response = await warm_search_runtime(SearchWarmRequest(mode="ask"))
+
+    assert response.mode == "ask"
+    assert response.warmed == ["embedding", "summarization"]
+    assert events == [
+        ("get_model", search_module.ModelType.EMBEDDING),
+        ("release_model", search_module.ModelType.EMBEDDING),
+        ("warm_summarization", None),
+    ]

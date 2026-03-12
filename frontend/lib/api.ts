@@ -275,6 +275,16 @@ export const api = {
     });
   },
 
+  async warmSearchRuntime(mode: "search" | "ask") {
+    return fetchApi<{
+      mode: "search" | "ask";
+      warmed: string[];
+    }>("/api/search/warm", {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    });
+  },
+
   // Settings
   async getSettings() {
     return fetchApi<SettingsResponse>("/api/settings");

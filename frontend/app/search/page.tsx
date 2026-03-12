@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Search, MessageSquare, Video } from "lucide-react";
 import Link from "next/link";
-import { formatTimestamp } from "@/lib/utils";
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"search" | "ask">("search");
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const warmedRef = useRef({ search: false, ask: false });
 
   const searchMutation = useMutation({
     mutationFn: ({ q, filterTags }: { q: string; filterTags: string[] }) =>
@@ -22,6 +22,63 @@ export default function SearchPage() {
     mutationFn: ({ q, filterTags }: { q: string; filterTags: string[] }) =>
       api.askQuestion(q, undefined, filterTags),
   });
+
+  useEffect(() => {
+    if (warmedRef.current.search) {
+      return;
+    }
+    warmedRef.current.search = true;
+    void api.warmSearchRuntime("search").catch(() => {
+      warmedRef.current.search = false;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (mode !== "ask") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const warmAsk = async () => {
+      if (cancelled || document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        await api.warmSearchRuntime("ask");
+        warmedRef.current.ask = true;
+      } catch {
+        if (!cancelled) {
+          warmedRef.current.ask = false;
+        }
+      }
+    };
+
+    void warmAsk();
+    const intervalId = window.setInterval(() => {
+      void warmAsk();
+    }, 20_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [mode]);
+
+  const handleModeChange = (nextMode: "search" | "ask") => {
+    setMode(nextMode);
+    if (nextMode === "search" && warmedRef.current.search) {
+      return;
+    }
+    if (nextMode === "ask" && warmedRef.current.ask) {
+      return;
+    }
+    void api.warmSearchRuntime(nextMode).then(() => {
+      warmedRef.current[nextMode] = true;
+    }).catch(() => {
+      warmedRef.current[nextMode] = false;
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +120,7 @@ export default function SearchPage() {
       {/* Mode Toggle */}
       <div className="flex space-x-2">
         <button
-          onClick={() => setMode("search")}
+          onClick={() => handleModeChange("search")}
           className={`flex items-center rounded-lg px-4 py-2 ${
             mode === "search"
               ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
@@ -74,7 +131,7 @@ export default function SearchPage() {
           Search
         </button>
         <button
-          onClick={() => setMode("ask")}
+          onClick={() => handleModeChange("ask")}
           className={`flex items-center rounded-lg px-4 py-2 ${
             mode === "ask"
               ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"

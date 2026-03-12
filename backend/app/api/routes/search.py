@@ -2,8 +2,12 @@
 
 import asyncio
 import re
+import socket
+import time
+import urllib.error
+import urllib.request
 import uuid
-from typing import Annotated, Sequence
+from typing import Annotated, Literal, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -90,6 +94,19 @@ class RAGAnswer(BaseModel):
     answer: str
     sources: list[SearchResult]
     confidence: float
+
+
+class SearchWarmRequest(BaseModel):
+    """Warm runtime models used by search or ask."""
+
+    mode: Literal["search", "ask"] = "search"
+
+
+class SearchWarmResponse(BaseModel):
+    """Warm-up response."""
+
+    mode: Literal["search", "ask"]
+    warmed: list[str]
 
 
 QUESTION_ANSWERING_SYSTEM_PROMPT = """You answer questions about processed video content.
@@ -234,6 +251,16 @@ async def ask_question(
         sources=sources,
         confidence=confidence,
     )
+
+
+@router.post("/warm", response_model=SearchWarmResponse)
+async def warm_search_runtime(request: SearchWarmRequest) -> SearchWarmResponse:
+    warmed = ["embedding"]
+    await _warm_embedding_runtime()
+    if request.mode == "ask":
+        await _warm_summarization_runtime()
+        warmed.append("summarization")
+    return SearchWarmResponse(mode=request.mode, warmed=warmed)
 
 
 @router.get("/similar/{video_id}", response_model=SearchResponse)
@@ -1092,3 +1119,65 @@ def _video_has_tags(video_tags: list[str] | None, filter_tags: Sequence[str]) ->
         return False
     video_tag_set = {tag.lower() for tag in video_tags}
     return all(tag.lower() in video_tag_set for tag in filter_tags)
+
+
+async def _warm_embedding_runtime() -> None:
+    manager = get_model_manager()
+    model = await manager.get_model(ModelType.EMBEDDING)
+    if model is None:
+        raise HTTPException(status_code=503, detail="Embedding model failed to warm")
+    await manager.release_model(ModelType.EMBEDDING)
+
+
+async def _warm_summarization_runtime() -> None:
+    settings = get_settings()
+    endpoint_url = settings.summarization_endpoint_url.strip()
+    if endpoint_url:
+        ready = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _warm_openai_endpoint(
+                endpoint_url=endpoint_url,
+                api_key=settings.summarization_endpoint_api_key,
+                timeout_seconds=max(settings.summarization_endpoint_timeout_s, 5.0),
+            ),
+        )
+        if not ready:
+            raise HTTPException(status_code=503, detail="Summarization endpoint did not warm in time")
+        return
+
+    manager = get_model_manager()
+    model = await manager.get_model(ModelType.SUMMARIZATION)
+    if model is None:
+        raise HTTPException(status_code=503, detail="Summarization model failed to warm")
+    await manager.release_model(ModelType.SUMMARIZATION)
+
+
+def _warm_openai_endpoint(
+    *,
+    endpoint_url: str,
+    api_key: str | None,
+    timeout_seconds: float,
+) -> bool:
+    models_url = endpoint_url.rstrip("/")
+    if not models_url.endswith("/models"):
+        models_url = f"{models_url}/models"
+
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    deadline = time.monotonic() + max(timeout_seconds, 5.0)
+    while time.monotonic() < deadline:
+        request = urllib.request.Request(models_url, headers=headers, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=min(timeout_seconds, 5.0)) as response:
+                return response.status < 500
+        except urllib.error.HTTPError as exc:
+            if exc.code == 503:
+                time.sleep(0.5)
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout):
+            time.sleep(0.5)
+
+    return False
