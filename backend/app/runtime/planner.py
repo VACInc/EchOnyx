@@ -23,10 +23,13 @@ WORKER_MODEL_ORDER = (
 class RuntimePlan:
     accelerator_count: int
     total_accelerator_memory_gb: float
+    available_accelerator_memory_gb: float
     effective_memory_budget_gb: float
     placement_mode: str
     worker_model_loading: "ModelLoadingStrategy"
     keep_resident_models: tuple[str, ...]
+    preferred_worker_devices: tuple[str, ...]
+    preferred_endpoint_devices: tuple[str, ...]
     can_keep_all_worker_models_loaded: bool
     can_keep_endpoint_models_loaded: bool
     requires_endpoint_idle_teardown: bool
@@ -130,19 +133,33 @@ def _resolve_total_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -
     return _round_gb(gpu_info.get("total_vram_gb", 0.0))
 
 
-def _resolve_effective_budget_gb(settings: "Settings", total_memory_gb: float, notes: list[str]) -> float:
-    if total_memory_gb <= 0:
+def _resolve_available_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -> float:
+    if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
+        unified = gpu_info.get("unified_memory_gb") or gpu_info.get("system_memory_gb")
+        if unified:
+            return _round_gb(unified)
+    return _round_gb(gpu_info.get("available_vram_gb", gpu_info.get("total_vram_gb", 0.0)))
+
+
+def _resolve_effective_budget_gb(
+    settings: "Settings",
+    total_memory_gb: float,
+    available_memory_gb: float,
+    notes: list[str],
+) -> float:
+    base_memory_gb = available_memory_gb or total_memory_gb
+    if base_memory_gb <= 0:
         return 0.0
 
     if getattr(settings, "runtime_memory_ceiling_gb", None):
         requested = float(settings.runtime_memory_ceiling_gb or 0.0)
-        if requested > total_memory_gb:
+        if requested > base_memory_gb:
             notes.append(
-                f"Runtime memory ceiling {requested:.1f} GB exceeds detected accelerator memory; clamping to {total_memory_gb:.1f} GB."
+                f"Runtime memory ceiling {requested:.1f} GB exceeds currently available accelerator memory; clamping to {base_memory_gb:.1f} GB."
             )
-        return _round_gb(min(requested, total_memory_gb))
+        return _round_gb(min(requested, base_memory_gb))
 
-    return _round_gb(total_memory_gb * float(settings.gpu_memory_fraction))
+    return _round_gb(base_memory_gb * float(settings.gpu_memory_fraction))
 
 
 def _placement_mode(settings: "Settings", gpu_info: dict) -> str:
@@ -179,13 +196,60 @@ def _select_resident_models(
     return tuple(selected)
 
 
+def _device_label(gpu: dict) -> str:
+    index = gpu.get("index")
+    name = gpu.get("name", "GPU")
+    free = gpu.get("free_vram_gb")
+    if index is None:
+        return str(name)
+    if free is None:
+        return f"GPU{index} {name}"
+    return f"GPU{index} {name} ({_round_gb(free)} GB free)"
+
+
+def _free_capacity_gb(gpu: dict) -> float:
+    return float(gpu.get("free_vram_gb", gpu.get("vram_gb", 0.0)) or 0.0)
+
+
+def _pick_devices(
+    nvidia_gpus: list[dict],
+    *,
+    requirement_gb: float,
+    prefer_nvlink: bool,
+    topology: dict,
+) -> tuple[str, ...]:
+    if not nvidia_gpus or requirement_gb <= 0:
+        return ()
+
+    sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
+    best = sorted_gpus[0]
+    if _free_capacity_gb(best) >= requirement_gb:
+        return (_device_label(best),)
+
+    if prefer_nvlink:
+        for group in topology.get("nvlink_groups", []):
+            candidates = [gpu for gpu in nvidia_gpus if gpu.get("index") in set(group)]
+            if sum(_free_capacity_gb(gpu) for gpu in candidates) >= requirement_gb:
+                return tuple(_device_label(gpu) for gpu in sorted(candidates, key=lambda item: item["index"]))
+
+    selected: list[dict] = []
+    remaining = requirement_gb
+    for gpu in sorted_gpus:
+        selected.append(gpu)
+        remaining -= _free_capacity_gb(gpu)
+        if remaining <= 0:
+            break
+    return tuple(_device_label(gpu) for gpu in selected)
+
+
 def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     from app.config import ModelLoadingStrategy
 
     notes: list[str] = []
     estimates = estimate_model_memory_by_type_gb(settings)
     total_memory_gb = _resolve_total_accelerator_memory_gb(settings, gpu_info)
-    budget_gb = _resolve_effective_budget_gb(settings, total_memory_gb, notes)
+    available_memory_gb = _resolve_available_accelerator_memory_gb(settings, gpu_info)
+    budget_gb = _resolve_effective_budget_gb(settings, total_memory_gb, available_memory_gb, notes)
     placement = _placement_mode(settings, gpu_info)
     accelerator_count = len(gpu_info.get("nvidia_gpus", [])) + len(gpu_info.get("amd_gpus", []))
     if accelerator_count == 0 and getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
@@ -204,6 +268,9 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     endpoint_total = sum(estimates[key] for key in endpoint_models)
     max_endpoint = max((estimates[key] for key in endpoint_models), default=0.0)
     worker_total = sum(estimates[key] for key in worker_models)
+    total_hot_set = worker_total + endpoint_total
+    nvidia_gpus = list(gpu_info.get("nvidia_gpus", []))
+    topology = gpu_info.get("nvidia_topology", {})
 
     requires_idle_teardown = (
         getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo"
@@ -253,6 +320,45 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         keep_resident_models = ()
         notes.append("Detected accelerator memory is unavailable; planner falls back to sequential loading.")
 
+    preferred_worker_devices: tuple[str, ...] = ()
+    preferred_endpoint_devices: tuple[str, ...] = ()
+    if placement == "multi_gpu" and nvidia_gpus:
+        if len({round(float(gpu.get("vram_gb", 0.0)), 1) for gpu in nvidia_gpus}) > 1:
+            notes.append("Heterogeneous NVIDIA VRAM sizes detected; planner prefers the largest currently free GPU before spreading work.")
+
+        sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
+        best_gpu = sorted_gpus[0]
+        best_gpu_free = _free_capacity_gb(best_gpu)
+        if best_gpu_free >= total_hot_set:
+            placement = "single_large_gpu_preferred"
+            preferred_worker_devices = (_device_label(best_gpu),)
+            preferred_endpoint_devices = (_device_label(best_gpu),)
+            notes.append(
+                f"{_device_label(best_gpu)} can host the full active model set at current free memory."
+            )
+        else:
+            preferred_worker_devices = _pick_devices(
+                nvidia_gpus,
+                requirement_gb=worker_total,
+                prefer_nvlink=False,
+                topology=topology,
+            )
+            endpoint_requirement = endpoint_total if can_keep_endpoint_models_loaded else max_endpoint
+            preferred_endpoint_devices = _pick_devices(
+                nvidia_gpus,
+                requirement_gb=endpoint_requirement,
+                prefer_nvlink=True,
+                topology=topology,
+            )
+            if preferred_worker_devices:
+                notes.append(f"Preferred worker placement: {', '.join(preferred_worker_devices)}.")
+            if preferred_endpoint_devices:
+                notes.append(f"Preferred endpoint placement: {', '.join(preferred_endpoint_devices)}.")
+            if topology.get("nvlink_groups"):
+                notes.append(
+                    "Detected NVLink-connected 3090 pairs; use them first when a fallback multi-GPU endpoint placement is needed."
+                )
+
     if placement == "multi_gpu":
         notes.append(
             "Multiple GPUs were detected. The planner records multi-GPU placement, but model splitting remains backend-specific work."
@@ -266,10 +372,13 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     return RuntimePlan(
         accelerator_count=accelerator_count,
         total_accelerator_memory_gb=total_memory_gb,
+        available_accelerator_memory_gb=available_memory_gb,
         effective_memory_budget_gb=budget_gb,
         placement_mode=placement,
         worker_model_loading=worker_model_loading,
         keep_resident_models=keep_resident_models,
+        preferred_worker_devices=preferred_worker_devices,
+        preferred_endpoint_devices=preferred_endpoint_devices,
         can_keep_all_worker_models_loaded=can_keep_all_worker_models_loaded,
         can_keep_endpoint_models_loaded=can_keep_endpoint_models_loaded,
         requires_endpoint_idle_teardown=requires_idle_teardown,

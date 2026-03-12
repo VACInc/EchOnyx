@@ -89,6 +89,11 @@ class GPUInfo(BaseModel):
 
     name: str
     vram_gb: float
+    index: int | None = None
+    used_vram_gb: float | None = None
+    free_vram_gb: float | None = None
+    utilization_gpu: float | None = None
+    bus_id: str | None = None
 
 
 class HardwareInfo(BaseModel):
@@ -98,6 +103,7 @@ class HardwareInfo(BaseModel):
     amd_gpus: list[GPUInfo]
     unified_memory_gb: float | None
     total_vram_gb: float
+    available_vram_gb: float
     active_profile: str
     active_backend: str
     whisper_backend: str
@@ -140,10 +146,13 @@ class RuntimePlannerConfig(BaseModel):
     memory_ceiling_gb: float | None
     accelerator_count: int
     total_accelerator_memory_gb: float
+    available_accelerator_memory_gb: float
     effective_memory_budget_gb: float
     placement_mode: str
     worker_model_loading: str
     keep_resident_models: list[str]
+    preferred_worker_devices: list[str]
+    preferred_endpoint_devices: list[str]
     can_keep_all_worker_models_loaded: bool
     can_keep_endpoint_models_loaded: bool
     requires_endpoint_idle_teardown: bool
@@ -287,10 +296,13 @@ def _runtime_planner_response(settings, runtime_plan: dict) -> RuntimePlannerCon
         memory_ceiling_gb=settings.runtime_memory_ceiling_gb,
         accelerator_count=runtime_plan["accelerator_count"],
         total_accelerator_memory_gb=runtime_plan["total_accelerator_memory_gb"],
+        available_accelerator_memory_gb=runtime_plan["available_accelerator_memory_gb"],
         effective_memory_budget_gb=runtime_plan["effective_memory_budget_gb"],
         placement_mode=runtime_plan["placement_mode"],
         worker_model_loading=runtime_plan["worker_model_loading"],
         keep_resident_models=runtime_plan["keep_resident_models"],
+        preferred_worker_devices=runtime_plan["preferred_worker_devices"],
+        preferred_endpoint_devices=runtime_plan["preferred_endpoint_devices"],
         can_keep_all_worker_models_loaded=runtime_plan["can_keep_all_worker_models_loaded"],
         can_keep_endpoint_models_loaded=runtime_plan["can_keep_endpoint_models_loaded"],
         requires_endpoint_idle_teardown=runtime_plan["requires_endpoint_idle_teardown"],
@@ -378,12 +390,28 @@ async def get_hardware() -> HardwareInfo:
     info = get_hardware_info()
 
     nvidia_gpus = [
-        GPUInfo(name=gpu["name"], vram_gb=gpu["vram_gb"])
+        GPUInfo(
+            name=gpu["name"],
+            vram_gb=gpu["vram_gb"],
+            index=gpu.get("index"),
+            used_vram_gb=gpu.get("used_vram_gb"),
+            free_vram_gb=gpu.get("free_vram_gb"),
+            utilization_gpu=gpu.get("utilization_gpu"),
+            bus_id=gpu.get("bus_id"),
+        )
         for gpu in info["detected_gpus"]["nvidia"]
     ]
 
     amd_gpus = [
-        GPUInfo(name=gpu["name"], vram_gb=gpu["vram_gb"])
+        GPUInfo(
+            name=gpu["name"],
+            vram_gb=gpu["vram_gb"],
+            index=gpu.get("index"),
+            used_vram_gb=gpu.get("used_vram_gb"),
+            free_vram_gb=gpu.get("free_vram_gb"),
+            utilization_gpu=gpu.get("utilization_gpu"),
+            bus_id=gpu.get("bus_id"),
+        )
         for gpu in info["detected_gpus"]["amd"]
     ]
 
@@ -392,6 +420,7 @@ async def get_hardware() -> HardwareInfo:
         amd_gpus=amd_gpus,
         unified_memory_gb=info.get("unified_memory_gb"),
         total_vram_gb=info["total_vram_gb"],
+        available_vram_gb=info.get("available_vram_gb", info["total_vram_gb"]),
         active_profile=info["active_profile"],
         active_backend=info["active_backend"],
         whisper_backend=info["whisper_backend"],

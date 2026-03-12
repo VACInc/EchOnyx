@@ -45,6 +45,7 @@ def test_runtime_plan_keeps_worker_models_hot_on_strix_halo_when_budget_allows()
     assert plan.worker_model_loading == ModelLoadingStrategy.PARALLEL
     assert plan.can_keep_all_worker_models_loaded is True
     assert set(plan.keep_resident_models) == {"whisper", "diarization", "embedding", "audio_event"}
+    assert plan.available_accelerator_memory_gb == 128.0
     assert plan.requires_endpoint_idle_teardown is True
     assert plan.can_keep_endpoint_models_loaded is False
 
@@ -82,6 +83,67 @@ def test_runtime_plan_marks_multi_gpu_placement():
 
     assert plan.placement_mode == "multi_gpu"
     assert any("Multiple GPUs were detected" in note for note in plan.notes)
+
+
+def test_runtime_plan_prefers_single_large_gpu_when_it_fits_current_free_memory():
+    plan = build_runtime_plan(
+        _settings(
+            hardware_profile=HardwareProfile.MULTI_GPU,
+            gpu_backend=GPUBackend.CUDA,
+            rocm_llm_runtime=ROCmLLMRuntime.LLAMA_SERVER,
+            vision_endpoint_url="",
+            summarization_endpoint_url="",
+        ),
+        _gpu_info(
+            nvidia_gpus=[
+                {"index": 0, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
+                {"index": 1, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
+                {"index": 5, "name": "RTX PRO 6000 Blackwell", "vram_gb": 97.0, "free_vram_gb": 97.0},
+            ],
+            amd_gpus=[],
+            unified_memory_gb=None,
+            total_vram_gb=145.0,
+            available_vram_gb=145.0,
+            nvidia_topology={"connections": {}, "nvlink_groups": [[0, 1]]},
+        ),
+    )
+
+    assert plan.placement_mode == "single_large_gpu_preferred"
+    assert plan.preferred_worker_devices == ("GPU5 RTX PRO 6000 Blackwell (97.0 GB free)",)
+    assert plan.preferred_endpoint_devices == ("GPU5 RTX PRO 6000 Blackwell (97.0 GB free)",)
+    assert any("can host the full active model set" in note for note in plan.notes)
+
+
+def test_runtime_plan_falls_back_to_multi_gpu_groups_when_large_gpu_cannot_fit_hot_set():
+    plan = build_runtime_plan(
+        _settings(
+            hardware_profile=HardwareProfile.MULTI_GPU,
+            gpu_backend=GPUBackend.CUDA,
+            rocm_llm_runtime=ROCmLLMRuntime.LLAMA_SERVER,
+            vision_endpoint_url="http://vision",
+            summarization_endpoint_url="http://summary",
+        ),
+        _gpu_info(
+            nvidia_gpus=[
+                {"index": 0, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
+                {"index": 1, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
+                {"index": 5, "name": "RTX PRO 6000 Blackwell", "vram_gb": 97.0, "free_vram_gb": 40.0},
+            ],
+            amd_gpus=[],
+            unified_memory_gb=None,
+            total_vram_gb=145.0,
+            available_vram_gb=88.0,
+            nvidia_topology={"connections": {}, "nvlink_groups": [[0, 1]]},
+        ),
+    )
+
+    assert plan.placement_mode == "multi_gpu"
+    assert plan.preferred_worker_devices == ("GPU5 RTX PRO 6000 Blackwell (40.0 GB free)",)
+    assert plan.preferred_endpoint_devices == (
+        "GPU0 RTX 3090 (24.0 GB free)",
+        "GPU1 RTX 3090 (24.0 GB free)",
+    )
+    assert any("Detected NVLink-connected 3090 pairs" in note for note in plan.notes)
 
 
 def test_runtime_plan_falls_back_to_host_memory_for_strix_halo():

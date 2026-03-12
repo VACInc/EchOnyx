@@ -48,6 +48,47 @@ def test_detect_gpu_info_does_not_flag_strix_halo_without_amd_gpu(monkeypatch):
     assert "unified_memory_gb" not in gpu_info
 
 
+def test_detect_gpu_info_parses_nvidia_free_memory_and_topology(monkeypatch):
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    gpu_stdout = "\n".join([
+        "0, NVIDIA GeForce RTX 3090, 24576, 0, 24127, 0, 00000000:01:00.0",
+        "5, NVIDIA RTX PRO 6000 Blackwell Workstation Edition, 97887, 0, 97250, 0, 00000000:E1:00.0",
+        "6, NVIDIA GeForce RTX 3090, 24576, 0, 24127, 0, 00000000:E2:00.0",
+    ])
+    topo_stdout = "\n".join([
+        "GPU0\tGPU5\tGPU6\tCPU Affinity",
+        "GPU0\tX\tNODE\tNV4\t0-31",
+        "GPU5\tNODE\tX\tPHB\t0-31",
+        "GPU6\tNV4\tPHB\tX\t0-31",
+    ])
+
+    def fake_run(cmd, *_args, **_kwargs):
+        if cmd[:2] == ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,pci.bus_id"]:
+            return Completed(returncode=0, stdout=gpu_stdout)
+        if cmd[:3] == ["nvidia-smi", "topo", "-m"]:
+            return Completed(returncode=0, stdout=topo_stdout)
+        return Completed(returncode=1)
+
+    def fake_open(path, *_args, **_kwargs):
+        assert path == "/proc/meminfo"
+        return StringIO("MemTotal:       134217728 kB\n")
+
+    monkeypatch.setattr("app.config.subprocess.run", fake_run)
+    monkeypatch.setattr("builtins.open", fake_open)
+
+    gpu_info = detect_gpu_info()
+
+    assert gpu_info["total_vram_gb"] == pytest.approx((24576 + 97887 + 24576) / 1024, rel=1e-4)
+    assert gpu_info["available_vram_gb"] == pytest.approx((24127 + 97250 + 24127) / 1024, rel=1e-4)
+    assert gpu_info["nvidia_gpus"][1]["name"] == "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+    assert gpu_info["nvidia_gpus"][1]["free_vram_gb"] == pytest.approx(97250 / 1024, rel=1e-4)
+    assert gpu_info["nvidia_topology"]["nvlink_groups"] == [[0, 6]]
+
+
 def test_validate_hardware_requirements_rejects_non_rocm_strix_halo():
     settings = Settings(
         hardware_profile=HardwareProfile.STRIX_HALO,

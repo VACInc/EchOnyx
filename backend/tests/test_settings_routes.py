@@ -12,10 +12,13 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     runtime_plan = {
         "accelerator_count": 1,
         "total_accelerator_memory_gb": 124.94,
+        "available_accelerator_memory_gb": 124.94,
         "effective_memory_budget_gb": 93.7,
         "placement_mode": "unified_memory_apu",
         "worker_model_loading": "parallel",
         "keep_resident_models": ["whisper", "diarization", "embedding", "audio_event"],
+        "preferred_worker_devices": ["APU unified memory"],
+        "preferred_endpoint_devices": ["APU unified memory"],
         "can_keep_all_worker_models_loaded": True,
         "can_keep_endpoint_models_loaded": False,
         "requires_endpoint_idle_teardown": True,
@@ -73,12 +76,13 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         settings_module,
         "get_hardware_info",
         lambda: {
-            "detected_gpus": {"nvidia": [], "amd": [{"name": "AMD GPU", "vram_gb": 16.0}]},
-            "unified_memory_gb": 128.0,
-            "total_vram_gb": 16.0,
-            "active_profile": "strix_halo",
-            "active_backend": "rocm",
-            "whisper_backend": "rocm",
+                "detected_gpus": {"nvidia": [], "amd": [{"name": "AMD GPU", "vram_gb": 16.0}]},
+                "unified_memory_gb": 128.0,
+                "total_vram_gb": 16.0,
+                "available_vram_gb": 16.0,
+                "active_profile": "strix_halo",
+                "active_backend": "rocm",
+                "whisper_backend": "rocm",
             "asr_family": "canary",
             "model_loading_strategy": "parallel",
             "rocm_llm_runtime": "llama_server",
@@ -99,7 +103,10 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.models.rocm_llm_idle_timeout_s == 120
     assert response.runtime_planner.accelerator_count == 1
     assert response.runtime_planner.total_accelerator_memory_gb == 124.94
+    assert response.runtime_planner.available_accelerator_memory_gb == 124.94
     assert response.runtime_planner.worker_model_loading == "parallel"
+    assert response.runtime_planner.preferred_worker_devices == ["APU unified memory"]
+    assert response.runtime_planner.preferred_endpoint_devices == ["APU unified memory"]
     assert response.duplicates.policy == "collapse_exact"
     assert response.duplicates.exact_threshold == 0.95
     assert response.duplicates.probable_threshold == 0.85

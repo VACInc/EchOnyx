@@ -247,7 +247,7 @@ export default function SettingsPage() {
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
             <p className="text-sm text-slate-500 dark:text-slate-400">Budget</p>
             <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
-              {runtimePlan?.effective_memory_budget_gb} GB / {runtimePlan?.total_accelerator_memory_gb} GB
+              {runtimePlan?.effective_memory_budget_gb} GB / {runtimePlan?.available_accelerator_memory_gb} GB free
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
@@ -269,6 +269,12 @@ export default function SettingsPage() {
               <p>Endpoint hot residency: {runtimePlan?.can_keep_endpoint_models_loaded ? "allowed" : "not planned"}</p>
               <p>Idle teardown required: {runtimePlan?.requires_endpoint_idle_teardown ? "yes" : "no"}</p>
               <p>GPU count: {runtimePlan?.accelerator_count ?? hardware?.nvidia_gpus.length ?? 0}</p>
+              {runtimePlan?.preferred_worker_devices.length ? (
+                <p>Worker placement: {runtimePlan.preferred_worker_devices.join(", ")}</p>
+              ) : null}
+              {runtimePlan?.preferred_endpoint_devices.length ? (
+                <p>Endpoint placement: {runtimePlan.preferred_endpoint_devices.join(", ")}</p>
+              ) : null}
             </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">

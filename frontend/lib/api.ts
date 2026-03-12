@@ -71,10 +71,13 @@ interface SettingsResponse {
     memory_ceiling_gb: number | null;
     accelerator_count: number;
     total_accelerator_memory_gb: number;
+    available_accelerator_memory_gb: number;
     effective_memory_budget_gb: number;
     placement_mode: string;
     worker_model_loading: string;
     keep_resident_models: string[];
+    preferred_worker_devices: string[];
+    preferred_endpoint_devices: string[];
     can_keep_all_worker_models_loaded: boolean;
     can_keep_endpoint_models_loaded: boolean;
     requires_endpoint_idle_teardown: boolean;
@@ -321,6 +324,7 @@ export const api = {
       amd_gpus: Array<{ name: string; vram_gb: number }>;
       unified_memory_gb: number | null;
       total_vram_gb: number;
+      available_vram_gb: number;
       active_profile: string;
       active_backend: string;
       whisper_backend: string;

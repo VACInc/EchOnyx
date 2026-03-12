@@ -189,6 +189,7 @@ Current AMD note:
 - Strix Halo and other AMD systems must be fully functional on ROCm unless CPU execution is proven to be equally fast for the same stage/model.
 - Model residency must become dynamic instead of hard-coded:
   - detect available GPUs, VRAM/unified memory, and topology automatically
+  - use current free memory, not only total VRAM, when deciding placement
   - determine whether all models can stay resident without unloading
   - support a configurable memory ceiling so the runtime keeps itself under a user-defined budget
   - decide whether models should be isolated, shared, or split across GPUs when the hardware supports it

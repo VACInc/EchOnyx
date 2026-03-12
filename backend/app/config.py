@@ -4,6 +4,7 @@ import subprocess
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -187,29 +188,40 @@ def detect_gpu_info() -> dict:
         "nvidia_gpus": [],
         "amd_gpus": [],
         "total_vram_gb": 0,
+        "available_vram_gb": 0,
         "system_memory_gb": 0,
+        "nvidia_topology": {
+            "connections": {},
+            "nvlink_groups": [],
+        },
     }
 
     # Check for NVIDIA GPUs
     try:
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,pci.bus_id",
+                "--format=csv,noheader,nounits",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode == 0:
-            for line in result.stdout.strip().split("\n"):
-                if line:
-                    parts = line.split(", ")
-                    if len(parts) >= 2:
-                        name = parts[0].strip()
-                        vram_mb = int(parts[1].strip())
-                        gpu_info["nvidia_gpus"].append({
-                            "name": name,
-                            "vram_gb": vram_mb / 1024,
-                        })
-                        gpu_info["total_vram_gb"] += vram_mb / 1024
+            for gpu in _parse_nvidia_gpu_lines(result.stdout):
+                gpu_info["nvidia_gpus"].append(gpu)
+                gpu_info["total_vram_gb"] += gpu["vram_gb"]
+                gpu_info["available_vram_gb"] += gpu.get("free_vram_gb", gpu["vram_gb"])
+
+            topo_result = subprocess.run(
+                ["nvidia-smi", "topo", "-m"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if topo_result.returncode == 0:
+                gpu_info["nvidia_topology"] = _parse_nvidia_topology(topo_result.stdout)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
@@ -253,6 +265,72 @@ def detect_gpu_info() -> dict:
         pass
 
     return gpu_info
+
+
+def _parse_nvidia_gpu_lines(output: str) -> list[dict[str, Any]]:
+    gpus: list[dict[str, Any]] = []
+    for line in output.strip().splitlines():
+        if not line.strip():
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 7:
+            continue
+        index = int(parts[0])
+        total_mb = int(parts[2])
+        used_mb = int(parts[3])
+        free_mb = int(parts[4])
+        try:
+            utilization = float(parts[5])
+        except ValueError:
+            utilization = 0.0
+        gpus.append({
+            "index": index,
+            "name": parts[1],
+            "vram_gb": total_mb / 1024,
+            "used_vram_gb": used_mb / 1024,
+            "free_vram_gb": free_mb / 1024,
+            "utilization_gpu": utilization,
+            "bus_id": parts[6],
+        })
+    return gpus
+
+
+def _parse_nvidia_topology(output: str) -> dict[str, Any]:
+    lines = [line.rstrip("\n") for line in output.splitlines() if line.strip()]
+    if not lines:
+        return {"connections": {}, "nvlink_groups": []}
+
+    header_line = next((line for line in lines if line.lstrip().startswith("GPU0")), "")
+    if not header_line:
+        return {"connections": {}, "nvlink_groups": []}
+    header = [part.strip() for part in header_line.split() if part.strip().startswith("GPU")]
+    connections: dict[int, dict[int, str]] = {}
+    nvlink_pairs: set[tuple[int, int]] = set()
+
+    for line in lines:
+        stripped = line.lstrip()
+        if not stripped.startswith("GPU"):
+            continue
+        parts = [part.strip() for part in stripped.split()]
+        row_label = parts[0]
+        if row_label not in header:
+            continue
+        row_index = int(row_label.removeprefix("GPU"))
+        row_connections: dict[int, str] = {}
+        for column_label, value in zip(header, parts[1:1 + len(header)], strict=False):
+            if column_label == row_label:
+                continue
+            column_index = int(column_label.removeprefix("GPU"))
+            row_connections[column_index] = value
+            if value.startswith("NV"):
+                nvlink_pairs.add(tuple(sorted((row_index, column_index))))
+        connections[row_index] = row_connections
+
+    nvlink_groups = [list(pair) for pair in sorted(nvlink_pairs)]
+    return {
+        "connections": connections,
+        "nvlink_groups": nvlink_groups,
+    }
 
 
 def auto_detect_hardware_profile(gpu_info: dict) -> tuple[HardwareProfile, GPUBackend]:
@@ -372,6 +450,7 @@ def get_hardware_info() -> dict:
         },
         "unified_memory_gb": gpu_info.get("unified_memory_gb"),
         "total_vram_gb": gpu_info.get("total_vram_gb", 0),
+        "available_vram_gb": gpu_info.get("available_vram_gb", gpu_info.get("total_vram_gb", 0)),
         "active_profile": settings.hardware_profile.value,
         "active_backend": settings.gpu_backend.value,
         "whisper_backend": whisper_backend,

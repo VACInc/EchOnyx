@@ -61,6 +61,11 @@
   - two repeated uploads of the same spoken probe were both classified as `exact_duplicate` with `score: 1.0`
   - default search for that probe content returned only the representative video after suppression
   - `/api/videos/{id}` now reports an active rerun as `queued` or `processing` instead of incorrectly preferring an older completed job
+- Live `ai-server` planner validation on March 12, 2026 confirmed:
+  - the machine exposes `1x RTX PRO 6000 Blackwell Workstation Edition` plus `6x RTX 3090`
+  - the 6000 had about `97 GB` free and is the correct first-choice placement when the current model set fits on one GPU
+  - the planner now uses current free memory and `nvidia-smi topo -m` data, not only static total VRAM
+  - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
 
 ## High Priority Requirements
 
