@@ -253,9 +253,9 @@ def _aggregate_series(values: list[float], strategy: str) -> float:
 
 
 def _move_inputs_to_device(inputs: dict, device: str) -> dict:
-    if device != "cuda":
+    if not (device == "cuda" or device.startswith("cuda:")):
         return inputs
-    cuda_device = torch.device("cuda")
+    cuda_device = torch.device(device)
     return {
         key: value.to(cuda_device) if hasattr(value, "to") else value
         for key, value in inputs.items()

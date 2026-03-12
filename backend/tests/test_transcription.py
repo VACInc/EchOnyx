@@ -84,3 +84,9 @@ async def test_transcribe_nemo_canary_uses_settings(monkeypatch, tmp_path):
 
     assert result["text"] == "Budget review due Friday."
     assert result["language"] == "en"
+
+
+def test_cuda_device_id_supports_indexed_cuda_devices():
+    fake_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True))
+
+    assert transcription._cuda_device_id("cuda:5", fake_torch) == 5

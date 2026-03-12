@@ -183,6 +183,7 @@ Current accelerator sizing guidance for the shipped model set:
 - Keeping worker-side models warm plus one local endpoint at a time needs about `50.5 GB` of budget.
 - Keeping the whole current stack resident on one accelerator needs about `74.5 GB` of budget, which is about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
 - On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
+- CUDA worker-side models now honor the planner's preferred device selection, and local `llama.cpp` endpoints use the planner's preferred main GPU or tensor split when multiple CUDA devices are selected.
 - Full live CUDA deployment and end-to-end acceptance are still pending.
 
 Current AMD note:

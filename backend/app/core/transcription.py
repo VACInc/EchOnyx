@@ -11,6 +11,16 @@ from app.core.model_manager import ModelType, get_model_manager
 logger = logging.getLogger(__name__)
 
 
+def _cuda_device_id(device_name: str, torch_module) -> int:
+    if not torch_module.cuda.is_available():
+        return -1
+    if device_name == "cuda":
+        return 0
+    if device_name.startswith("cuda:"):
+        return int(device_name.split(":", 1)[1])
+    return -1
+
+
 def _words_to_text(words: list[dict]) -> str:
     return "".join(word.get("word", "") for word in words).strip()
 
@@ -137,7 +147,7 @@ async def _transcribe_transformers_asr(
     device_name = model_bundle.get("device", "cpu")
     settings = get_settings()
 
-    device_id = 0 if device_name == "cuda" and torch.cuda.is_available() else -1
+    device_id = _cuda_device_id(device_name, torch)
     if model_bundle.get("type") == "granite":
         import numpy as np
         import soundfile as sf
@@ -172,8 +182,8 @@ async def _transcribe_transformers_asr(
                     audio=chunk,
                     return_tensors="pt",
                 )
-                if device_name == "cuda" and torch.cuda.is_available():
-                    inputs = {k: v.to("cuda") for k, v in inputs.items()}
+                if device_id >= 0 and torch.cuda.is_available():
+                    inputs = {k: v.to(device_name) for k, v in inputs.items()}
                 with torch.inference_mode():
                     generated_ids = model.generate(
                         **inputs,

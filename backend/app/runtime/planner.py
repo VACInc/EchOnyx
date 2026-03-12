@@ -28,7 +28,9 @@ class RuntimePlan:
     placement_mode: str
     worker_model_loading: "ModelLoadingStrategy"
     keep_resident_models: tuple[str, ...]
+    preferred_worker_device_indices: tuple[int, ...]
     preferred_worker_devices: tuple[str, ...]
+    preferred_endpoint_device_indices: tuple[int, ...]
     preferred_endpoint_devices: tuple[str, ...]
     can_keep_all_worker_models_loaded: bool
     can_keep_endpoint_models_loaded: bool
@@ -211,26 +213,26 @@ def _free_capacity_gb(gpu: dict) -> float:
     return float(gpu.get("free_vram_gb", gpu.get("vram_gb", 0.0)) or 0.0)
 
 
-def _pick_devices(
+def _pick_gpu_group(
     nvidia_gpus: list[dict],
     *,
     requirement_gb: float,
     prefer_nvlink: bool,
     topology: dict,
-) -> tuple[str, ...]:
+) -> tuple[dict, ...]:
     if not nvidia_gpus or requirement_gb <= 0:
         return ()
 
     sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
     best = sorted_gpus[0]
     if _free_capacity_gb(best) >= requirement_gb:
-        return (_device_label(best),)
+        return (best,)
 
     if prefer_nvlink:
         for group in topology.get("nvlink_groups", []):
             candidates = [gpu for gpu in nvidia_gpus if gpu.get("index") in set(group)]
             if sum(_free_capacity_gb(gpu) for gpu in candidates) >= requirement_gb:
-                return tuple(_device_label(gpu) for gpu in sorted(candidates, key=lambda item: item["index"]))
+                return tuple(sorted(candidates, key=lambda item: item["index"]))
 
     selected: list[dict] = []
     remaining = requirement_gb
@@ -239,7 +241,15 @@ def _pick_devices(
         remaining -= _free_capacity_gb(gpu)
         if remaining <= 0:
             break
-    return tuple(_device_label(gpu) for gpu in selected)
+    return tuple(selected)
+
+
+def _device_indices(gpus: tuple[dict, ...]) -> tuple[int, ...]:
+    return tuple(int(gpu["index"]) for gpu in gpus if gpu.get("index") is not None)
+
+
+def _device_labels(gpus: tuple[dict, ...]) -> tuple[str, ...]:
+    return tuple(_device_label(gpu) for gpu in gpus)
 
 
 def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
@@ -320,7 +330,9 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         keep_resident_models = ()
         notes.append("Detected accelerator memory is unavailable; planner falls back to sequential loading.")
 
+    preferred_worker_indices: tuple[int, ...] = ()
     preferred_worker_devices: tuple[str, ...] = ()
+    preferred_endpoint_indices: tuple[int, ...] = ()
     preferred_endpoint_devices: tuple[str, ...] = ()
     if placement == "multi_gpu" and nvidia_gpus:
         if len({round(float(gpu.get("vram_gb", 0.0)), 1) for gpu in nvidia_gpus}) > 1:
@@ -331,25 +343,31 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         best_gpu_free = _free_capacity_gb(best_gpu)
         if best_gpu_free >= total_hot_set:
             placement = "single_large_gpu_preferred"
-            preferred_worker_devices = (_device_label(best_gpu),)
-            preferred_endpoint_devices = (_device_label(best_gpu),)
+            preferred_worker_indices = _device_indices((best_gpu,))
+            preferred_worker_devices = _device_labels((best_gpu,))
+            preferred_endpoint_indices = _device_indices((best_gpu,))
+            preferred_endpoint_devices = _device_labels((best_gpu,))
             notes.append(
                 f"{_device_label(best_gpu)} can host the full active model set at current free memory."
             )
         else:
-            preferred_worker_devices = _pick_devices(
+            preferred_worker_group = _pick_gpu_group(
                 nvidia_gpus,
                 requirement_gb=worker_total,
                 prefer_nvlink=False,
                 topology=topology,
             )
+            preferred_worker_indices = _device_indices(preferred_worker_group)
+            preferred_worker_devices = _device_labels(preferred_worker_group)
             endpoint_requirement = endpoint_total if can_keep_endpoint_models_loaded else max_endpoint
-            preferred_endpoint_devices = _pick_devices(
+            preferred_endpoint_group = _pick_gpu_group(
                 nvidia_gpus,
                 requirement_gb=endpoint_requirement,
                 prefer_nvlink=True,
                 topology=topology,
             )
+            preferred_endpoint_indices = _device_indices(preferred_endpoint_group)
+            preferred_endpoint_devices = _device_labels(preferred_endpoint_group)
             if preferred_worker_devices:
                 notes.append(f"Preferred worker placement: {', '.join(preferred_worker_devices)}.")
             if preferred_endpoint_devices:
@@ -377,7 +395,9 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         placement_mode=placement,
         worker_model_loading=worker_model_loading,
         keep_resident_models=keep_resident_models,
+        preferred_worker_device_indices=preferred_worker_indices,
         preferred_worker_devices=preferred_worker_devices,
+        preferred_endpoint_device_indices=preferred_endpoint_indices,
         preferred_endpoint_devices=preferred_endpoint_devices,
         can_keep_all_worker_models_loaded=can_keep_all_worker_models_loaded,
         can_keep_endpoint_models_loaded=can_keep_endpoint_models_loaded,

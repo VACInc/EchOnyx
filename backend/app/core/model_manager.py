@@ -56,17 +56,24 @@ def _torch_dtype_for_backend(backend: GPUBackend):
     return torch.float16 if backend == GPUBackend.CUDA else torch.float32
 
 
+def _is_cuda_device_name(device: str) -> bool:
+    return device == "cuda" or device.startswith("cuda:")
+
+
 def _torch_device(
     backend: GPUBackend,
     *,
     strict: bool = False,
     runtime_label: str = "model",
+    device_index: int | None = None,
 ) -> str:
     """Map backend choice to torch device name with safe fallback."""
     if backend.value in {"cuda", "rocm"}:
         try:
             import torch
             if torch.cuda.is_available():
+                if device_index is not None:
+                    return f"cuda:{device_index}"
                 return "cuda"
         except Exception:
             if strict:
@@ -139,8 +146,11 @@ async def _load_faster_whisper(
     model_name: str,
     backend: GPUBackend,
     cache_dir: Path,
+    *,
+    device_index: int | None = None,
 ) -> Any:
     """Load a faster-whisper model by name."""
+    from inspect import signature
     from faster_whisper import WhisperModel
 
     device = _faster_whisper_device(backend)
@@ -152,14 +162,20 @@ async def _load_faster_whisper(
         )
 
     loop = asyncio.get_event_loop()
+    init_params = {
+        "model_size_or_path": model_name,
+        "device": device,
+        "compute_type": compute_type,
+        "download_root": str(cache_dir),
+    }
+    if device == "cuda" and device_index is not None:
+        param_names = set(signature(WhisperModel).parameters.keys())
+        if "device_index" in param_names:
+            init_params["device_index"] = device_index
+
     return await loop.run_in_executor(
         None,
-        lambda: WhisperModel(
-            model_name,
-            device=device,
-            compute_type=compute_type,
-            download_root=str(cache_dir),
-        ),
+        lambda: WhisperModel(**init_params),
     )
 
 
@@ -176,6 +192,7 @@ async def _load_transformers_whisper(
     cache_dir: Path,
     *,
     strict_accelerator: bool = False,
+    device_index: int | None = None,
 ) -> Any:
     """Load a Whisper model via transformers for ROCm/CPU compatibility."""
     from inspect import signature
@@ -186,8 +203,11 @@ async def _load_transformers_whisper(
         backend,
         strict=strict_accelerator,
         runtime_label="transcription",
+        device_index=device_index,
     )
-    dtype = _torch_dtype_for_backend(backend) or (torch.float16 if device == "cuda" else torch.float32)
+    dtype = _torch_dtype_for_backend(backend) or (
+        torch.float16 if _is_cuda_device_name(device) else torch.float32
+    )
     loop = asyncio.get_event_loop()
 
     def load_whisper():
@@ -210,8 +230,8 @@ async def _load_transformers_whisper(
             model_name,
             **model_kwargs,
         )
-        if device == "cuda":
-            model = model.to(torch.device("cuda"))
+        if _is_cuda_device_name(device):
+            model = model.to(torch.device(device))
         return {
             "type": "whisper_transformers",
             "model": model,
@@ -243,7 +263,8 @@ class ModelManager:
 
     def __init__(self):
         self.settings = get_settings()
-        self.runtime_plan = build_runtime_plan(self.settings, detect_gpu_info())
+        self.gpu_info = detect_gpu_info()
+        self.runtime_plan = build_runtime_plan(self.settings, self.gpu_info)
         self._loaded_models: dict[ModelType, Any] = {}
         self._lock = asyncio.Lock()
         self._loaded_state_path = self.settings.model_cache_dir / ".loaded_models.json"
@@ -269,6 +290,85 @@ class ModelManager:
             self.settings.hardware_profile == HardwareProfile.STRIX_HALO
             and self.settings.gpu_backend == GPUBackend.ROCM
         )
+
+    @property
+    def worker_gpu_indices(self) -> tuple[int, ...]:
+        indices = tuple(getattr(self.runtime_plan, "preferred_worker_device_indices", ()) or ())
+        if indices:
+            return indices
+        if self.settings.gpu_backend == GPUBackend.CUDA:
+            visible_gpus = self.gpu_info.get("nvidia_gpus", [])
+            if visible_gpus and visible_gpus[0].get("index") is not None:
+                return (int(visible_gpus[0]["index"]),)
+        return ()
+
+    @property
+    def endpoint_gpu_indices(self) -> tuple[int, ...]:
+        indices = tuple(getattr(self.runtime_plan, "preferred_endpoint_device_indices", ()) or ())
+        if indices:
+            return indices
+        if self.settings.gpu_backend == GPUBackend.CUDA:
+            return self.worker_gpu_indices
+        return ()
+
+    def _torch_runtime_device(
+        self,
+        *,
+        runtime_label: str,
+        strict: bool,
+        endpoint: bool = False,
+    ) -> str:
+        indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
+        device_index = indices[0] if indices else None
+        return _torch_device(
+            self.settings.gpu_backend,
+            strict=strict,
+            runtime_label=runtime_label,
+            device_index=device_index,
+        )
+
+    def _llama_cuda_kwargs(self, param_names: set[str], *, endpoint: bool) -> dict[str, Any]:
+        if self.settings.gpu_backend != GPUBackend.CUDA:
+            return {}
+
+        device_indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
+        if not device_indices:
+            return {}
+
+        import llama_cpp as llama_cpp_module
+
+        kwargs: dict[str, Any] = {}
+        if "main_gpu" in param_names:
+            kwargs["main_gpu"] = device_indices[0]
+
+        if len(device_indices) == 1:
+            split_none = getattr(llama_cpp_module, "LLAMA_SPLIT_MODE_NONE", None)
+            if split_none is not None and "split_mode" in param_names:
+                kwargs["split_mode"] = split_none
+            return kwargs
+
+        if "tensor_split" not in param_names:
+            return kwargs
+
+        gpu_free_by_index = {
+            int(gpu["index"]): float(gpu.get("free_vram_gb", gpu.get("vram_gb", 0.0)) or 0.0)
+            for gpu in self.gpu_info.get("nvidia_gpus", [])
+            if gpu.get("index") is not None
+        }
+        total_free = sum(max(gpu_free_by_index.get(index, 0.0), 0.0) for index in device_indices)
+        if total_free <= 0:
+            return kwargs
+
+        fractions = [0.0] * (max(device_indices) + 1)
+        for index in device_indices:
+            fractions[index] = max(gpu_free_by_index.get(index, 0.0), 0.0) / total_free
+        kwargs["tensor_split"] = fractions
+
+        split_layer = getattr(llama_cpp_module, "LLAMA_SPLIT_MODE_LAYER", None)
+        if split_layer is not None and "split_mode" in param_names:
+            kwargs["split_mode"] = split_layer
+
+        return kwargs
 
     async def get_model(self, model_type: ModelType) -> Any:
         """
@@ -328,8 +428,7 @@ class ModelManager:
         import torch
 
         model_name = self.settings.audio_event_model
-        device = _torch_device(
-            self.settings.gpu_backend,
+        device = self._torch_runtime_device(
             strict=self.requires_strict_accelerator,
             runtime_label="audio event classification",
         )
@@ -360,8 +459,8 @@ class ModelManager:
                     torch_dtype=dtype,
                 )
                 bundle_type = "audio_event_classifier"
-            if device == "cuda":
-                model = model.to(torch.device("cuda"))
+            if _is_cuda_device_name(device):
+                model = model.to(torch.device(device))
             model.eval()
             return {
                 "type": bundle_type,
@@ -384,6 +483,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Canary transcription",
+                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
@@ -392,11 +492,11 @@ class ModelManager:
 
             def load_canary():
                 model = SALM.from_pretrained(model_name)
-                if device == "cuda":
+                if _is_cuda_device_name(device):
                     import torch
 
                     if torch.cuda.is_available():
-                        model = model.cuda()
+                        model = model.to(torch.device(device))
                 model.eval()
                 return {
                     "type": "nemo_canary",
@@ -417,11 +517,12 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Granite transcription",
+                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
             dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or (
-                torch.float16 if device == "cuda" else torch.float32
+                    torch.float16 if _is_cuda_device_name(device) else torch.float32
             )
 
             loop = asyncio.get_event_loop()
@@ -456,8 +557,8 @@ class ModelManager:
                     model_name,
                     **model_kwargs,
                 )
-                if device == "cuda":
-                    model = model.to(torch.device("cuda"))
+                if _is_cuda_device_name(device):
+                    model = model.to(torch.device(device))
                 return {
                     "type": "granite",
                     "model": model,
@@ -477,6 +578,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 self.settings.model_cache_dir,
                 strict_accelerator=self.requires_strict_accelerator,
+                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
             )
             logger.info("Loaded Whisper transformers model: %s", normalized_name)
             return model
@@ -485,6 +587,7 @@ class ModelManager:
             normalized_name,
             self.settings.gpu_backend,
             self.settings.model_cache_dir,
+            device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
         )
         logger.info("Loaded Whisper model: %s", normalized_name)
         return model
@@ -512,7 +615,11 @@ class ModelManager:
         if self.settings.gpu_backend in {GPUBackend.CUDA, GPUBackend.ROCM}:
             import torch
             if torch.cuda.is_available():
-                pipeline.to(torch.device("cuda"))
+                device = self._torch_runtime_device(
+                    strict=self.requires_strict_accelerator,
+                    runtime_label="diarization",
+                )
+                pipeline.to(torch.device(device))
             elif self.requires_strict_accelerator:
                 raise RuntimeError(
                     "Diarization requires ROCm acceleration on Strix Halo, but no GPU device is available."
@@ -545,12 +652,14 @@ class ModelManager:
         )
 
         loop = asyncio.get_event_loop()
+        param_names = set(signature(Llama).parameters.keys())
         init_params = {
             "model_path": str(model_path),
             "n_ctx": 8192,
             "n_gpu_layers": n_gpu_layers,
             "verbose": False,
         }
+        init_params.update(self._llama_cuda_kwargs(param_names, endpoint=True))
         chat_handler = None
         if self.settings.vision_mmproj:
             mmproj_path = Path(self.settings.vision_mmproj)
@@ -589,7 +698,6 @@ class ModelManager:
         if chat_handler is not None:
             init_params["chat_handler"] = chat_handler
         elif self.settings.vision_mmproj and "mmproj_path" in locals() and mmproj_path.exists():
-            param_names = set(signature(Llama).parameters.keys())
             if "clip_model_path" in param_names:
                 init_params["clip_model_path"] = str(mmproj_path)
             elif "mmproj" in param_names:
@@ -631,6 +739,7 @@ class ModelManager:
 
     async def _load_summarization(self) -> Any:
         """Load the summarization model via llama.cpp."""
+        from inspect import signature
         from llama_cpp import Llama
         from app.core.model_downloader import download_model_async
 
@@ -649,14 +758,17 @@ class ModelManager:
         )
 
         loop = asyncio.get_event_loop()
+        param_names = set(signature(Llama).parameters.keys())
+        init_params = {
+            "model_path": str(model_path),
+            "n_ctx": 32768,
+            "n_gpu_layers": n_gpu_layers,
+            "verbose": False,
+        }
+        init_params.update(self._llama_cuda_kwargs(param_names, endpoint=True))
         model = await loop.run_in_executor(
             None,
-            lambda: Llama(
-                model_path=str(model_path),
-                n_ctx=32768,  # Large context for long transcripts
-                n_gpu_layers=n_gpu_layers,
-                verbose=False,
-            ),
+            lambda: Llama(**init_params),
         )
         logger.info(f"Loaded summarization model: {self.settings.summarization_model}")
         return model
@@ -666,8 +778,7 @@ class ModelManager:
         from sentence_transformers import SentenceTransformer
 
         model_name = self.settings.embedding_model
-        device = _torch_device(
-            self.settings.gpu_backend,
+        device = self._torch_runtime_device(
             strict=self.requires_strict_accelerator,
             runtime_label="embedding",
         )

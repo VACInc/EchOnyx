@@ -109,7 +109,9 @@ def test_runtime_plan_prefers_single_large_gpu_when_it_fits_current_free_memory(
     )
 
     assert plan.placement_mode == "single_large_gpu_preferred"
+    assert plan.preferred_worker_device_indices == (5,)
     assert plan.preferred_worker_devices == ("GPU5 RTX PRO 6000 Blackwell (97.0 GB free)",)
+    assert plan.preferred_endpoint_device_indices == (5,)
     assert plan.preferred_endpoint_devices == ("GPU5 RTX PRO 6000 Blackwell (97.0 GB free)",)
     assert any("can host the full active model set" in note for note in plan.notes)
 
@@ -138,7 +140,9 @@ def test_runtime_plan_falls_back_to_multi_gpu_groups_when_large_gpu_cannot_fit_h
     )
 
     assert plan.placement_mode == "multi_gpu"
+    assert plan.preferred_worker_device_indices == (5,)
     assert plan.preferred_worker_devices == ("GPU5 RTX PRO 6000 Blackwell (40.0 GB free)",)
+    assert plan.preferred_endpoint_device_indices == (0, 1)
     assert plan.preferred_endpoint_devices == (
         "GPU0 RTX 3090 (24.0 GB free)",
         "GPU1 RTX 3090 (24.0 GB free)",
