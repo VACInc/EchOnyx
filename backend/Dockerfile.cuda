@@ -1,0 +1,120 @@
+# syntax=docker/dockerfile:1
+
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    curl \
+    ffmpeg \
+    git \
+    libsndfile1 \
+    ninja-build \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/local/bin/pip
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+ARG CUDA_WHL_URL=https://download.pytorch.org/whl/cu128
+ARG CUDA_TORCH_VERSION=2.9.1
+ARG CUDA_TORCHAUDIO_VERSION=2.9.1
+ARG CUDA_TORCHVISION_VERSION=0.24.1
+ARG LLAMA_BUILD_CUDA=1
+ARG LLAMA_CPP_PYTHON_REPO
+ARG LLAMA_CPP_PYTHON_REF
+ARG LLAMA_CPP_REPO
+ARG LLAMA_CPP_REF
+ARG INSTALL_NEMO=1
+
+COPY pyproject.toml README.md ./
+
+RUN uv pip compile pyproject.toml -o requirements.txt
+RUN sed -i '/llama-cpp-python/d' requirements.txt
+
+RUN uv pip install --system -r requirements.txt
+
+RUN set -e; \
+    CMAKE_FLAGS=""; \
+    if [ "$LLAMA_BUILD_CUDA" = "1" ]; then \
+      CMAKE_FLAGS="$CMAKE_FLAGS -DGGML_CUDA=on"; \
+    fi; \
+    if [ -n "$CMAKE_FLAGS" ]; then \
+      export CMAKE_ARGS="$CMAKE_FLAGS"; \
+      export FORCE_CMAKE=1; \
+    fi; \
+    repo="${LLAMA_CPP_PYTHON_REPO:-https://github.com/abetlen/llama-cpp-python.git}"; \
+    ref="${LLAMA_CPP_PYTHON_REF:-main}"; \
+    llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggerganov/llama.cpp.git}"; \
+    llama_ref="${LLAMA_CPP_REF:-master}"; \
+    git clone --depth 1 --branch "$ref" "$repo" /tmp/llama-cpp-python; \
+    rm -rf /tmp/llama-cpp-python/vendor/llama.cpp; \
+    git clone --depth 1 "$llama_repo" /tmp/llama-cpp-python/vendor/llama.cpp; \
+    if [ -n "$llama_ref" ] && [ "$llama_ref" != "master" ]; then \
+      git -C /tmp/llama-cpp-python/vendor/llama.cpp fetch --depth 1 origin "$llama_ref"; \
+      git -C /tmp/llama-cpp-python/vendor/llama.cpp checkout FETCH_HEAD; \
+    fi; \
+    { \
+      echo 'if (NOT DEFINED LLAMA_INSTALL_VERSION OR "${LLAMA_INSTALL_VERSION}" STREQUAL "")'; \
+      echo '  set(LLAMA_INSTALL_VERSION 0.0.0)'; \
+      echo 'endif()'; \
+      cat /tmp/llama-cpp-python/vendor/llama.cpp/tools/mtmd/CMakeLists.txt; \
+    } > /tmp/mtmd.CMakeLists.txt && \
+    mv /tmp/mtmd.CMakeLists.txt /tmp/llama-cpp-python/vendor/llama.cpp/tools/mtmd/CMakeLists.txt; \
+    uv pip install --system /tmp/llama-cpp-python; \
+    rm -rf /tmp/llama-cpp-python
+
+RUN python - <<'PY'
+from pathlib import Path
+import re
+
+path = Path("/usr/local/lib/python3.12/dist-packages/llama_cpp/_ctypes_extensions.py")
+if not path.exists():
+    path = Path("/usr/local/lib/python3.11/site-packages/llama_cpp/_ctypes_extensions.py")
+if path.exists():
+    text = path.read_text()
+    if "Missing llama.cpp symbol" not in text:
+        text, count = re.subn(
+            r"(?m)^(?P<indent>[ ]*)func = getattr\(lib, name\)$",
+            "\\g<indent>try:\\n"
+            "\\g<indent>    func = getattr(lib, name)\\n"
+            "\\g<indent>except AttributeError:\\n"
+            "\\g<indent>    def missing(*args, **kwargs):\\n"
+            "\\g<indent>        raise AttributeError(f\"Missing llama.cpp symbol: {name}\")\\n"
+            "\\g<indent>    return missing",
+            text,
+            count=1,
+        )
+        if count == 0:
+            raise SystemExit(f"Failed to patch ctypes loader at {path}")
+        path.write_text(text)
+PY
+
+RUN python -m pip install --no-cache-dir --force-reinstall \
+    --index-url "${CUDA_WHL_URL}" \
+    "torch==${CUDA_TORCH_VERSION}" \
+    "torchaudio==${CUDA_TORCHAUDIO_VERSION}" \
+    "torchvision==${CUDA_TORCHVISION_VERSION}"
+
+RUN if [ "$INSTALL_NEMO" = "1" ]; then \
+      uv pip install --system "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git"; \
+    fi
+
+COPY app ./app
+
+RUN uv pip install --system -e . --no-deps
+
+RUN mkdir -p /data/uploads /data/models /data/chroma
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

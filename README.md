@@ -49,7 +49,7 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 
 **NVIDIA:**
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 ```
 
 ### 3) Access
@@ -72,6 +72,9 @@ Set these in `.env` as needed:
 - `ROCM_LLM_IDLE_TIMEOUT_S`: idle shutdown for ROCm `llama_server` endpoints
 - `INSTALL_VLLM=1`: opt-in build flag for the heavier ROCm `vLLM` image path
 - `VLLM_INSTALL_METHOD`: `wheel` (official ROCm wheel index) or `source`
+- `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
+- `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
+- `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
 - `EMBEDDING_MODEL`: embedding model id (HF)
 - `UPLOAD_DIR`, `MODEL_CACHE_DIR`: storage locations

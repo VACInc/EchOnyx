@@ -66,6 +66,7 @@
   - the 6000 had about `97 GB` free and is the correct first-choice placement when the current model set fits on one GPU
   - the planner now uses current free memory and `nvidia-smi topo -m` data, not only static total VRAM
   - CUDA worker-side models now honor the planner-selected device index, and local `llama.cpp` models can use the planner-selected CUDA main GPU or tensor split
+  - the NVIDIA Docker path now has a dedicated CUDA backend image with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free

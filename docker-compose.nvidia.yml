@@ -2,18 +2,16 @@
 
 services:
   backend:
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    environment:
-      - GPU_BACKEND=cuda
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
-
-  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.cuda
+      args:
+        CUDA_WHL_URL: ${CUDA_WHL_URL:-https://download.pytorch.org/whl/cu128}
+        CUDA_TORCH_VERSION: ${CUDA_TORCH_VERSION:-2.9.1}
+        CUDA_TORCHAUDIO_VERSION: ${CUDA_TORCHAUDIO_VERSION:-2.9.1}
+        CUDA_TORCHVISION_VERSION: ${CUDA_TORCHVISION_VERSION:-0.24.1}
+        LLAMA_BUILD_CUDA: ${LLAMA_BUILD_CUDA:-1}
+        INSTALL_NEMO: ${INSTALL_NEMO:-1}
     deploy:
       resources:
         reservations:
@@ -23,4 +21,26 @@ services:
               capabilities: [gpu]
     environment:
       - GPU_BACKEND=cuda
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6}
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.cuda
+      args:
+        CUDA_WHL_URL: ${CUDA_WHL_URL:-https://download.pytorch.org/whl/cu128}
+        CUDA_TORCH_VERSION: ${CUDA_TORCH_VERSION:-2.9.1}
+        CUDA_TORCHAUDIO_VERSION: ${CUDA_TORCHAUDIO_VERSION:-2.9.1}
+        CUDA_TORCHVISION_VERSION: ${CUDA_TORCHVISION_VERSION:-0.24.1}
+        LLAMA_BUILD_CUDA: ${LLAMA_BUILD_CUDA:-1}
+        INSTALL_NEMO: ${INSTALL_NEMO:-1}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - GPU_BACKEND=cuda
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
