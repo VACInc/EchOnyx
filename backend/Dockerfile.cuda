@@ -23,6 +23,11 @@ RUN ln -sf /usr/bin/python3 /usr/local/bin/python && \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+RUN python -m venv /opt/venv
+
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
 WORKDIR /app
 
 ARG CUDA_WHL_URL=https://download.pytorch.org/whl/cu128
@@ -41,7 +46,7 @@ COPY pyproject.toml README.md ./
 RUN uv pip compile pyproject.toml -o requirements.txt
 RUN sed -i '/llama-cpp-python/d' requirements.txt
 
-RUN uv pip install --system -r requirements.txt
+RUN uv pip install -r requirements.txt
 
 RUN set -e; \
     CMAKE_FLAGS=""; \
@@ -70,17 +75,16 @@ RUN set -e; \
       cat /tmp/llama-cpp-python/vendor/llama.cpp/tools/mtmd/CMakeLists.txt; \
     } > /tmp/mtmd.CMakeLists.txt && \
     mv /tmp/mtmd.CMakeLists.txt /tmp/llama-cpp-python/vendor/llama.cpp/tools/mtmd/CMakeLists.txt; \
-    uv pip install --system /tmp/llama-cpp-python; \
+    uv pip install /tmp/llama-cpp-python; \
     rm -rf /tmp/llama-cpp-python
 
 RUN python - <<'PY'
 from pathlib import Path
 import re
 
-path = Path("/usr/local/lib/python3.12/dist-packages/llama_cpp/_ctypes_extensions.py")
-if not path.exists():
-    path = Path("/usr/local/lib/python3.11/site-packages/llama_cpp/_ctypes_extensions.py")
-if path.exists():
+site_packages = next(Path("/opt/venv/lib").glob("python*/site-packages"), None)
+path = site_packages / "llama_cpp" / "_ctypes_extensions.py" if site_packages else None
+if path and path.exists():
     text = path.read_text()
     if "Missing llama.cpp symbol" not in text:
         text, count = re.subn(
@@ -106,12 +110,12 @@ RUN python -m pip install --no-cache-dir --force-reinstall \
     "torchvision==${CUDA_TORCHVISION_VERSION}"
 
 RUN if [ "$INSTALL_NEMO" = "1" ]; then \
-      uv pip install --system "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git"; \
+      uv pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git"; \
     fi
 
 COPY app ./app
 
-RUN uv pip install --system -e . --no-deps
+RUN uv pip install -e . --no-deps
 
 RUN mkdir -p /data/uploads /data/models /data/chroma
 
