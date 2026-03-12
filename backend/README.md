@@ -31,5 +31,6 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 - The runtime planner now uses current free GPU memory plus NVIDIA topology data when choosing preferred worker and endpoint placement.
 - CUDA worker-side models now load on the planner-selected device, and local `llama.cpp` endpoint models use the planner-selected CUDA placement when possible.
 - The NVIDIA Docker path now builds from `backend/Dockerfile.cuda` with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default.
+- On NVIDIA, leave `CUDA_VISIBLE_DEVICES` blank unless you intentionally want to hide GPUs from the planner.
 - The CUDA image now smoke-builds on the live `ai-server`; when `docker build` has no visible GPU, set `CUDA_ARCHITECTURES` explicitly for your target cards. The live `3090 + RTX PRO 6000 Blackwell` mix was validated with `86;120`.
 - For the current model set, plan around `24 GB` free accelerator memory as the rough floor, `32 GB` free as the practical single-accelerator target, about `50.5 GB` of budget for warm worker models plus one endpoint, and about `100 GB` free if you expect the whole stack to stay resident at the default memory fraction.
