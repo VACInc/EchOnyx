@@ -28,6 +28,7 @@ RUN python -m venv /opt/venv
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV LIBRARY_PATH="/usr/local/cuda/targets/x86_64-linux/lib/stubs:/usr/local/cuda/lib64/stubs"
+ENV LDFLAGS="-L/usr/local/cuda/targets/x86_64-linux/lib/stubs -L/usr/local/cuda/lib64/stubs -Wl,-rpath-link,/usr/local/cuda/targets/x86_64-linux/lib/stubs -Wl,-rpath-link,/usr/local/cuda/lib64/stubs"
 
 RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/stubs/libcuda.so \
     /usr/local/cuda/targets/x86_64-linux/lib/stubs/libcuda.so.1 && \
