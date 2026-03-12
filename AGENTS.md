@@ -1,6 +1,7 @@
 # AGENTS
 
 - Always keep unit tests up to date.
+- Treat test updates as part of the code change. If behavior, API contracts, settings, ranking, queueing, or runtime decisions change, update or add tests in the same change.
 - After any code changes, run the relevant verification before you finish:
   - Backend: prefer `uv run pytest backend/tests`. If `uv`/`pytest` is unavailable locally, use a disposable venv or a Docker-based runner and say exactly what ran.
   - Frontend: run a production build (`npm run build` or the frontend Docker build). Run `npm run lint` too if dependencies are installed.
@@ -18,5 +19,5 @@
   - cancel flows revoke the underlying Celery task
   - vision/summarization endpoints report `online` when configured
   - search/ask behavior matches what the UI claims
-- Keep operational docs aligned when behavior changes. If you touch startup, worker, or deployment assumptions, update `README.md`, `backend/README.md`, Compose files, and this file together.
+- Keep operational docs aligned when behavior changes. If you touch startup, worker, deployment assumptions, user-visible controls, acceptance checks, or operator workflow, update `README.md`, `backend/README.md`, Compose files, `project_status_and_backlog.md`, and this file as needed in the same change.
 - Current repo hotspot: search/ask/similarity and batch-processing paths need extra scrutiny because they are easy places for product claims and runtime behavior to drift apart.
