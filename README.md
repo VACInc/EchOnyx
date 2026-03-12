@@ -175,11 +175,14 @@ Use the Search page to:
 | Multi-GPU | Multiple NVIDIA GPUs | Parallel |
 | CPU Only | Fallback for systems without GPU | Sequential |
 
-Current NVIDIA planning note:
-- Rough floor for the current model set is about `24 GB` free on at least one GPU.
-- Practical single-GPU target is about `32 GB` free.
-- Keeping the whole current stack resident on one GPU needs about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
-- The planner now prefers the largest currently free GPU first, then falls back to multi-GPU placement based on free memory and topology.
+Current accelerator sizing guidance for the shipped model set:
+- Plan against free accelerator memory, not only installed VRAM or unified memory.
+- Rough floor is about `24 GB` free to run the largest current stage sequentially.
+- Practical single-accelerator target is about `32 GB` free.
+- Keeping the worker-side models warm needs about `26.5 GB` of budget.
+- Keeping worker-side models warm plus one local endpoint at a time needs about `50.5 GB` of budget.
+- Keeping the whole current stack resident on one accelerator needs about `74.5 GB` of budget, which is about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
+- On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
 - Full live CUDA deployment and end-to-end acceptance are still pending.
 
 Current AMD note:
