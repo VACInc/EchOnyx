@@ -105,6 +105,18 @@ def evaluate_duplicate_match(
     if not source.tokens or not candidate.tokens:
         return 0.0
 
+    source_primary = source.transcript_text or source.key_point_text or source.combined_text
+    candidate_primary = candidate.transcript_text or candidate.key_point_text or candidate.combined_text
+    source_primary_normalized = " ".join(source_primary.split())
+    candidate_primary_normalized = " ".join(candidate_primary.split())
+    if (
+        source.transcript_text
+        and candidate.transcript_text
+        and source_primary_normalized
+        and source_primary_normalized == candidate_primary_normalized
+    ):
+        return 1.0
+
     overlap = source.tokens & candidate.tokens
     if not overlap:
         return 0.0
@@ -117,9 +129,7 @@ def evaluate_duplicate_match(
     bigram_union = source.bigrams | candidate.bigrams
     bigram_jaccard = len(bigram_overlap) / max(len(bigram_union), 1) if bigram_union else 0.0
 
-    source_text = source.transcript_text or source.key_point_text or source.combined_text
-    candidate_text = candidate.transcript_text or candidate.key_point_text or candidate.combined_text
-    sequence_ratio = SequenceMatcher(None, source_text[:4000], candidate_text[:4000]).ratio()
+    sequence_ratio = SequenceMatcher(None, source_primary[:4000], candidate_primary[:4000]).ratio()
 
     score = (
         (containment * 0.4)
@@ -127,6 +137,23 @@ def evaluate_duplicate_match(
         + (bigram_jaccard * 0.2)
         + (token_jaccard * 0.1)
     )
+    if source.transcript_text and candidate.transcript_text:
+        transcript_tokens = _tokens(source.transcript_text)
+        candidate_transcript_tokens = _tokens(candidate.transcript_text)
+        if transcript_tokens and candidate_transcript_tokens:
+            transcript_overlap = set(transcript_tokens) & set(candidate_transcript_tokens)
+            transcript_containment = len(transcript_overlap) / max(
+                min(len(set(transcript_tokens)), len(set(candidate_transcript_tokens))),
+                1,
+            )
+            transcript_sequence = SequenceMatcher(
+                None,
+                source.transcript_text[:4000],
+                candidate.transcript_text[:4000],
+            ).ratio()
+            transcript_score = (transcript_containment * 0.55) + (transcript_sequence * 0.45)
+            score = max(score, transcript_score)
+
     return max(0.0, min(score, 1.0))
 
 
