@@ -28,6 +28,7 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 
 - Completed videos require an explicit forced rerun; reset/reprocess is not implicit anymore.
 - Duplicate scoring is computed after summarization and before embedding so suppressed duplicates do not get indexed as separate search representatives.
+- The default Compose stack keeps PostgreSQL and Redis internal-only; they are not published on host ports unless you add an override.
 - The runtime planner now uses current free GPU memory plus NVIDIA topology data when choosing preferred worker and endpoint placement.
 - CUDA worker-side models now load on the planner-selected device, and local `llama.cpp` endpoint models use the planner-selected CUDA placement when possible.
 - The NVIDIA Docker path now builds from `backend/Dockerfile.cuda` with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default.

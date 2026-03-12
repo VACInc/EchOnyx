@@ -58,6 +58,7 @@ If you are building on a host without a visible GPU during `docker build`, set `
 - Frontend: `http://localhost:3000`
 - API: `http://localhost:8000`
 - FastAPI docs: `http://localhost:8000/docs`
+- PostgreSQL and Redis stay internal to the Compose network by default; they are no longer published on host ports unless you add your own override.
 
 ## Configuration (Key Env Vars)
 

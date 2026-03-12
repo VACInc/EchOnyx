@@ -67,6 +67,7 @@
   - the planner now uses current free memory and `nvidia-smi topo -m` data, not only static total VRAM
   - CUDA worker-side models now honor the planner-selected device index, and local `llama.cpp` models can use the planner-selected CUDA main GPU or tensor split
   - the NVIDIA Docker path now has a dedicated CUDA backend image with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default
+  - the default Compose stack now keeps PostgreSQL and Redis internal-only to avoid host port collisions during deployment
   - `CUDA_VISIBLE_DEVICES` should stay blank by default on NVIDIA so the planner can see all visible GPUs
   - the CUDA backend image now smoke-builds successfully on that host after switching the image to a venv install, linking against CUDA driver stubs during `docker build`, and setting `CUDA_ARCHITECTURES=86;120`
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
