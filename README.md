@@ -51,6 +51,7 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 ```
+If you are building on a host without a visible GPU during `docker build`, set `CUDA_ARCHITECTURES` for your target cards. On the live `ai-server`, `86;120` was validated for `RTX 3090 + RTX PRO 6000 Blackwell`.
 
 ### 3) Access
 
@@ -73,6 +74,7 @@ Set these in `.env` as needed:
 - `INSTALL_VLLM=1`: opt-in build flag for the heavier ROCm `vLLM` image path
 - `VLLM_INSTALL_METHOD`: `wheel` (official ROCm wheel index) or `source`
 - `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
+- `CUDA_ARCHITECTURES`: optional CUDA arch list for `llama.cpp` image builds; use target SMs such as `86;120` for `3090 + RTX PRO 6000 Blackwell`
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
@@ -187,7 +189,7 @@ Current accelerator sizing guidance for the shipped model set:
 - Keeping the whole current stack resident on one accelerator needs about `74.5 GB` of budget, which is about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
 - On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
 - CUDA worker-side models now honor the planner's preferred device selection, and local `llama.cpp` endpoints use the planner's preferred main GPU or tensor split when multiple CUDA devices are selected.
-- Full live CUDA deployment and end-to-end acceptance are still pending.
+- The CUDA backend image now smoke-builds successfully on the live `ai-server`; full live CUDA deployment and end-to-end acceptance are still pending.
 
 Current AMD note:
 - Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.
