@@ -119,6 +119,28 @@ RUN python -m pip install --no-cache-dir --force-reinstall \
     "torchaudio==${CUDA_TORCHAUDIO_VERSION}" \
     "torchvision==${CUDA_TORCHVISION_VERSION}"
 
+RUN python - <<'PY'
+from importlib import import_module
+from pathlib import Path
+
+module_names = [
+    "nvidia.cublas.lib",
+    "nvidia.cudnn.lib",
+    "nvidia.cuda_runtime.lib",
+    "nvidia.cuda_nvrtc.lib",
+    "nvidia.nvjitlink.lib",
+]
+paths = []
+for name in module_names:
+    module = import_module(name)
+    lib_dir = str(Path(module.__file__).resolve().parent)
+    if lib_dir not in paths:
+        paths.append(lib_dir)
+Path("/etc/ld.so.conf.d/zz-nvidia-python.conf").write_text("\n".join(paths) + "\n")
+PY
+
+RUN ldconfig
+
 RUN if [ "$INSTALL_NEMO" = "1" ]; then \
       uv pip install "nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git"; \
     fi
