@@ -31,9 +31,26 @@ def _is_clap_model(model_name: str) -> bool:
     return "clap" in model_name.lower()
 
 
-def _normalize_whisper_model_name(model_name: str) -> str:
-    """Normalize common Whisper aliases to Hugging Face model IDs."""
+def _normalize_whisper_model_name(
+    model_name: str,
+    *,
+    backend: GPUBackend | None = None,
+) -> str:
+    """Normalize Whisper aliases for the selected runtime backend."""
     lower = model_name.lower()
+    if backend == GPUBackend.CUDA:
+        if lower in {"large-v3-turbo", "whisper-large-v3-turbo", "openai/whisper-large-v3-turbo"}:
+            return "large-v3-turbo"
+        if lower in {"large-v3", "whisper-large-v3", "openai/whisper-large-v3"}:
+            return "large-v3"
+        if lower in {"large", "whisper-large", "openai/whisper-large"}:
+            return "large"
+        if lower.startswith("openai/whisper-"):
+            return lower.removeprefix("openai/whisper-")
+        if lower.startswith("whisper-") and "/" not in model_name:
+            return lower.removeprefix("whisper-")
+        return model_name
+
     if lower in {"large-v3-turbo", "whisper-large-v3-turbo"}:
         return "openai/whisper-large-v3-turbo"
     if lower in {"large-v3", "whisper-large-v3"}:
@@ -474,7 +491,10 @@ class ModelManager:
     async def _load_whisper(self) -> Any:
         """Load the transcription model (Whisper or Granite)."""
         model_name = self.settings.whisper_model
-        normalized_name = _normalize_whisper_model_name(model_name)
+        resolved_name = _normalize_whisper_model_name(
+            model_name,
+            backend=self.settings.gpu_backend,
+        )
 
         if _is_canary_model(model_name):
             from nemo.collections.speechlm2.models import SALM
@@ -574,22 +594,22 @@ class ModelManager:
 
         if self.settings.gpu_backend in {GPUBackend.ROCM, GPUBackend.VULKAN}:
             model = await _load_transformers_whisper(
-                normalized_name,
+                resolved_name,
                 self.settings.gpu_backend,
                 self.settings.model_cache_dir,
                 strict_accelerator=self.requires_strict_accelerator,
                 device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
             )
-            logger.info("Loaded Whisper transformers model: %s", normalized_name)
+            logger.info("Loaded Whisper transformers model: %s", resolved_name)
             return model
 
         model = await _load_faster_whisper(
-            normalized_name,
+            resolved_name,
             self.settings.gpu_backend,
             self.settings.model_cache_dir,
             device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
         )
-        logger.info("Loaded Whisper model: %s", normalized_name)
+        logger.info("Loaded Whisper model: %s", resolved_name)
         return model
 
     async def _load_diarization(self) -> Any:
