@@ -79,6 +79,7 @@ Set these in `.env` as needed:
 - `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
 - `CUDA_ARCHITECTURES`: optional CUDA arch list for `llama.cpp` image builds; use target SMs such as `86;120` for `3090 + RTX PRO 6000 Blackwell`
 - `CUDA_VISIBLE_DEVICES`: leave it unset by default; setting it to an empty string hides all CUDA devices. When it is unset, the planner now narrows local `llama.cpp` loads to the selected CUDA devices automatically before the first import.
+- `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning for the CUDA `llama_cpp.server` containers on multi-GPU hosts
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
@@ -193,7 +194,7 @@ Current accelerator sizing guidance for the shipped model set:
 - Keeping worker-side models warm plus one local endpoint at a time needs about `50.5 GB` of budget.
 - Keeping the whole current stack resident on one accelerator needs about `74.5 GB` of budget, which is about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
 - On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
-- CUDA worker-side models now honor the planner's preferred device selection, and local `llama.cpp` loads now narrow `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so the main GPU and tensor split stay aligned with the plan.
+- CUDA worker-side models now honor the planner's preferred device selection, and the NVIDIA Compose override now defaults vision/summarization to dedicated CUDA `llama_cpp.server` containers instead of in-process worker loads.
 - The CUDA backend image now smoke-builds successfully on the live `ai-server`; full live CUDA deployment and end-to-end acceptance are still pending.
 
 Current AMD note:

@@ -1,49 +1,95 @@
 # NVIDIA GPU override - use with: docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up
 
+x-cuda-build: &cuda-build
+  context: ./backend
+  dockerfile: Dockerfile.cuda
+  args:
+    CUDA_WHL_URL: ${CUDA_WHL_URL:-https://download.pytorch.org/whl/cu128}
+    CUDA_TORCH_VERSION: ${CUDA_TORCH_VERSION:-2.9.1}
+    CUDA_TORCHAUDIO_VERSION: ${CUDA_TORCHAUDIO_VERSION:-2.9.1}
+    CUDA_TORCHVISION_VERSION: ${CUDA_TORCHVISION_VERSION:-0.24.1}
+    CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES:-all-major}
+    LLAMA_BUILD_CUDA: ${LLAMA_BUILD_CUDA:-1}
+    INSTALL_NEMO: ${INSTALL_NEMO:-1}
+
+x-cuda-service: &cuda-service
+  gpus: all
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
 services:
+  vision-server:
+    <<: *cuda-service
+    build: *cuda-build
+    container_name: vs-vision
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python -m app.runtime.llama_cpp_server
+    environment:
+      - MODEL_PATH=/data/models/${VISION_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - MODEL_MMPROJ=/data/models/${VISION_MMPROJ_PATH:-mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf}
+      - MODEL_CHAT_FORMAT=${VISION_CHAT_FORMAT:-qwen3-vl}
+      - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
+      - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISION_VISIBLE_DEVICES:-all}
+      - LLAMA_SERVER_EXTRA_ARGS=${VISION_LLAMA_SERVER_EXTRA_ARGS:-}
+    volumes:
+      - ./data:/data
+      - model_cache:/data/models
+
+  summarization-server:
+    <<: *cuda-service
+    build: *cuda-build
+    container_name: vs-summary
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python -m app.runtime.llama_cpp_server
+    environment:
+      - MODEL_PATH=/data/models/${SUMMARIZATION_MODEL_PATH:-qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
+      - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-all}
+      - LLAMA_SERVER_EXTRA_ARGS=${SUMMARIZATION_LLAMA_SERVER_EXTRA_ARGS:-}
+    volumes:
+      - ./data:/data
+      - model_cache:/data/models
+
   backend:
-    gpus: all
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.cuda
-      args:
-        CUDA_WHL_URL: ${CUDA_WHL_URL:-https://download.pytorch.org/whl/cu128}
-        CUDA_TORCH_VERSION: ${CUDA_TORCH_VERSION:-2.9.1}
-        CUDA_TORCHAUDIO_VERSION: ${CUDA_TORCHAUDIO_VERSION:-2.9.1}
-        CUDA_TORCHVISION_VERSION: ${CUDA_TORCHVISION_VERSION:-0.24.1}
-        CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES:-all-major}
-        LLAMA_BUILD_CUDA: ${LLAMA_BUILD_CUDA:-1}
-        INSTALL_NEMO: ${INSTALL_NEMO:-1}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    <<: *cuda-service
+    build: *cuda-build
     environment:
       - GPU_BACKEND=cuda
+      - VISION_ENDPOINT_URL=http://vision-server:8000/v1
+      - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8000/v1
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+    depends_on:
+      vision-server:
+        condition: service_started
+      summarization-server:
+        condition: service_started
 
   worker:
-    gpus: all
+    <<: *cuda-service
     command: celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q video_processing,batch_processing,default
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.cuda
-      args:
-        CUDA_WHL_URL: ${CUDA_WHL_URL:-https://download.pytorch.org/whl/cu128}
-        CUDA_TORCH_VERSION: ${CUDA_TORCH_VERSION:-2.9.1}
-        CUDA_TORCHAUDIO_VERSION: ${CUDA_TORCHAUDIO_VERSION:-2.9.1}
-        CUDA_TORCHVISION_VERSION: ${CUDA_TORCHVISION_VERSION:-0.24.1}
-        CUDA_ARCHITECTURES: ${CUDA_ARCHITECTURES:-all-major}
-        LLAMA_BUILD_CUDA: ${LLAMA_BUILD_CUDA:-1}
-        INSTALL_NEMO: ${INSTALL_NEMO:-1}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    build: *cuda-build
     environment:
       - GPU_BACKEND=cuda
+      - VISION_ENDPOINT_URL=http://vision-server:8000/v1
+      - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8000/v1
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+    depends_on:
+      vision-server:
+        condition: service_started
+      summarization-server:
+        condition: service_started

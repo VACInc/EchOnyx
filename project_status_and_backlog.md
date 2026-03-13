@@ -77,6 +77,7 @@
   - that same live CUDA pass also exposed a stale default vision-model config: the repo default now points at `Qwen3VL-32B-Instruct-Q4_K_M.gguf` instead of the old placeholder `qwen3-omni` GGUF path
   - live CUDA vision loads were not stable enough under Celery prefork; the NVIDIA worker now uses `--pool=solo` until the local `llama.cpp` path is hardened further
   - local CUDA `llama.cpp` now narrows `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so device numbering matches the planner on heterogeneous multi-GPU hosts
+  - the NVIDIA Compose override now has dedicated CUDA `llama_cpp.server` endpoint containers for vision and summarization, with optional per-service `NVIDIA_*_VISIBLE_DEVICES` pinning
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free
     - practical single-accelerator target: about `32 GB` free
