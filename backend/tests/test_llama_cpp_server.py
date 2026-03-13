@@ -59,7 +59,11 @@ def test_build_server_command_uses_llama_cpp_server_module():
 
 
 def test_ensure_server_dependencies_installs_missing_module(monkeypatch):
-    monkeypatch.setattr(llama_cpp_server.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(
+        llama_cpp_server.importlib.util,
+        "find_spec",
+        lambda name: None if name in {"sse_starlette", "starlette_context"} else object(),
+    )
     seen = {}
 
     def fake_check_call(cmd):
@@ -69,4 +73,11 @@ def test_ensure_server_dependencies_installs_missing_module(monkeypatch):
 
     llama_cpp_server.ensure_server_dependencies()
 
-    assert seen["cmd"] == [os.sys.executable, "-m", "pip", "install", "sse-starlette>=2.1.3"]
+    assert seen["cmd"] == [
+        os.sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "sse-starlette>=2.1.3",
+        "starlette-context>=0.3.6",
+    ]

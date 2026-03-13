@@ -74,9 +74,14 @@ def build_server_command(config: LlamaCppServerConfig) -> list[str]:
 
 
 def ensure_server_dependencies() -> None:
-    if importlib.util.find_spec("sse_starlette") is not None:
+    requirements = {
+        "sse_starlette": "sse-starlette>=2.1.3",
+        "starlette_context": "starlette-context>=0.3.6",
+    }
+    missing = [package for module_name, package in requirements.items() if importlib.util.find_spec(module_name) is None]
+    if not missing:
         return
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "sse-starlette>=2.1.3"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", *missing])
 
 
 def main() -> None:
