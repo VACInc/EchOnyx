@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shlex
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,8 +73,15 @@ def build_server_command(config: LlamaCppServerConfig) -> list[str]:
     return [sys.executable, "-m", "llama_cpp.server", *config.extra_args]
 
 
+def ensure_server_dependencies() -> None:
+    if importlib.util.find_spec("sse_starlette") is not None:
+        return
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "sse-starlette>=2.1.3"])
+
+
 def main() -> None:
     config = LlamaCppServerConfig.from_env()
+    ensure_server_dependencies()
     env = build_server_env(config)
     command = build_server_command(config)
     os.execvpe(command[0], command, env)

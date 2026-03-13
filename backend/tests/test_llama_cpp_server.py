@@ -56,3 +56,17 @@ def test_build_server_command_uses_llama_cpp_server_module():
 
     assert command[:3] == [os.sys.executable, "-m", "llama_cpp.server"]
     assert command[-1] == "--slots"
+
+
+def test_ensure_server_dependencies_installs_missing_module(monkeypatch):
+    monkeypatch.setattr(llama_cpp_server.importlib.util, "find_spec", lambda name: None)
+    seen = {}
+
+    def fake_check_call(cmd):
+        seen["cmd"] = cmd
+
+    monkeypatch.setattr(llama_cpp_server.subprocess, "check_call", fake_check_call)
+
+    llama_cpp_server.ensure_server_dependencies()
+
+    assert seen["cmd"] == [os.sys.executable, "-m", "pip", "install", "sse-starlette>=2.1.3"]
