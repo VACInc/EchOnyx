@@ -67,6 +67,7 @@
   - the planner now uses current free memory and `nvidia-smi topo -m` data, not only static total VRAM
   - CUDA worker-side models now honor the planner-selected device index, and local `llama.cpp` models can use the planner-selected CUDA main GPU or tensor split
   - the NVIDIA Docker path now has a dedicated CUDA backend image with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default
+  - the CUDA image now keeps the `llama-cpp-python` vendored `llama.cpp` by default instead of force-swapping in a separate checkout; upstream overrides are now explicit
   - the NVIDIA Compose override now uses `gpus: all`; the earlier swarm-style reservation alone did not expose GPUs under normal Docker Compose
   - the default Compose stack now keeps PostgreSQL and Redis internal-only to avoid host port collisions during deployment
   - `CUDA_VISIBLE_DEVICES` must stay unset by default on NVIDIA; setting it to an empty string hides all CUDA devices from PyTorch and CTranslate2

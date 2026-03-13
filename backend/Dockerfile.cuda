@@ -42,6 +42,7 @@ ARG CUDA_TORCHAUDIO_VERSION=2.9.1
 ARG CUDA_TORCHVISION_VERSION=0.24.1
 ARG CUDA_ARCHITECTURES=all-major
 ARG LLAMA_BUILD_CUDA=1
+ARG LLAMA_CPP_USE_BUNDLED_VENDOR=1
 ARG LLAMA_CPP_PYTHON_REPO
 ARG LLAMA_CPP_PYTHON_REF
 ARG LLAMA_CPP_REPO
@@ -67,16 +68,19 @@ RUN set -e; \
       export CMAKE_ARGS="$CMAKE_FLAGS"; \
       export FORCE_CMAKE=1; \
     fi; \
+    use_bundled_vendor="${LLAMA_CPP_USE_BUNDLED_VENDOR:-1}"; \
     repo="${LLAMA_CPP_PYTHON_REPO:-https://github.com/abetlen/llama-cpp-python.git}"; \
     ref="${LLAMA_CPP_PYTHON_REF:-main}"; \
     llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggerganov/llama.cpp.git}"; \
     llama_ref="${LLAMA_CPP_REF:-master}"; \
     git clone --depth 1 --branch "$ref" "$repo" /tmp/llama-cpp-python; \
-    rm -rf /tmp/llama-cpp-python/vendor/llama.cpp; \
-    git clone --depth 1 "$llama_repo" /tmp/llama-cpp-python/vendor/llama.cpp; \
-    if [ -n "$llama_ref" ] && [ "$llama_ref" != "master" ]; then \
-      git -C /tmp/llama-cpp-python/vendor/llama.cpp fetch --depth 1 origin "$llama_ref"; \
-      git -C /tmp/llama-cpp-python/vendor/llama.cpp checkout FETCH_HEAD; \
+    if [ "$use_bundled_vendor" != "1" ] || [ -n "${LLAMA_CPP_REPO:-}" ] || [ -n "${LLAMA_CPP_REF:-}" ]; then \
+      rm -rf /tmp/llama-cpp-python/vendor/llama.cpp; \
+      git clone --depth 1 "$llama_repo" /tmp/llama-cpp-python/vendor/llama.cpp; \
+      if [ -n "$llama_ref" ] && [ "$llama_ref" != "master" ]; then \
+        git -C /tmp/llama-cpp-python/vendor/llama.cpp fetch --depth 1 origin "$llama_ref"; \
+        git -C /tmp/llama-cpp-python/vendor/llama.cpp checkout FETCH_HEAD; \
+      fi; \
     fi; \
     { \
       echo 'if (NOT DEFINED LLAMA_INSTALL_VERSION OR "${LLAMA_INSTALL_VERSION}" STREQUAL "")'; \

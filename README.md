@@ -55,6 +55,7 @@ If you are building on a host without a visible GPU during `docker build`, set `
 The NVIDIA override now uses `gpus: all`, so normal Docker Compose exposes every visible NVIDIA GPU to backend and worker containers.
 The NVIDIA worker currently runs Celery with `--pool=solo` for stability while local CUDA `llama.cpp` vision and summarization loads are being hardened.
 On NVIDIA, the audio-event path now reads extracted WAV audio directly instead of depending on `torchaudio` file I/O, so a bad `torchcodec` runtime no longer blocks summarization.
+The CUDA image now builds `llama-cpp-python` against its bundled vendored `llama.cpp` by default; only opt into an external `llama.cpp` checkout if you are intentionally testing an upstream override.
 
 ### 3) Access
 
