@@ -190,6 +190,25 @@ def test_settings_default_to_managed_llama_server_runtime(monkeypatch):
     assert settings.rocm_llm_idle_timeout_s == 120
     assert settings.runtime_planner_enabled is True
     assert settings.runtime_memory_ceiling_gb is None
+    assert settings.vision_model == "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+
+
+def test_get_settings_attaches_qwen3vl_defaults(monkeypatch):
+    get_settings.cache_clear()
+
+    monkeypatch.setenv("HARDWARE_PROFILE", "cpu_only")
+    monkeypatch.setenv("GPU_BACKEND", "cpu")
+    monkeypatch.setenv("RUNTIME_PLANNER_ENABLED", "false")
+    monkeypatch.setenv("VISION_MODEL", "Qwen3VL-32B-Instruct-Q4_K_M.gguf")
+    monkeypatch.delenv("VISION_MMPROJ", raising=False)
+    monkeypatch.delenv("VISION_CHAT_FORMAT", raising=False)
+
+    settings = get_settings()
+
+    assert settings.vision_mmproj == "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+    assert settings.vision_chat_format == "qwen3-vl"
+
+    get_settings.cache_clear()
 
 
 def test_get_settings_uses_runtime_planner_with_explicit_hardware(monkeypatch):

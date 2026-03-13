@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     transcription_fallback_enabled: bool = False
     granite_force_cpu: bool = False
     diarization_model: str = "pyannote/speaker-diarization-community-1"
-    vision_model: str = "Qwen3-Omni-30B-A3B-Q4_K_M.gguf"
+    vision_model: str = "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
     vision_mmproj: str = ""
     vision_chat_format: str = ""
     vision_gpu_layers: int | None = None

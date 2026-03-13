@@ -74,6 +74,7 @@
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
   - live `ai-server` validation on March 13, 2026 confirmed the CUDA Whisper path now loads `Systran/faster-whisper-large-v3` correctly instead of the incompatible raw OpenAI snapshot layout
   - the next live blocker after that was pyannote credentials: when `HF_TOKEN` is missing, diarization now skips cleanly and the rest of the pipeline can continue
+  - that same live CUDA pass also exposed a stale default vision-model config: the repo default now points at `Qwen3VL-32B-Instruct-Q4_K_M.gguf` instead of the old placeholder `qwen3-omni` GGUF path
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free
     - practical single-accelerator target: about `32 GB` free
