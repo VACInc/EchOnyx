@@ -75,6 +75,7 @@
   - live `ai-server` validation on March 13, 2026 confirmed the CUDA Whisper path now loads `Systran/faster-whisper-large-v3` correctly instead of the incompatible raw OpenAI snapshot layout
   - the next live blocker after that was pyannote credentials: when `HF_TOKEN` is missing, diarization now skips cleanly and the rest of the pipeline can continue
   - that same live CUDA pass also exposed a stale default vision-model config: the repo default now points at `Qwen3VL-32B-Instruct-Q4_K_M.gguf` instead of the old placeholder `qwen3-omni` GGUF path
+  - live CUDA vision loads were not stable enough under Celery prefork; the NVIDIA worker now uses `--pool=solo` until the local `llama.cpp` path is hardened further
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free
     - practical single-accelerator target: about `32 GB` free

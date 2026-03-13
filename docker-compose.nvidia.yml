@@ -26,6 +26,7 @@ services:
 
   worker:
     gpus: all
+    command: celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q video_processing,batch_processing,default
     build:
       context: ./backend
       dockerfile: Dockerfile.cuda
