@@ -133,7 +133,13 @@ module_names = [
 paths = []
 for name in module_names:
     module = import_module(name)
-    lib_dir = str(Path(module.__file__).resolve().parent)
+    package_paths = list(getattr(module, "__path__", []))
+    if package_paths:
+        lib_dir = str(Path(package_paths[0]).resolve())
+    elif getattr(module, "__file__", None):
+        lib_dir = str(Path(module.__file__).resolve().parent)
+    else:
+        raise SystemExit(f"Unable to resolve library path for {name}")
     if lib_dir not in paths:
         paths.append(lib_dir)
 Path("/etc/ld.so.conf.d/zz-nvidia-python.conf").write_text("\n".join(paths) + "\n")
