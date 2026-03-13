@@ -77,7 +77,7 @@ Set these in `.env` as needed:
 - `VLLM_INSTALL_METHOD`: `wheel` (official ROCm wheel index) or `source`
 - `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
 - `CUDA_ARCHITECTURES`: optional CUDA arch list for `llama.cpp` image builds; use target SMs such as `86;120` for `3090 + RTX PRO 6000 Blackwell`
-- `CUDA_VISIBLE_DEVICES`: leave blank by default so the planner can see all visible NVIDIA GPUs
+- `CUDA_VISIBLE_DEVICES`: leave it unset by default; setting it to an empty string hides all CUDA devices
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime

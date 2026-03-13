@@ -23,7 +23,6 @@ services:
               capabilities: [gpu]
     environment:
       - GPU_BACKEND=cuda
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
 
   worker:
     gpus: all
@@ -47,4 +46,3 @@ services:
               capabilities: [gpu]
     environment:
       - GPU_BACKEND=cuda
-      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}

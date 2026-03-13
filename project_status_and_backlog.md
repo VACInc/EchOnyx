@@ -69,7 +69,7 @@
   - the NVIDIA Docker path now has a dedicated CUDA backend image with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default
   - the NVIDIA Compose override now uses `gpus: all`; the earlier swarm-style reservation alone did not expose GPUs under normal Docker Compose
   - the default Compose stack now keeps PostgreSQL and Redis internal-only to avoid host port collisions during deployment
-  - `CUDA_VISIBLE_DEVICES` should stay blank by default on NVIDIA so the planner can see all visible GPUs
+  - `CUDA_VISIBLE_DEVICES` must stay unset by default on NVIDIA; setting it to an empty string hides all CUDA devices from PyTorch and CTranslate2
   - the CUDA backend image now smoke-builds successfully on that host after switching the image to a venv install, linking against CUDA driver stubs during `docker build`, and setting `CUDA_ARCHITECTURES=86;120`
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
   - current accelerator sizing guidance for the shipped model set is:
