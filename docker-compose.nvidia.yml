@@ -2,6 +2,7 @@
 
 services:
   backend:
+    gpus: all
     build:
       context: ./backend
       dockerfile: Dockerfile.cuda
@@ -25,6 +26,7 @@ services:
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}
 
   worker:
+    gpus: all
     build:
       context: ./backend
       dockerfile: Dockerfile.cuda

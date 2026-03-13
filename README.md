@@ -52,6 +52,7 @@ docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 ```
 If you are building on a host without a visible GPU during `docker build`, set `CUDA_ARCHITECTURES` for your target cards. On the live `ai-server`, `86;120` was validated for `RTX 3090 + RTX PRO 6000 Blackwell`.
+The NVIDIA override now uses `gpus: all`, so normal Docker Compose exposes every visible NVIDIA GPU to backend and worker containers.
 
 ### 3) Access
 
