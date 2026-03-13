@@ -30,7 +30,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: python -m app.runtime.llama_cpp_server
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        if [ -n "${NVIDIA_VISION_VISIBLE_DEVICES:-}" ]; then
+          export CUDA_VISIBLE_DEVICES="${NVIDIA_VISION_VISIBLE_DEVICES}"
+        fi
+        python -m app.runtime.llama_cpp_server
     environment:
       - MODEL_PATH=/data/models/${VISION_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
@@ -38,7 +45,7 @@ services:
       - MODEL_CHAT_FORMAT=${VISION_CHAT_FORMAT:-qwen3-vl}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
       - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
-      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISION_VISIBLE_DEVICES:-all}
+      - NVIDIA_VISION_VISIBLE_DEVICES=${NVIDIA_VISION_VISIBLE_DEVICES:-}
       - LLAMA_SERVER_EXTRA_ARGS=${VISION_LLAMA_SERVER_EXTRA_ARGS:-}
     volumes:
       - ./data:/data
@@ -51,13 +58,20 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    command: python -m app.runtime.llama_cpp_server
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        if [ -n "${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-}" ]; then
+          export CUDA_VISIBLE_DEVICES="${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES}"
+        fi
+        python -m app.runtime.llama_cpp_server
     environment:
       - MODEL_PATH=/data/models/${SUMMARIZATION_MODEL_PATH:-qwen3-30b-a3b-q4_k_m.gguf}
       - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
       - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
       - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
-      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-all}
+      - NVIDIA_SUMMARIZATION_VISIBLE_DEVICES=${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-}
       - LLAMA_SERVER_EXTRA_ARGS=${SUMMARIZATION_LLAMA_SERVER_EXTRA_ARGS:-}
     volumes:
       - ./data:/data

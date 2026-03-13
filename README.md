@@ -79,7 +79,7 @@ Set these in `.env` as needed:
 - `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
 - `CUDA_ARCHITECTURES`: optional CUDA arch list for `llama.cpp` image builds; use target SMs such as `86;120` for `3090 + RTX PRO 6000 Blackwell`
 - `CUDA_VISIBLE_DEVICES`: leave it unset by default; setting it to an empty string hides all CUDA devices. When it is unset, the planner now narrows local `llama.cpp` loads to the selected CUDA devices automatically before the first import.
-- `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning for the CUDA `llama_cpp.server` containers on multi-GPU hosts
+- `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning for the CUDA `llama_cpp.server` containers on multi-GPU hosts; when set, the NVIDIA override exports them as `CUDA_VISIBLE_DEVICES` for the endpoint process
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
