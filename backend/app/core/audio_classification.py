@@ -274,7 +274,7 @@ def _run_clap_prompt_set(
 ) -> torch.Tensor:
     inputs = processor(
         text=prompt_texts,
-        audios=waveform.squeeze(0).numpy(),
+        audio=waveform.squeeze(0).numpy(),
         sampling_rate=target_sample_rate,
         return_tensors="pt",
         padding=True,

@@ -119,10 +119,10 @@ class DummyManager:
 class FakeClapProcessor:
     feature_extractor = types.SimpleNamespace(sampling_rate=48_000)
 
-    def __call__(self, text=None, audios=None, sampling_rate=None, return_tensors=None, padding=None):
+    def __call__(self, text=None, audio=None, sampling_rate=None, return_tensors=None, padding=None):
         assert sampling_rate == 48_000
         assert text is not None
-        assert audios is not None
+        assert audio is not None
         assert return_tensors == "pt"
         assert padding is True
         return {
