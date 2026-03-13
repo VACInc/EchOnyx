@@ -21,6 +21,8 @@ class LlamaCppServerConfig:
     port: int
     context_size: int
     gpu_layers: int
+    main_gpu: int | None
+    split_mode: int | None
     chat_format: str
     clip_model_path: Path | None
     extra_args: tuple[str, ...]
@@ -32,6 +34,8 @@ class LlamaCppServerConfig:
             raise RuntimeError("MODEL_PATH is required.")
 
         raw_clip_model_path = os.environ.get("MODEL_MMPROJ", "").strip()
+        raw_main_gpu = os.environ.get("MODEL_MAIN_GPU", "").strip()
+        raw_split_mode = os.environ.get("MODEL_SPLIT_MODE", "").strip()
         return cls(
             model_path=Path(raw_model_path),
             model_alias=os.environ.get("MODEL_NAME", "").strip() or Path(raw_model_path).name,
@@ -39,6 +43,8 @@ class LlamaCppServerConfig:
             port=int(os.environ.get("PORT", "8000")),
             context_size=int(os.environ.get("MODEL_CONTEXT_SIZE", "8192")),
             gpu_layers=int(os.environ.get("MODEL_GPU_LAYERS", "-1")),
+            main_gpu=int(raw_main_gpu) if raw_main_gpu else None,
+            split_mode=int(raw_split_mode) if raw_split_mode else None,
             chat_format=os.environ.get("MODEL_CHAT_FORMAT", "").strip(),
             clip_model_path=Path(raw_clip_model_path) if raw_clip_model_path else None,
             extra_args=tuple(shlex.split(os.environ.get("LLAMA_SERVER_EXTRA_ARGS", ""))),
@@ -51,6 +57,29 @@ def _ensure_local_file(path: Path) -> Path:
     return download_model(path.name, path.parent)
 
 
+def _parse_device_indices(value: str) -> tuple[int, ...]:
+    raw_parts = [part.strip() for part in value.split(",") if part.strip()]
+    if not raw_parts:
+        return ()
+    try:
+        return tuple(int(part) for part in raw_parts)
+    except ValueError:
+        return ()
+
+
+def _infer_single_gpu_target(env: dict[str, str]) -> tuple[int | None, int | None]:
+    cuda_visible = _parse_device_indices(env.get("CUDA_VISIBLE_DEVICES", ""))
+    if len(cuda_visible) == 1:
+        return 0, 0
+
+    for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
+        device_indices = _parse_device_indices(env.get(key, ""))
+        if len(device_indices) == 1:
+            return device_indices[0], 0
+
+    return None, None
+
+
 def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
     env = os.environ.copy()
     env["MODEL"] = str(_ensure_local_file(config.model_path))
@@ -59,6 +88,14 @@ def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
     env["PORT"] = str(config.port)
     env["N_CTX"] = str(config.context_size)
     env["N_GPU_LAYERS"] = str(config.gpu_layers)
+
+    inferred_main_gpu, inferred_split_mode = _infer_single_gpu_target(env)
+    main_gpu = config.main_gpu if config.main_gpu is not None else inferred_main_gpu
+    split_mode = config.split_mode if config.split_mode is not None else inferred_split_mode
+    if main_gpu is not None:
+        env["MAIN_GPU"] = str(main_gpu)
+    if split_mode is not None:
+        env["SPLIT_MODE"] = str(split_mode)
 
     if config.chat_format:
         env["CHAT_FORMAT"] = config.chat_format
