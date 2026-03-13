@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.runtime.planner import build_runtime_plan
@@ -138,6 +138,13 @@ class Settings(BaseSettings):
 
     # Hugging Face (for pyannote)
     hf_token: str = ""
+
+    @field_validator("hardware_profile", "gpu_backend", mode="before")
+    @classmethod
+    def _blank_enum_env_to_none(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 def get_asr_family(model_name: str) -> str:

@@ -195,3 +195,31 @@ def test_get_settings_uses_runtime_planner_with_explicit_hardware(monkeypatch):
     assert settings.gpu_backend == GPUBackend.ROCM
 
     get_settings.cache_clear()
+
+
+def test_get_settings_treats_blank_autodetect_envs_as_unset(monkeypatch):
+    get_settings.cache_clear()
+
+    monkeypatch.setenv("HARDWARE_PROFILE", "")
+    monkeypatch.setenv("GPU_BACKEND", "")
+    monkeypatch.setenv("RUNTIME_PLANNER_ENABLED", "false")
+
+    monkeypatch.setattr(
+        "app.config.detect_gpu_info",
+        lambda: {
+            "amd_gpus": [],
+            "nvidia_gpus": [
+                {"index": 0, "name": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition", "vram_gb": 95.6},
+                {"index": 1, "name": "NVIDIA GeForce RTX 3090", "vram_gb": 24.0},
+            ],
+            "total_vram_gb": 119.6,
+            "available_vram_gb": 118.0,
+        },
+    )
+
+    settings = get_settings()
+
+    assert settings.hardware_profile == HardwareProfile.MULTI_GPU
+    assert settings.gpu_backend == GPUBackend.CUDA
+
+    get_settings.cache_clear()
