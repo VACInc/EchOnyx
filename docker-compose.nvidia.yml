@@ -25,31 +25,42 @@ x-cuda-service: &cuda-service
 services:
   vision-server:
     <<: *cuda-service
-    build: *cuda-build
+    image: ${NVIDIA_VISION_VLLM_IMAGE:-vllm/vllm-openai:v0.11.2}
     container_name: vs-vision
     restart: unless-stopped
     env_file:
       - .env
+    ipc: host
     command:
       - /bin/bash
       - -lc
       - |
+        export CUDA_DEVICE_ORDER=PCI_BUS_ID
         if [ -n "${NVIDIA_VISION_VISIBLE_DEVICES:-}" ]; then
           export CUDA_VISIBLE_DEVICES="${NVIDIA_VISION_VISIBLE_DEVICES}"
         fi
-        python -m app.runtime.llama_cpp_server
+        exec vllm serve "${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}" \
+          --served-model-name "${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}" \
+          --host 0.0.0.0 \
+          --port 8000 \
+          --gpu-memory-utilization "${VISION_VLLM_GPU_MEMORY_UTILIZATION:-0.8}" \
+          --max-model-len "${VISION_CONTEXT_SIZE:-8192}"
     environment:
-      - MODEL_PATH=/data/models/${VISION_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
-      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
-      - MODEL_MMPROJ=/data/models/${VISION_MMPROJ_PATH:-mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf}
-      - MODEL_CHAT_FORMAT=${VISION_CHAT_FORMAT:-qwen3-vl}
-      - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
-      - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
       - NVIDIA_VISION_VISIBLE_DEVICES=${NVIDIA_VISION_VISIBLE_DEVICES:-}
-      - LLAMA_SERVER_EXTRA_ARGS=${VISION_LLAMA_SERVER_EXTRA_ARGS:-}
+      - HF_HOME=/root/.cache/huggingface
+      - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
     volumes:
-      - ./data:/data
-      - model_cache:/data/models
+      - vllm_cache:/root/.cache/huggingface
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
 
   summarization-server:
     <<: *cuda-service
@@ -62,6 +73,7 @@ services:
       - /bin/bash
       - -lc
       - |
+        export CUDA_DEVICE_ORDER=PCI_BUS_ID
         if [ -n "${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-}" ]; then
           export CUDA_VISIBLE_DEVICES="${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES}"
         fi
@@ -81,6 +93,7 @@ services:
     <<: *cuda-service
     build: *cuda-build
     environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - GPU_BACKEND=cuda
       - VISION_ENDPOINT_URL=http://vision-server:8000/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
@@ -97,6 +110,7 @@ services:
     command: celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q video_processing,batch_processing,default
     build: *cuda-build
     environment:
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
       - GPU_BACKEND=cuda
       - VISION_ENDPOINT_URL=http://vision-server:8000/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
@@ -107,3 +121,6 @@ services:
         condition: service_started
       summarization-server:
         condition: service_started
+
+volumes:
+  vllm_cache:
