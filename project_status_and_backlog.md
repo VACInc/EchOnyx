@@ -72,6 +72,8 @@
   - `CUDA_VISIBLE_DEVICES` must stay unset by default on NVIDIA; setting it to an empty string hides all CUDA devices from PyTorch and CTranslate2
   - the CUDA backend image now smoke-builds successfully on that host after switching the image to a venv install, linking against CUDA driver stubs during `docker build`, and setting `CUDA_ARCHITECTURES=86;120`
   - the three NVLink-connected 3090 pairs are now recorded as fallback placement candidates when the 6000 cannot fit the active set
+  - live `ai-server` validation on March 13, 2026 confirmed the CUDA Whisper path now loads `Systran/faster-whisper-large-v3` correctly instead of the incompatible raw OpenAI snapshot layout
+  - the next live blocker after that was pyannote credentials: when `HF_TOKEN` is missing, diarization now skips cleanly and the rest of the pipeline can continue
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free
     - practical single-accelerator target: about `32 GB` free

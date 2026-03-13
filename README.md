@@ -24,7 +24,7 @@
 
 - Docker + Docker Compose
 - 32GB RAM minimum (128GB recommended for Strix Halo)
-- Hugging Face account + accepted pyannote terms (for diarization)
+- Hugging Face account + accepted pyannote terms if you want pyannote diarization
 
 ### 1) Configure
 
@@ -34,7 +34,7 @@ cd EchOnyx
 cp .env.example .env
 ```
 
-Update `.env` (at minimum):
+Update `.env` if you want diarization:
 
 ```
 HF_TOKEN=hf_your_token_here
@@ -67,7 +67,7 @@ Set these in `.env` as needed:
 
 - `GPU_BACKEND`: `cuda` | `vulkan` | `rocm` | `cpu`
 - `MODEL_LOADING`: `sequential` (low memory) or `parallel`
-- `HF_TOKEN`: required for pyannote diarization models
+- `HF_TOKEN`: optional overall, but required if you want pyannote diarization
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
 - `SUMMARIZATION_ENDPOINT_URL`, `SUMMARIZATION_ENDPOINT_MODEL`: use an external LLM server
 - `AUDIO_EVENT_CALIBRATION_PATH`: optional JSON profile that overrides CLAP prompts and support thresholds
@@ -89,7 +89,7 @@ Set these in `.env` as needed:
 Defaults are configured in `.env.example`. All models are swappable:
 
 - **Transcription**: `WHISPER_MODEL` (explicit ASR selector; no silent fallback)
-- **Diarization**: `DIARIZATION_MODEL` (pyannote)
+- **Diarization**: `DIARIZATION_MODEL` (pyannote, optional if `HF_TOKEN` is unset)
 - **Vision**: `VISION_MODEL` (GGUF) or `VISION_ENDPOINT_*`
 - **Summarization**: `SUMMARIZATION_MODEL` (GGUF) or `SUMMARIZATION_ENDPOINT_*`
 - **Embeddings**: `EMBEDDING_MODEL` (HF)
@@ -148,6 +148,7 @@ python -m app.core.audio_calibration \
 ### Upload + Processing
 - Upload a video in the UI and processing starts immediately.
 - Processing steps: audio extraction → transcription → diarization → transcript merge → frame extraction → vision analysis → summarization → embedding.
+- If `HF_TOKEN` is not configured, diarization is skipped and the rest of the pipeline continues with transcript-only speaker data.
 
 ### Retry vs Reset
 - **Retry**: resumes from the last successful step (idempotent).
@@ -230,7 +231,7 @@ Models (ASR, diarization, vision, LLM, embeddings)
 
 ## Troubleshooting (Short)
 
-- **Diarization fails**: confirm `HF_TOKEN` and accepted pyannote terms.
+- **Diarization missing**: set `HF_TOKEN` and accept pyannote terms if you want speaker labels. Without it, uploads still process but diarization is skipped.
 - **Out of memory**: use `MODEL_LOADING=sequential`, smaller models, or external endpoints.
 - **Model download errors**: verify model IDs/filenames in `.env` and registry.
 - **Jobs stuck**: restart workers; stale job recovery will requeue.

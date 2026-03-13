@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.config import GPUBackend, HardwareProfile
 from app.core import diarization as diarization_module
 
@@ -90,3 +92,28 @@ def test_run_diarization_pipeline_uses_eval_and_inference_mode(monkeypatch):
     ]
     assert result["inputs"]["waveform"] == "waveform"
     assert result["params"]["num_speakers"] == 2
+
+
+@pytest.mark.asyncio
+async def test_diarize_audio_skips_cleanly_when_hf_token_is_missing(monkeypatch, tmp_path):
+    progress: list[float] = []
+
+    class DummyManager:
+        async def get_model(self, _model_type):
+            raise ValueError("HF_TOKEN is required for pyannote models")
+
+    monkeypatch.setattr(diarization_module, "get_model_manager", lambda: DummyManager())
+
+    result = await diarization_module.diarize_audio(
+        tmp_path / "audio.wav",
+        progress_callback=progress.append,
+    )
+
+    assert result == {
+        "speakers": [],
+        "segments": [],
+        "num_speakers": 0,
+        "skipped": True,
+        "reason": "missing_hf_token",
+    }
+    assert progress == [100]

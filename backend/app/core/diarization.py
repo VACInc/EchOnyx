@@ -27,6 +27,16 @@ def _should_retry_on_cpu_after_gpu_error(exc: RuntimeError) -> bool:
     )
 
 
+def _skipped_diarization_result(reason: str) -> dict:
+    return {
+        "speakers": [],
+        "segments": [],
+        "num_speakers": 0,
+        "skipped": True,
+        "reason": reason,
+    }
+
+
 def _run_diarization_pipeline(pipeline, waveform, sample_rate: int, params: dict, torch_module):
     if hasattr(pipeline, "eval"):
         pipeline.eval()
@@ -84,7 +94,15 @@ async def diarize_audio(
         }
     """
     manager = get_model_manager()
-    pipeline = await manager.get_model(ModelType.DIARIZATION)
+    try:
+        pipeline = await manager.get_model(ModelType.DIARIZATION)
+    except ValueError as exc:
+        if "HF_TOKEN is required for pyannote models" in str(exc):
+            logger.warning("Skipping diarization because HF_TOKEN is not configured.")
+            if progress_callback:
+                progress_callback(100)
+            return _skipped_diarization_result("missing_hf_token")
+        raise
 
     try:
         loop = asyncio.get_event_loop()
