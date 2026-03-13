@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 
@@ -247,6 +248,7 @@ def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, 
     monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
     monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: gpu_info)
     monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,3")
     monkeypatch.setitem(
         sys.modules,
         "torch",
@@ -268,6 +270,39 @@ def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, 
     assert manager._torch_runtime_device(runtime_label="embedding", strict=False) == "cuda:5"
     assert manager._llama_cuda_kwargs({"main_gpu", "split_mode", "tensor_split"}, endpoint=True) == {
         "main_gpu": 0,
-        "tensor_split": [0.5, 0.0, 0.0, 0.5],
+        "tensor_split": [0.5, 0.5],
         "split_mode": 1,
     }
+
+
+def test_model_manager_sets_llama_cuda_visible_devices_from_planner(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CUDA,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        model_loading=ModelLoadingStrategy.PARALLEL,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.PARALLEL,
+        preferred_worker_device_indices=(5,),
+        preferred_endpoint_device_indices=(5,),
+    )
+
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+    monkeypatch.delitem(sys.modules, "llama_cpp", raising=False)
+
+    manager = ModelManager()
+
+    host_indices, local_indices = manager._llama_cuda_device_selection(endpoint=True)
+
+    assert host_indices == (5,)
+    assert local_indices == (0,)
+    assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
+    assert os.environ["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"

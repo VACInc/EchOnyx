@@ -4,6 +4,8 @@ import asyncio
 import gc
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -344,21 +346,64 @@ class ModelManager:
             device_index=device_index,
         )
 
+    def _llama_cuda_device_selection(self, *, endpoint: bool) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        if self.settings.gpu_backend != GPUBackend.CUDA:
+            return (), ()
+
+        host_indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
+        if not host_indices:
+            return (), ()
+
+        explicit_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+        if explicit_visible:
+            parsed_indices: list[int] = []
+            try:
+                parsed_indices = [int(part.strip()) for part in explicit_visible.split(",") if part.strip()]
+            except ValueError:
+                logger.warning(
+                    "CUDA_VISIBLE_DEVICES=%s is not a simple integer list; llama.cpp will use host GPU indices.",
+                    explicit_visible,
+                )
+                return host_indices, host_indices
+
+            local_indices: list[int] = []
+            for index in host_indices:
+                if index not in parsed_indices:
+                    logger.warning(
+                        "Planner-selected GPU %s is not visible in CUDA_VISIBLE_DEVICES=%s; llama.cpp will use host GPU indices.",
+                        index,
+                        explicit_visible,
+                    )
+                    return host_indices, host_indices
+                local_indices.append(parsed_indices.index(index))
+            return host_indices, tuple(local_indices)
+
+        if "llama_cpp" in sys.modules:
+            logger.warning(
+                "llama_cpp was imported before CUDA_VISIBLE_DEVICES could be narrowed; llama.cpp will use host GPU indices."
+            )
+            return host_indices, host_indices
+
+        os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(index) for index in host_indices)
+        logger.info("Planner narrowed llama.cpp CUDA visibility to GPUs: %s", os.environ["CUDA_VISIBLE_DEVICES"])
+        return host_indices, tuple(range(len(host_indices)))
+
     def _llama_cuda_kwargs(self, param_names: set[str], *, endpoint: bool) -> dict[str, Any]:
         if self.settings.gpu_backend != GPUBackend.CUDA:
             return {}
 
-        device_indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
-        if not device_indices:
+        host_indices, local_indices = self._llama_cuda_device_selection(endpoint=endpoint)
+        if not host_indices:
             return {}
 
         import llama_cpp as llama_cpp_module
 
         kwargs: dict[str, Any] = {}
         if "main_gpu" in param_names:
-            kwargs["main_gpu"] = device_indices[0]
+            kwargs["main_gpu"] = local_indices[0]
 
-        if len(device_indices) == 1:
+        if len(local_indices) == 1:
             split_none = getattr(llama_cpp_module, "LLAMA_SPLIT_MODE_NONE", None)
             if split_none is not None and "split_mode" in param_names:
                 kwargs["split_mode"] = split_none
@@ -372,13 +417,16 @@ class ModelManager:
             for gpu in self.gpu_info.get("nvidia_gpus", [])
             if gpu.get("index") is not None
         }
-        total_free = sum(max(gpu_free_by_index.get(index, 0.0), 0.0) for index in device_indices)
+        total_free = sum(max(gpu_free_by_index.get(index, 0.0), 0.0) for index in host_indices)
         if total_free <= 0:
             return kwargs
 
-        fractions = [0.0] * (max(device_indices) + 1)
-        for index in device_indices:
-            fractions[index] = max(gpu_free_by_index.get(index, 0.0), 0.0) / total_free
+        if local_indices == tuple(range(len(local_indices))):
+            fractions = [max(gpu_free_by_index.get(index, 0.0), 0.0) / total_free for index in host_indices]
+        else:
+            fractions = [0.0] * (max(local_indices) + 1)
+            for host_index, local_index in zip(host_indices, local_indices, strict=False):
+                fractions[local_index] = max(gpu_free_by_index.get(host_index, 0.0), 0.0) / total_free
         kwargs["tensor_split"] = fractions
 
         split_layer = getattr(llama_cpp_module, "LLAMA_SPLIT_MODE_LAYER", None)
