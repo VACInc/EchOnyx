@@ -700,6 +700,7 @@ class ModelManager:
 
     async def _load_vision(self) -> Any:
         """Load the vision model via llama.cpp."""
+        self._llama_cuda_device_selection(endpoint=True)
         from inspect import signature
         from llama_cpp import Llama
         from app.core.model_downloader import download_model_async
@@ -807,6 +808,7 @@ class ModelManager:
 
     async def _load_summarization(self) -> Any:
         """Load the summarization model via llama.cpp."""
+        self._llama_cuda_device_selection(endpoint=True)
         from inspect import signature
         from llama_cpp import Llama
         from app.core.model_downloader import download_model_async

@@ -306,3 +306,61 @@ def test_model_manager_sets_llama_cuda_visible_devices_from_planner(monkeypatch,
     assert local_indices == (0,)
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "5"
     assert os.environ["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
+
+
+@pytest.mark.asyncio
+async def test_load_vision_primes_cuda_visibility_before_llama_import(monkeypatch, tmp_path):
+    model_path = tmp_path / "vision.gguf"
+    model_path.write_text("stub")
+
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CUDA,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        model_loading=ModelLoadingStrategy.PARALLEL,
+        vision_model=model_path.name,
+        vision_gpu_layers=None,
+        vision_mmproj="",
+        vision_chat_format="",
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.PARALLEL,
+        preferred_worker_device_indices=(5,),
+        preferred_endpoint_device_indices=(5,),
+    )
+
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    helper_called = {"value": False}
+
+    def fake_select(*, endpoint: bool):
+        helper_called["value"] = True
+        return ((5,), (0,))
+
+    class FakeLlamaModule(types.ModuleType):
+        LLAMA_SPLIT_MODE_NONE = 0
+        LLAMA_SPLIT_MODE_LAYER = 1
+
+        def __getattr__(self, name: str):
+            if name == "Llama":
+                assert helper_called["value"] is True
+
+                def fake_llama(**kwargs):
+                    return {"kwargs": kwargs}
+
+                return fake_llama
+            raise AttributeError(name)
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", FakeLlamaModule("llama_cpp"))
+
+    manager = ModelManager()
+    monkeypatch.setattr(manager, "_llama_cuda_device_selection", fake_select)
+
+    model = await manager._load_vision()
+
+    assert model["kwargs"]["model_path"] == str(model_path)
