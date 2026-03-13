@@ -11,6 +11,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.runtime.planner import build_runtime_plan
 
+NVIDIA_SMI_TIMEOUT_S = 30
+
 
 class HardwareProfile(str, Enum):
     STRIX_HALO = "strix_halo"
@@ -213,7 +215,7 @@ def detect_gpu_info() -> dict:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=NVIDIA_SMI_TIMEOUT_S,
         )
         if result.returncode == 0:
             for gpu in _parse_nvidia_gpu_lines(result.stdout):
@@ -225,7 +227,7 @@ def detect_gpu_info() -> dict:
                 ["nvidia-smi", "topo", "-m"],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=NVIDIA_SMI_TIMEOUT_S,
             )
             if topo_result.returncode == 0:
                 gpu_info["nvidia_topology"] = _parse_nvidia_topology(topo_result.stdout)

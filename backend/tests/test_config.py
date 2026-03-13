@@ -5,6 +5,7 @@ from io import StringIO
 import pytest
 
 from app.config import (
+    NVIDIA_SMI_TIMEOUT_S,
     GPUBackend,
     HardwareProfile,
     ROCmLLMRuntime,
@@ -87,6 +88,31 @@ def test_detect_gpu_info_parses_nvidia_free_memory_and_topology(monkeypatch):
     assert gpu_info["nvidia_gpus"][1]["name"] == "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
     assert gpu_info["nvidia_gpus"][1]["free_vram_gb"] == pytest.approx(97250 / 1024, rel=1e-4)
     assert gpu_info["nvidia_topology"]["nvlink_groups"] == [[0, 6]]
+
+
+def test_detect_gpu_info_uses_longer_nvidia_timeout(monkeypatch):
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    timeouts = []
+
+    def fake_run(cmd, *_args, **kwargs):
+        if cmd[0] == "nvidia-smi":
+            timeouts.append(kwargs.get("timeout"))
+        return Completed(returncode=1)
+
+    def fake_open(path, *_args, **_kwargs):
+        assert path == "/proc/meminfo"
+        return StringIO("MemTotal:       134217728 kB\n")
+
+    monkeypatch.setattr("app.config.subprocess.run", fake_run)
+    monkeypatch.setattr("builtins.open", fake_open)
+
+    detect_gpu_info()
+
+    assert timeouts == [NVIDIA_SMI_TIMEOUT_S]
 
 
 def test_validate_hardware_requirements_rejects_non_rocm_strix_halo():
