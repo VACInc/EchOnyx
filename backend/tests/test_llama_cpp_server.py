@@ -68,6 +68,33 @@ def test_build_server_env_infers_single_cuda_visible_device(monkeypatch, tmp_pat
     assert env["SPLIT_MODE"] == "0"
 
 
+def test_build_server_env_infers_single_cuda_visible_uuid(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("stub")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-8003976c-76b3-45e1-69aa-181bf5e07b05")
+    monkeypatch.delenv("NVIDIA_VISION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["MAIN_GPU"] == "0"
+    assert env["SPLIT_MODE"] == "0"
+
+
 def test_build_server_env_infers_single_nvidia_pin_when_all_gpus_visible(monkeypatch, tmp_path):
     model_path = tmp_path / "model.gguf"
     model_path.write_text("stub")

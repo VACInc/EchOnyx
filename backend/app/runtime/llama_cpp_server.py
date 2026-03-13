@@ -43,8 +43,8 @@ class LlamaCppServerConfig:
             port=int(os.environ.get("PORT", "8000")),
             context_size=int(os.environ.get("MODEL_CONTEXT_SIZE", "8192")),
             gpu_layers=int(os.environ.get("MODEL_GPU_LAYERS", "-1")),
-            main_gpu=int(raw_main_gpu) if raw_main_gpu else None,
-            split_mode=int(raw_split_mode) if raw_split_mode else None,
+            main_gpu=_parse_int(raw_main_gpu),
+            split_mode=_parse_int(raw_split_mode),
             chat_format=os.environ.get("MODEL_CHAT_FORMAT", "").strip(),
             clip_model_path=Path(raw_clip_model_path) if raw_clip_model_path else None,
             extra_args=tuple(shlex.split(os.environ.get("LLAMA_SERVER_EXTRA_ARGS", ""))),
@@ -57,8 +57,22 @@ def _ensure_local_file(path: Path) -> Path:
     return download_model(path.name, path.parent)
 
 
+def _parse_int(value: str) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _split_device_tokens(value: str) -> tuple[str, ...]:
+    tokens = tuple(part.strip() for part in value.split(",") if part.strip())
+    return tokens
+
+
 def _parse_device_indices(value: str) -> tuple[int, ...]:
-    raw_parts = [part.strip() for part in value.split(",") if part.strip()]
+    raw_parts = _split_device_tokens(value)
     if not raw_parts:
         return ()
     try:
@@ -68,7 +82,7 @@ def _parse_device_indices(value: str) -> tuple[int, ...]:
 
 
 def _infer_single_gpu_target(env: dict[str, str]) -> tuple[int | None, int | None]:
-    cuda_visible = _parse_device_indices(env.get("CUDA_VISIBLE_DEVICES", ""))
+    cuda_visible = _split_device_tokens(env.get("CUDA_VISIBLE_DEVICES", ""))
     if len(cuda_visible) == 1:
         return 0, 0
 
