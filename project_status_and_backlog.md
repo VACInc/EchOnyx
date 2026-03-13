@@ -78,7 +78,9 @@
   - that same live CUDA pass also exposed a stale default vision-model config: the repo default now points at `Qwen3VL-32B-Instruct-Q4_K_M.gguf` instead of the old placeholder `qwen3-omni` GGUF path
   - live CUDA vision loads were not stable enough under Celery prefork; the NVIDIA worker now uses `--pool=solo` until the local `llama.cpp` path is hardened further
   - local CUDA `llama.cpp` now narrows `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so device numbering matches the planner on heterogeneous multi-GPU hosts
-  - the NVIDIA Compose override now has dedicated CUDA `llama_cpp.server` endpoint containers for vision and summarization, with optional per-service `NVIDIA_*_VISIBLE_DEVICES` pinning exported into `CUDA_VISIBLE_DEVICES` for the endpoint process
+  - the mixed NVIDIA path now behaves best with summarization pinned to a `3090` and vision pinned to the `RTX PRO 6000`
+  - direct CUDA `llama.cpp` on the `RTX PRO 6000` was stable enough for text summarization with the vendored `llama.cpp`, but not for `Qwen3VL`; the NVIDIA override now routes vision through official `vLLM 0.11.2`
+  - live NVIDIA vision now launches the correct `vLLM` process on the `RTX PRO 6000`, but it is still in a long `health: starting` startup path and is not yet accepted end to end
   - the next live CUDA blocker after endpoint startup was `torchaudio` pulling in an incompatible `torchcodec` runtime during the optional CLAP audio-event step inside summarization
   - the audio-event path now reads extracted WAV files directly, and the worker now treats audio-event classification as fail-soft so summary generation can continue without audio hints when that optional stage breaks
   - current accelerator sizing guidance for the shipped model set is:
