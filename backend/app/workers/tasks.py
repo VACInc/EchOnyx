@@ -476,7 +476,25 @@ async def _process_video_async(task, video_id: str, job_id: str):
                     await extract_audio(video_path, audio_path)
                 audio_event = load_json(audio_event_path)
                 if not audio_event:
-                    audio_event = await classify_audio_events(audio_path)
+                    try:
+                        audio_event = await classify_audio_events(audio_path)
+                    except Exception as exc:
+                        logger.warning(
+                            "Audio event classification failed for %s; continuing without audio context: %s",
+                            video_id,
+                            exc,
+                            exc_info=True,
+                        )
+                        audio_event = {
+                            "hints": [],
+                            "top_labels": [],
+                            "tv_score": 0.0,
+                            "speech_score": 0.0,
+                            "primary_context": None,
+                            "supporting_contexts": [],
+                            "summary_context": "",
+                            "error": str(exc),
+                        }
                     save_json(audio_event_path, audio_event)
                 audio_hints = audio_event.get("hints", [])
                 summary_audio_context = str(audio_event.get("summary_context") or "").strip()

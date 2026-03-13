@@ -54,6 +54,7 @@ docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 If you are building on a host without a visible GPU during `docker build`, set `CUDA_ARCHITECTURES` for your target cards. On the live `ai-server`, `86;120` was validated for `RTX 3090 + RTX PRO 6000 Blackwell`.
 The NVIDIA override now uses `gpus: all`, so normal Docker Compose exposes every visible NVIDIA GPU to backend and worker containers.
 The NVIDIA worker currently runs Celery with `--pool=solo` for stability while local CUDA `llama.cpp` vision and summarization loads are being hardened.
+On NVIDIA, the audio-event path now reads extracted WAV audio directly instead of depending on `torchaudio` file I/O, so a bad `torchcodec` runtime no longer blocks summarization.
 
 ### 3) Access
 
@@ -82,6 +83,7 @@ Set these in `.env` as needed:
 - `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning for the CUDA `llama_cpp.server` containers on multi-GPU hosts; when set, the NVIDIA override exports them as `CUDA_VISIBLE_DEVICES` for the endpoint process
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
+- Audio-event classification is treated as supporting context only; if that stage fails, summarization continues without audio hints
 - `VISION_VLLM_MODEL_ID`, `SUMMARIZATION_VLLM_MODEL_ID`: Hugging Face model ids for the `vLLM` runtime
 - `EMBEDDING_MODEL`: embedding model id (HF)
 - `UPLOAD_DIR`, `MODEL_CACHE_DIR`: storage locations

@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -254,6 +255,35 @@ async def test_classify_audio_events_handles_missing_torchaudio_info(monkeypatch
     assert any("television or broadcast playback" in hint for hint in result["hints"])
     assert "Primary audio context: broadcast or TV playback" in result["summary_context"]
     assert manager.released is True
+
+
+def test_load_audio_segment_reads_wav_without_torchaudio(monkeypatch, tmp_path):
+    audio_path = tmp_path / "sample.wav"
+    samples = (np.sin(np.linspace(0, np.pi * 4, 16_000)) * 32767).astype("<i2")
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(16_000)
+        wav_file.writeframes(samples.tobytes())
+
+    monkeypatch.setattr(
+        audio_classification.torchaudio,
+        "load",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("torchaudio.load should not be used")),
+    )
+    monkeypatch.setattr(
+        audio_classification.torchaudio,
+        "info",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("torchaudio.info should not be used")),
+    )
+
+    total_frames, sample_rate = audio_classification._probe_audio_info(audio_path)
+    waveform, loaded_rate = audio_classification._load_audio_segment(audio_path, 800, 1600)
+
+    assert total_frames == 16_000
+    assert sample_rate == 16_000
+    assert loaded_rate == 16_000
+    assert waveform.numpy().shape == (1, 1600)
 
 
 @pytest.mark.asyncio

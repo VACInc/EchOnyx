@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import wave
 from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import torch
 import torchaudio
 
@@ -480,11 +482,78 @@ def _select_offsets(total_frames: int, sample_frames: int, num_samples: int) -> 
     return [int(round(step * idx)) for idx in range(num_samples)]
 
 
+def _tensor_from_audio_array(values: np.ndarray):
+    from_numpy = getattr(torch, "from_numpy", None)
+    if callable(from_numpy):
+        return from_numpy(values)
+    tensor = getattr(torch, "tensor", None)
+    if callable(tensor):
+        return tensor(values)
+    tensor_type = getattr(torch, "Tensor", None)
+    if callable(tensor_type):
+        return tensor_type(values)
+    raise RuntimeError("Torch tensor constructor is unavailable for audio decoding.")
+
+
+def _decode_wav_frames(raw_frames: bytes, sample_width: int, channels: int) -> np.ndarray:
+    if sample_width == 1:
+        data = np.frombuffer(raw_frames, dtype=np.uint8).astype(np.float32)
+        data = (data - 128.0) / 128.0
+    elif sample_width == 2:
+        data = np.frombuffer(raw_frames, dtype="<i2").astype(np.float32) / 32768.0
+    elif sample_width == 3:
+        bytes_24 = np.frombuffer(raw_frames, dtype=np.uint8).reshape(-1, 3)
+        data = (
+            bytes_24[:, 0].astype(np.int32)
+            | (bytes_24[:, 1].astype(np.int32) << 8)
+            | (bytes_24[:, 2].astype(np.int32) << 16)
+        )
+        data = np.where(data & 0x800000, data - 0x1000000, data).astype(np.float32)
+        data /= 8388608.0
+    elif sample_width == 4:
+        data = np.frombuffer(raw_frames, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported WAV sample width: {sample_width}")
+
+    if channels > 1:
+        data = data.reshape(-1, channels).mean(axis=1)
+    return data.reshape(1, -1)
+
+
+def _probe_wav_info(audio_path: Path) -> tuple[int, int]:
+    with wave.open(str(audio_path), "rb") as wav_file:
+        return int(wav_file.getnframes()), int(wav_file.getframerate())
+
+
+def _load_wav_segment(
+    audio_path: Path,
+    offset_frames: int,
+    num_frames: int,
+) -> tuple[torch.Tensor, int]:
+    with wave.open(str(audio_path), "rb") as wav_file:
+        sample_rate = int(wav_file.getframerate())
+        total_frames = int(wav_file.getnframes())
+        wav_file.setpos(min(max(offset_frames, 0), total_frames))
+        frames_to_read = num_frames if num_frames > 0 else max(total_frames - offset_frames, 0)
+        raw_frames = wav_file.readframes(frames_to_read)
+        waveform = (
+            np.zeros((1, 0), dtype=np.float32)
+            if not raw_frames
+            else _decode_wav_frames(raw_frames, wav_file.getsampwidth(), wav_file.getnchannels())
+        )
+    return _tensor_from_audio_array(waveform), sample_rate
+
+
 def _load_audio_segment(
     audio_path: Path,
     offset_frames: int,
     num_frames: int,
 ) -> tuple[torch.Tensor, int]:
+    if audio_path.suffix.lower() == ".wav":
+        try:
+            return _load_wav_segment(audio_path, offset_frames, num_frames)
+        except (wave.Error, EOFError, ValueError, OSError) as exc:
+            logger.warning("Falling back to torchaudio for %s after WAV decode failed: %s", audio_path, exc)
     waveform, sample_rate = torchaudio.load(
         str(audio_path),
         frame_offset=offset_frames,
@@ -496,6 +565,11 @@ def _load_audio_segment(
 
 
 def _probe_audio_info(audio_path: Path) -> tuple[int, int]:
+    if audio_path.suffix.lower() == ".wav":
+        try:
+            return _probe_wav_info(audio_path)
+        except (wave.Error, EOFError, OSError) as exc:
+            logger.warning("Falling back to torchaudio probe for %s after WAV probe failed: %s", audio_path, exc)
     info_fn = getattr(torchaudio, "info", None)
     if callable(info_fn):
         info = info_fn(str(audio_path))

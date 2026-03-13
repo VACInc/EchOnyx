@@ -309,6 +309,29 @@ async def test_calibrate_audio_events_manifest_writes_profile(monkeypatch, tmp_p
     assert written["metrics"]["fixtures_evaluated"] == 3
 
 
+@pytest.mark.asyncio
+async def test_materialize_audio_path_transcodes_non_wav(monkeypatch, tmp_path):
+    media_path = tmp_path / "fixture.mp3"
+    media_path.write_bytes(b"placeholder")
+    scratch_dir = tmp_path / "scratch"
+    scratch_dir.mkdir()
+    captured = {}
+
+    async def fake_extract_audio(input_path, output_path):
+        captured["input_path"] = input_path
+        captured["output_path"] = output_path
+        output_path.write_bytes(b"wav")
+        return output_path
+
+    monkeypatch.setattr(audio_calibration, "extract_audio", fake_extract_audio)
+
+    result = await audio_calibration._materialize_audio_path(media_path, scratch_dir)
+
+    assert result == scratch_dir / "fixture.wav"
+    assert captured["input_path"] == media_path
+    assert captured["output_path"] == result
+
+
 def test_repo_audio_calibration_fixture_pack_is_checked_in():
     manifest_path = Path(__file__).resolve().parent / "fixtures" / "audio_calibration" / "manifest.json"
 

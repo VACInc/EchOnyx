@@ -390,3 +390,125 @@ async def test_process_video_pipeline_continues_when_diarization_is_skipped(monk
     assert merged["segments"][0]["speaker"] is None
     assert diarization["skipped"] is True
     assert diarization["reason"] == "missing_hf_token"
+
+
+@pytest.mark.asyncio
+async def test_process_video_pipeline_continues_when_audio_event_classification_fails(monkeypatch, tmp_path):
+    video_path = create_sample_video(tmp_path / "audio-event-failure.mp4", color="red", frequency=500)
+    video_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    created_at = datetime.now(timezone.utc)
+
+    video = Video(
+        id=video_id,
+        filename=video_path.name,
+        original_filename=video_path.name,
+        file_path=str(video_path),
+        file_size=video_path.stat().st_size,
+        mime_type="video/mp4",
+        title="audio event fallback fixture",
+        created_at=created_at,
+    )
+    job = Job(
+        id=job_id,
+        video_id=video_id,
+        status=JobStatus.QUEUED.value,
+        created_at=created_at,
+    )
+    captured_summary_calls: list[dict] = []
+
+    async def fake_transcribe_audio(_audio_path, **_kwargs):
+        return {
+            "text": "Budget review is due Friday.",
+            "segments": [{"start": 0.0, "end": 1.0, "text": "Budget review is due Friday."}],
+            "language": "en",
+            "duration": 1.0,
+        }
+
+    async def fake_diarize_audio(_audio_path, **_kwargs):
+        return {
+            "speakers": [{"id": "SPEAKER_00", "name": "Speaker 1", "total_time": 1.0}],
+            "segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}],
+            "num_speakers": 1,
+        }
+
+    async def fake_analyze_frames(frames, **_kwargs):
+        return [
+            {
+                **frame,
+                "description": "red slide",
+                "ocr_text": "Budget review is due Friday.",
+                "is_slide": True,
+                "slide_title": "Slide 1",
+                "key_points": ["Budget review is due Friday."],
+            }
+            for frame in frames
+        ]
+
+    async def fake_extract_slide_content(frames):
+        return [
+            {
+                "timestamp": frames[0]["timestamp"],
+                "title": "Slide 1",
+                "content": "Budget review is due Friday.",
+                "ocr_text": "Budget review is due Friday.",
+                "key_points": ["Budget review is due Friday."],
+                "description": "red slide",
+                "image_path": frames[0]["path"],
+            }
+        ]
+
+    async def fake_generate_summary(transcript, **kwargs):
+        captured_summary_calls.append(kwargs)
+        return {
+            "executive_summary": transcript["text"],
+            "key_points": [transcript["text"]],
+            "action_items": [],
+            "decisions": [],
+            "topics": [],
+        }
+
+    async def fake_index_video_content(**_kwargs):
+        return 1
+
+    async def failing_classify_audio_events(_audio_path):
+        raise RuntimeError("torchcodec blew up")
+
+    monkeypatch.setattr("app.workers.tasks.get_worker_async_session_maker", lambda: lambda: SessionFactory(
+        ProcessingSession([
+            SequenceResult(scalar=video),
+            SequenceResult(scalar=job),
+            SequenceResult(items=[]),
+        ])
+    ))
+    monkeypatch.setattr("app.workers.tasks.log_gpu_memory", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.api.websocket.notify_job_error", _noop_async)
+    monkeypatch.setattr("app.api.websocket.notify_job_progress", _noop_async)
+    monkeypatch.setattr("app.api.websocket.notify_job_step", _noop_async)
+    monkeypatch.setattr("app.core.transcription.transcribe_audio", fake_transcribe_audio)
+    monkeypatch.setattr("app.core.diarization.diarize_audio", fake_diarize_audio)
+    monkeypatch.setattr("app.core.vision.analyze_frames", fake_analyze_frames)
+    monkeypatch.setattr("app.core.vision.annotate_frame_relevance", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.core.vision.extract_slide_content", fake_extract_slide_content)
+    monkeypatch.setattr("app.core.summarizer.generate_summary", fake_generate_summary)
+    monkeypatch.setattr("app.core.embeddings.index_video_content", fake_index_video_content)
+    monkeypatch.setitem(
+        sys.modules,
+        "app.core.audio_classification",
+        types.SimpleNamespace(classify_audio_events=failing_classify_audio_events),
+    )
+
+    task = types.SimpleNamespace(
+        request=types.SimpleNamespace(id="task-audio-event-failure", retries=0),
+        max_retries=0,
+    )
+
+    result = await _process_video_async(task, str(video_id), str(job_id))
+
+    work_dir = tmp_path / f"work_{video_id}"
+    audio_event = json.loads((work_dir / "audio_event.json").read_text(encoding="utf-8"))
+
+    assert result["status"] == "success"
+    assert job.status == JobStatus.COMPLETED.value
+    assert audio_event["error"] == "torchcodec blew up"
+    assert captured_summary_calls[0]["audio_context"]["hints"] == []

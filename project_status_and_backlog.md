@@ -78,6 +78,8 @@
   - live CUDA vision loads were not stable enough under Celery prefork; the NVIDIA worker now uses `--pool=solo` until the local `llama.cpp` path is hardened further
   - local CUDA `llama.cpp` now narrows `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so device numbering matches the planner on heterogeneous multi-GPU hosts
   - the NVIDIA Compose override now has dedicated CUDA `llama_cpp.server` endpoint containers for vision and summarization, with optional per-service `NVIDIA_*_VISIBLE_DEVICES` pinning exported into `CUDA_VISIBLE_DEVICES` for the endpoint process
+  - the next live CUDA blocker after endpoint startup was `torchaudio` pulling in an incompatible `torchcodec` runtime during the optional CLAP audio-event step inside summarization
+  - the audio-event path now reads extracted WAV files directly, and the worker now treats audio-event classification as fail-soft so summary generation can continue without audio hints when that optional stage breaks
   - current accelerator sizing guidance for the shipped model set is:
     - rough floor: about `24 GB` free
     - practical single-accelerator target: about `32 GB` free

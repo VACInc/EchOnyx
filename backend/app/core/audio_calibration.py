@@ -91,7 +91,7 @@ async def _materialize_audio_path(
     media_path: Path,
     scratch_dir: Path,
 ) -> Path:
-    if media_path.suffix.lower() in AUDIO_EXTENSIONS:
+    if media_path.suffix.lower() == ".wav":
         return media_path
     audio_path = scratch_dir / f"{media_path.stem}.wav"
     await extract_audio(media_path, audio_path)
