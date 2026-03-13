@@ -154,6 +154,7 @@ RUN if [ "$INSTALL_NEMO" = "1" ]; then \
 COPY app ./app
 
 RUN uv pip install -e . --no-deps
+RUN uv pip install sse-starlette
 
 RUN mkdir -p /data/uploads /data/models /data/chroma
 
