@@ -94,6 +94,31 @@ def test_build_server_env_infers_single_nvidia_pin_when_all_gpus_visible(monkeyp
     assert env["SPLIT_MODE"] == "0"
 
 
+def test_build_server_env_prefers_explicit_model_main_gpu(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("stub")
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "5")
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="vision-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=2,
+        split_mode=None,
+        chat_format="qwen3-vl",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["MAIN_GPU"] == "2"
+    assert env["SPLIT_MODE"] == "0"
+
+
 def test_build_server_command_uses_llama_cpp_server_module():
     config = llama_cpp_server.LlamaCppServerConfig(
         model_path=Path("/data/models/model.gguf"),

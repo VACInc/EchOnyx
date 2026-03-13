@@ -91,7 +91,11 @@ def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
 
     inferred_main_gpu, inferred_split_mode = _infer_single_gpu_target(env)
     main_gpu = config.main_gpu if config.main_gpu is not None else inferred_main_gpu
-    split_mode = config.split_mode if config.split_mode is not None else inferred_split_mode
+    split_mode = config.split_mode
+    if split_mode is None and main_gpu is not None:
+        split_mode = 0
+    if split_mode is None:
+        split_mode = inferred_split_mode
     if main_gpu is not None:
         env["MAIN_GPU"] = str(main_gpu)
     if split_mode is not None:
