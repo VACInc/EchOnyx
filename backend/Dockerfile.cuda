@@ -81,6 +81,8 @@ RUN set -e; \
         git -C /tmp/llama-cpp-python/vendor/llama.cpp fetch --depth 1 origin "$llama_ref"; \
         git -C /tmp/llama-cpp-python/vendor/llama.cpp checkout FETCH_HEAD; \
       fi; \
+    else \
+      git -C /tmp/llama-cpp-python submodule update --init --depth 1 vendor/llama.cpp; \
     fi; \
     { \
       echo 'if (NOT DEFINED LLAMA_INSTALL_VERSION OR "${LLAMA_INSTALL_VERSION}" STREQUAL "")'; \
