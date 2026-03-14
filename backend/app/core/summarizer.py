@@ -190,6 +190,7 @@ async def complete_with_summarization_model(
 
 def parse_summary_json(content: str) -> dict:
     """Parse a JSON summary from a model response."""
+    content = strip_reasoning_content(content)
     try:
         json_start = content.find("{")
         json_end = content.rfind("}") + 1
@@ -555,8 +556,7 @@ async def generate_summary(
                 if progress_callback:
                     progress_callback(100)
 
-                content = response["choices"][0]["message"]["content"]
-                return parse_summary_json(content)
+                return parse_summary_json(_extract_chat_content(response))
 
             if progress_callback:
                 progress_callback(5)
@@ -637,8 +637,7 @@ async def generate_summary(
                         temperature=0.3,
                     )
                 )
-                content = response["choices"][0]["message"]["content"]
-                chunk_summary = parse_summary_json(content)
+                chunk_summary = parse_summary_json(_extract_chat_content(response))
                 chunk_summary["_chunk_start"] = chunk["start"]
                 chunk_summary["_chunk_end"] = chunk["end"]
                 chunk_summaries.append(chunk_summary)
@@ -671,12 +670,10 @@ async def generate_summary(
                     temperature=0.2,
                 )
             )
-            content = response["choices"][0]["message"]["content"]
-
             if progress_callback:
                 progress_callback(100)
 
-            return parse_summary_json(content)
+            return parse_summary_json(_extract_chat_content(response))
 
         return await loop.run_in_executor(None, do_summarize)
 

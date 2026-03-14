@@ -137,3 +137,49 @@ async def test_generate_summary_includes_audio_context_in_prompt(monkeypatch):
     assert "Primary classification: direct software-demo narration" in prompt
     assert "Supporting classifier cues: noticeable music bed or soundtrack." in prompt
     assert "Additional audio hint: Room echo is mild." in prompt
+
+
+@pytest.mark.asyncio
+async def test_generate_summary_strips_think_blocks_before_parsing(monkeypatch):
+    settings = Settings(
+        summarization_endpoint_url="http://summary-server:8080/v1",
+        summarization_model="summary.gguf",
+        summary_chunk_minutes=6.0,
+        summary_chunk_overlap_minutes=0.6,
+    )
+
+    def fake_call(settings, messages, max_tokens, temperature):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": (
+                            "<think>\ninternal reasoning\n</think>\n"
+                            '{"executive_summary":"clean","key_points":[],"action_items":[],'  # noqa: E501
+                            '"decisions":[],"topics":[]}'
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(summarizer, "get_settings", lambda: settings)
+    monkeypatch.setattr(summarizer, "_call_summarization_endpoint", fake_call)
+
+    result = await summarizer.generate_summary(
+        transcript={
+            "text": "The product launch is Tuesday morning.",
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "speaker": "Speaker 1",
+                    "text": "The product launch is Tuesday morning.",
+                }
+            ],
+            "duration": 5.0,
+        },
+        title="Launch Plan",
+    )
+
+    assert result["executive_summary"] == "clean"
