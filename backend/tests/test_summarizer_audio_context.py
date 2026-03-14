@@ -50,6 +50,20 @@ def test_format_audio_context_for_summary_merges_structured_context_and_visual_c
     assert "Visual corroboration: Visuals show a TV/television playing content" in result
 
 
+def test_extract_chat_content_strips_think_blocks():
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "<think>\ninternal reasoning\n</think>\n\nFinal answer."
+                }
+            }
+        ]
+    }
+
+    assert summarizer._extract_chat_content(response) == "Final answer."
+
+
 @pytest.mark.asyncio
 async def test_generate_summary_includes_audio_context_in_prompt(monkeypatch):
     captured = {}

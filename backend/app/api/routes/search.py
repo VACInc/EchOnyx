@@ -18,7 +18,7 @@ from app.config import GPUBackend, ModelLoadingStrategy, get_settings
 from app.core.duplicates import is_duplicate_suppressed
 from app.core.embeddings import find_similar_content, search_content
 from app.core.model_manager import ModelType, get_model_manager
-from app.core.summarizer import complete_with_summarization_model
+from app.core.summarizer import complete_with_summarization_model, strip_reasoning_content
 from app.database import get_db
 from app.models.video import Video
 
@@ -248,7 +248,7 @@ async def ask_question(
 
     return RAGAnswer(
         question=question.question,
-        answer=answer or "I couldn't generate an answer from the available context.",
+        answer=strip_reasoning_content(answer) or "I couldn't generate an answer from the available context.",
         sources=sources,
         confidence=confidence,
     )

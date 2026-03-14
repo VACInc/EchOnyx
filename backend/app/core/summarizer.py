@@ -13,6 +13,7 @@ from app.core.model_manager import ModelType, get_model_manager
 import httpx
 
 logger = logging.getLogger(__name__)
+THINK_BLOCK_REGEX = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
 
 
 SUMMARY_SYSTEM_PROMPT = """You are an expert at summarizing video presentations and meetings.
@@ -132,8 +133,17 @@ def _extract_chat_content(response: dict) -> str:
                 parts.append(str(item.get("text") or ""))
             elif isinstance(item, str):
                 parts.append(item)
-        return "".join(parts).strip()
-    return str(content).strip()
+        return strip_reasoning_content("".join(parts))
+    return strip_reasoning_content(str(content))
+
+
+def strip_reasoning_content(content: str) -> str:
+    """Remove model reasoning blocks from assistant output."""
+    if not content:
+        return ""
+    cleaned = THINK_BLOCK_REGEX.sub("", content)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 async def complete_with_summarization_model(

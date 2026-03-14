@@ -252,6 +252,41 @@ async def test_ask_question_uses_all_requested_video_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ask_question_strips_reasoning_blocks_from_answer(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="probe.mp4",
+        original_filename="probe.mp4",
+        file_path="/tmp/probe.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Probe",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": "The budget review is due Friday.",
+                }
+            ]
+        },
+    )
+
+    async def fake_complete(messages, max_tokens: int = 0, temperature: float = 0.0):
+        return "<think>\nreasoning\n</think>\n\nThe budget review is due Friday."
+
+    monkeypatch.setattr(search_module, "complete_with_summarization_model", fake_complete)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await ask_question(
+        RAGQuestion(question="When is the budget review due?"),
+        db=db,
+    )
+
+    assert response.answer == "The budget review is due Friday."
+
+
+@pytest.mark.asyncio
 async def test_find_similar_uses_embedding_matches(monkeypatch):
     source_video = Video(
         id=uuid.uuid4(),
