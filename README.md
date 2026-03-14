@@ -56,7 +56,8 @@ The NVIDIA override now uses `gpus: all`, so normal Docker Compose exposes every
 The NVIDIA worker currently runs Celery with `--pool=solo` for stability while local CUDA `llama.cpp` vision and summarization loads are being hardened.
 On NVIDIA, the audio-event path now reads extracted WAV audio directly instead of depending on `torchaudio` file I/O, so a bad `torchcodec` runtime no longer blocks summarization.
 The CUDA image now builds `llama-cpp-python` against its bundled vendored `llama.cpp` by default; only opt into an external `llama.cpp` checkout if you are intentionally testing an upstream override.
-On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM 0.11.2`. Vision is materially closer but still not fully accepted end to end while the `vLLM` startup path is being hardened.
+On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM 0.11.2`. That split is now live-accepted end to end for upload, batch, summary, search, ask, and similar.
+Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks before they are stored or returned.
 
 ### 3) Access
 
@@ -199,7 +200,7 @@ Current accelerator sizing guidance for the shipped model set:
 - Keeping the whole current stack resident on one accelerator needs about `74.5 GB` of budget, which is about `100 GB` free at the default `GPU_MEMORY_FRACTION=0.75`.
 - On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
 - CUDA worker-side models now honor the planner's preferred device selection, and the NVIDIA Compose override now defaults vision/summarization to dedicated CUDA `llama_cpp.server` containers instead of in-process worker loads.
-- The CUDA backend image now smoke-builds successfully on the live `ai-server`; full live CUDA deployment and end-to-end acceptance are still pending.
+- The CUDA backend image now smoke-builds successfully on the live `ai-server`, and the mixed `3090 + RTX PRO 6000` runtime has now passed a live end-to-end acceptance run.
 
 Current AMD note:
 - Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.

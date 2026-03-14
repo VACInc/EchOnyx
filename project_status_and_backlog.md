@@ -80,7 +80,7 @@
   - local CUDA `llama.cpp` now narrows `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so device numbering matches the planner on heterogeneous multi-GPU hosts
   - the mixed NVIDIA path now behaves best with summarization pinned to a `3090` and vision pinned to the `RTX PRO 6000`
   - direct CUDA `llama.cpp` on the `RTX PRO 6000` was stable enough for text summarization with the vendored `llama.cpp`, but not for `Qwen3VL`; the NVIDIA override now routes vision through official `vLLM 0.11.2`
-  - live NVIDIA vision now launches the correct `vLLM` process on the `RTX PRO 6000`, but it is still in a long `health: starting` startup path and is not yet accepted end to end
+  - live NVIDIA vision now launches the correct `vLLM` process on the `RTX PRO 6000` and is healthy after first-start model load
   - the next live CUDA blocker after endpoint startup was `torchaudio` pulling in an incompatible `torchcodec` runtime during the optional CLAP audio-event step inside summarization
   - the audio-event path now reads extracted WAV files directly, and the worker now treats audio-event classification as fail-soft so summary generation can continue without audio hints when that optional stage breaks
   - current accelerator sizing guidance for the shipped model set is:
@@ -88,7 +88,8 @@
     - practical single-accelerator target: about `32 GB` free
     - warm worker models plus one local endpoint: about `50.5 GB` of budget
     - single-accelerator fully resident target: about `100 GB` free at the default memory fraction
-  - full live CUDA deployment and end-to-end acceptance are still pending, but the backend CUDA image build itself is now validated
+  - live `ai-server` acceptance on March 14, 2026 now covers single upload, batch upload, summary retrieval, search, ask, and similar on the mixed `3090 + RTX PRO 6000` split
+  - both `ask` responses and generated summaries now strip `<think>...</think>` reasoning blocks before returning or persisting model output
 
 ## High Priority Requirements
 
