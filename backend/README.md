@@ -84,6 +84,9 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
 - `/api/settings/models/verify` checks a candidate model against the built-in catalog, GGUF registry, or Hugging Face before the UI adds it to a selector.
 - `/api/action-items` now provides first-class todo CRUD with video-label filters so summary action items and manual follow-ups can be managed outside the raw summary payload.
+- Browser-origin access is no longer wildcard-open by default: CORS and job WebSocket access now trust explicit origins plus local/private-network browser origins unless you override that in env.
+- Single uploads now enforce the configured size cap while streaming and reject media that fails ffprobe validation instead of storing arbitrary blobs on disk.
+- Summary responses now expose only slide image filenames, not absolute server filesystem paths.
 - The audio-event step now reads extracted WAV files directly before CLAP scoring, so CUDA deployments do not depend on `torchaudio` + `torchcodec` just to build summary-side audio hints.
 - Audio-event classification is fail-soft: if it breaks, summarization continues with empty audio context instead of failing the whole job.
 - Similar-video reranking now leans more heavily on transcript and key-point overlap so generic narrated videos do not outrank truly related ones as easily.

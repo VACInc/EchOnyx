@@ -83,6 +83,29 @@ async def test_upload_video_streams_sample_mp4(monkeypatch, tmp_path):
     saved_video = next(item for item in session.added if isinstance(item, Video))
     assert Path(saved_video.file_path).exists()
     assert Path(saved_video.file_path).read_bytes() == source_video.read_bytes()
+    assert saved_video.duration_seconds and saved_video.duration_seconds > 0
+    assert saved_video.width == 320
+    assert saved_video.height == 240
+
+
+@pytest.mark.asyncio
+async def test_upload_video_rejects_invalid_media_probe(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.api.routes.videos.settings.upload_dir", tmp_path)
+    monkeypatch.setattr("app.api.routes.videos.settings.max_upload_size_gb", 1)
+
+    upload = StreamingUpload("upload-source.mp4", b"not-a-real-video")
+    session = UploadSession()
+
+    async def fake_probe(_path):
+        raise RuntimeError("probe failed")
+
+    monkeypatch.setattr("app.api.routes.videos.get_video_info", fake_probe)
+
+    with pytest.raises(Exception) as exc_info:
+        await upload_video(file=upload, title="Fixture", db=session)
+
+    assert "valid video media" in str(exc_info.value)
+    assert not list(tmp_path.iterdir())
 
 
 @pytest.mark.asyncio

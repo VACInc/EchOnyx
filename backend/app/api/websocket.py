@@ -8,8 +8,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.database import async_session_maker
 from app.models.job import Job
+from app.security import cors_configuration, is_origin_allowed
 
 router = APIRouter()
 
@@ -71,6 +73,16 @@ async def job_progress_websocket(websocket: WebSocket, job_id: str):
         jid = uuid.UUID(job_id)
     except ValueError:
         await websocket.close(code=4000, reason="Invalid job ID")
+        return
+
+    settings = get_settings()
+    allowed_origins, allow_origin_regex = cors_configuration(settings)
+    if not is_origin_allowed(
+        websocket.headers.get("origin"),
+        allowed_origins=allowed_origins,
+        allow_origin_regex=allow_origin_regex,
+    ):
+        await websocket.close(code=4403, reason="Origin not allowed")
         return
 
     await manager.connect(websocket, job_id)

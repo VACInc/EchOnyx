@@ -2,6 +2,7 @@
 
 import uuid
 from io import BytesIO
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -107,7 +108,7 @@ async def get_summary(
             slides.append(
                 SlideInfo(
                     timestamp=slide.get("timestamp", 0),
-                    image_path=slide.get("image_path", ""),
+                    image_path=Path(str(slide.get("image_path", ""))).name,
                     ocr_text=slide.get("ocr_text"),
                     description=slide.get("description"),
                 )

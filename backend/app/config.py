@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     app_name: str = "EchOnyx"
     debug: bool = False
     api_prefix: str = "/api"
+    cors_allowed_origins: str = ""
+    cors_allow_origin_regex: str = ""
 
     # Hardware (auto-detected if not set)
     hardware_profile: HardwareProfile | None = None

@@ -16,9 +16,44 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.job import Job, JobStatus
 from app.models.video import Video
+from app.utils.ffmpeg import get_video_info
 
 router = APIRouter()
 settings = get_settings()
+
+ALLOWED_VIDEO_TYPES = {
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo",
+    "video/x-matroska",
+}
+
+
+async def _save_upload_file(upload: UploadFile, file_path: Path, max_size_bytes: int) -> int:
+    """Persist an upload to disk while enforcing the size limit."""
+    file_size = 0
+    async with aiofiles.open(file_path, "wb") as output:
+        while chunk := await upload.read(1024 * 1024):
+            file_size += len(chunk)
+            if file_size > max_size_bytes:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File too large. Max size: {settings.max_upload_size_gb}GB",
+                )
+            await output.write(chunk)
+    return file_size
+
+
+async def _probe_uploaded_video(file_path: Path) -> dict:
+    """Ensure the uploaded file is probeable as real video media."""
+    try:
+        info = await get_video_info(file_path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Uploaded file is not valid video media: {exc}") from exc
+    if not info.get("duration") or not info.get("width") or not info.get("height"):
+        raise HTTPException(status_code=400, detail="Uploaded file is missing required video streams")
+    return info
 
 
 class VideoResponse(BaseModel):
@@ -139,12 +174,11 @@ async def upload_video(
         raise HTTPException(status_code=400, detail="No filename provided")
 
     # Validate file type
-    allowed_types = {"video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/x-matroska"}
     content_type = file.content_type or "application/octet-stream"
-    if content_type not in allowed_types:
+    if content_type not in ALLOWED_VIDEO_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {content_type}. Allowed: {', '.join(allowed_types)}",
+            detail=f"Invalid file type: {content_type}. Allowed: {', '.join(ALLOWED_VIDEO_TYPES)}",
         )
 
     # Generate unique filename
@@ -153,25 +187,18 @@ async def upload_video(
     unique_filename = f"{video_id}{file_ext}"
     file_path = settings.upload_dir / unique_filename
 
+    max_size = settings.max_upload_size_gb * 1024 * 1024 * 1024
+
     # Save file
     try:
-        async with aiofiles.open(file_path, "wb") as f:
-            while chunk := await file.read(1024 * 1024):  # 1MB chunks
-                await f.write(chunk)
+        file_size = await _save_upload_file(file, file_path, max_size)
+        video_info = await _probe_uploaded_video(file_path)
+    except HTTPException:
+        file_path.unlink(missing_ok=True)
+        raise
     except Exception as e:
+        file_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
-
-    # Get file size
-    file_size = file_path.stat().st_size
-
-    # Check size limit
-    max_size = settings.max_upload_size_gb * 1024 * 1024 * 1024
-    if file_size > max_size:
-        file_path.unlink()
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Max size: {settings.max_upload_size_gb}GB",
-        )
 
     # Create database record
     video = Video(
@@ -183,6 +210,10 @@ async def upload_video(
         mime_type=content_type,
         title=title,
         description=description,
+        duration_seconds=video_info.get("duration"),
+        width=video_info.get("width"),
+        height=video_info.get("height"),
+        fps=video_info.get("fps"),
     )
     db.add(video)
     await db.flush()

@@ -9,6 +9,11 @@
 - Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
 - `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks.
 - Action items now have a first-class todo system with `/api/action-items`, a dedicated `/todos` page, and a Settings toggle for feature visibility.
+- The March 15, 2026 security pass fixed three no-friction issues:
+  - browser CORS was narrowed from wildcard-open to explicit origins plus local/private-network browser origins
+  - job WebSockets now apply the same browser-origin check
+  - uploads now enforce size while streaming and reject files that fail media probing
+  - summary responses no longer leak absolute slide image filesystem paths
 
 ## Validated Findings And Constraints
 
@@ -141,6 +146,21 @@
 
 - Keep AMD/Strix Halo fully functional on ROCm unless CPU execution is benchmarked to be equally fast for the exact stage and model in question.
 - Run a full end-to-end security review across API, frontend, model/runtime orchestration, remote endpoints, secrets handling, uploads, search/ask flows, and deployment surfaces so the product is defensible as a secure local-first system.
+- Security follow-up ranking from the March 15, 2026 review:
+  - Critical:
+    - add real authentication and authorization for mutating endpoints, exports, settings writes, and job/todo management; today the product is still effectively trusted-network only
+    - protect settings mutation and endpoint-url changes with stronger admin-only controls because they can redirect inference traffic or rewrite runtime config
+  - High:
+    - add CSRF protection once authentication exists; the new CORS/origin tightening reduces browser exposure but does not replace proper request auth
+    - add API rate limits and upload quotas to reduce denial-of-service risk on upload, export, ask, and search endpoints
+    - add request-size ceilings for JSON bodies on mutating/search routes, not just media uploads
+  - Medium:
+    - restrict or sandbox custom model/endpoint additions so operators cannot accidentally introduce unsafe third-party models or outbound destinations
+    - add audit logging for destructive and configuration-changing actions
+    - review data-retention controls for uploads, exports, transcripts, slides, and embeddings
+  - Low:
+    - add optional stricter origin defaults for hostname-based deployments beyond localhost/private-network use
+    - add content-security-policy and related frontend response headers if/when the app is fronted by a production web server
 - Standardize the Strix Halo host baseline around a known-good ROCm/kernel combination and verify it during live acceptance so ROCm regressions are caught outside the app code too.
 - Replace the current fixed model-loading behavior with a dynamic residency planner that:
   - detects GPU count, memory, and topology automatically

@@ -85,6 +85,8 @@ Set these in `.env` as needed:
 
 - `GPU_BACKEND`: `cuda` | `metal` | `vulkan` | `rocm` | `cpu`
 - `MODEL_LOADING`: `sequential` (low memory) or `parallel`
+- `CORS_ALLOWED_ORIGINS`: optional comma-separated explicit browser origins to trust
+- `CORS_ALLOW_ORIGIN_REGEX`: optional override for the default local/private-network browser-origin regex
 - `HF_TOKEN`: optional overall, but required if you want pyannote diarization
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
 - `SUMMARIZATION_ENDPOINT_URL`, `SUMMARIZATION_ENDPOINT_MODEL`: use an external LLM server
@@ -304,6 +306,12 @@ Models (ASR, diarization, vision, LLM, embeddings)
 - **Out of memory**: use `MODEL_LOADING=sequential`, smaller models, or external endpoints.
 - **Model download errors**: verify model IDs/filenames in `.env` and registry.
 - **Jobs stuck**: restart workers; stale job recovery will requeue.
+
+## Security Notes
+
+- Browser access is no longer wildcard-open by default. CORS now trusts explicit origins plus local/private-network browser origins, and job WebSockets apply the same origin check.
+- Uploads now enforce the size limit while streaming and reject files that do not probe as valid video media.
+- Summary responses now strip absolute slide image filesystem paths down to filenames before returning them to clients.
 
 ## Development (Minimal)
 

@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.job import Batch, Job, JobStatus
 from app.models.video import Video
+from app.utils.ffmpeg import get_video_info
 
 router = APIRouter()
 settings = get_settings()
@@ -56,6 +57,16 @@ async def _save_upload_file(upload: UploadFile, file_path: Path, max_size_bytes:
                 )
             await output.write(chunk)
     return file_size
+
+
+async def _probe_uploaded_video(file_path: Path) -> dict:
+    try:
+        info = await get_video_info(file_path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Uploaded file is not valid video media: {exc}") from exc
+    if not info.get("duration") or not info.get("width") or not info.get("height"):
+        raise HTTPException(status_code=400, detail="Uploaded file is missing required video streams")
+    return info
 
 
 class BatchListResponse(BaseModel):
@@ -153,6 +164,7 @@ async def create_batch(
         # Save file
         try:
             file_size = await _save_upload_file(file, file_path, max_size_bytes)
+            video_info = await _probe_uploaded_video(file_path)
         except HTTPException:
             if file_path.exists():
                 file_path.unlink(missing_ok=True)
@@ -170,6 +182,10 @@ async def create_batch(
             file_path=str(file_path),
             file_size=file_size,
             mime_type=content_type,
+            duration_seconds=video_info.get("duration"),
+            width=video_info.get("width"),
+            height=video_info.get("height"),
+            fps=video_info.get("fps"),
         )
         accepted_videos.append(video)
 

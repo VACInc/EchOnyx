@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import action_items, batch, jobs, search, settings as settings_routes, summaries, videos
 from app.api.websocket import router as ws_router
 from app.config import get_settings
+from app.security import cors_configuration
 
 
 @asynccontextmanager
@@ -77,10 +78,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware - allow all origins for local network access
+    allowed_origins, allow_origin_regex = cors_configuration(settings)
+
+    # CORS middleware - scoped to explicit origins plus local/private-network browsers by default
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
+        allow_origin_regex=allow_origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
