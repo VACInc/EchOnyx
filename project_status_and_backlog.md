@@ -129,6 +129,7 @@
 ## High Priority Requirements
 
 - Keep AMD/Strix Halo fully functional on ROCm unless CPU execution is benchmarked to be equally fast for the exact stage and model in question.
+- Run a full end-to-end security review across API, frontend, model/runtime orchestration, remote endpoints, secrets handling, uploads, search/ask flows, and deployment surfaces so the product is defensible as a secure local-first system.
 - Standardize the Strix Halo host baseline around a known-good ROCm/kernel combination and verify it during live acceptance so ROCm regressions are caught outside the app code too.
 - Replace the current fixed model-loading behavior with a dynamic residency planner that:
   - detects GPU count, memory, and topology automatically
