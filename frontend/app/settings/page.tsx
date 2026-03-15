@@ -253,7 +253,7 @@ export default function SettingsPage() {
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
             <p className="text-sm text-slate-500 dark:text-slate-400">Worker Loading</p>
             <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
-              {runtimePlan?.worker_model_loading}
+              {runtimePlan?.worker_model_loading} ({runtimePlan?.worker_execution_mode})
             </p>
           </div>
         </div>
@@ -266,14 +266,23 @@ export default function SettingsPage() {
                 : "No resident worker models planned."}
             </p>
             <div className="mt-4 space-y-2 text-sm text-slate-600 dark:text-slate-300">
+              <p>Endpoint loading: {runtimePlan?.endpoint_model_loading}</p>
               <p>Endpoint hot residency: {runtimePlan?.can_keep_endpoint_models_loaded ? "allowed" : "not planned"}</p>
               <p>Idle teardown required: {runtimePlan?.requires_endpoint_idle_teardown ? "yes" : "no"}</p>
+              <p>Shutdown after request: {runtimePlan?.shutdown_endpoint_after_request ? "yes" : "no"}</p>
               <p>GPU count: {runtimePlan?.accelerator_count ?? hardware?.nvidia_gpus.length ?? 0}</p>
               {runtimePlan?.preferred_worker_devices.length ? (
                 <p>Worker placement: {runtimePlan.preferred_worker_devices.join(", ")}</p>
               ) : null}
               {runtimePlan?.preferred_endpoint_devices.length ? (
                 <p>Endpoint placement: {runtimePlan.preferred_endpoint_devices.join(", ")}</p>
+              ) : null}
+              {runtimePlan?.preferred_model_devices && Object.keys(runtimePlan.preferred_model_devices).length ? (
+                Object.entries(runtimePlan.preferred_model_devices).map(([key, devices]) => (
+                  <p key={key}>
+                    {key} placement: {devices.join(", ")}
+                  </p>
+                ))
               ) : null}
             </div>
           </div>

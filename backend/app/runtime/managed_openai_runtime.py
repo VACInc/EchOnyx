@@ -80,12 +80,60 @@ def _normalize_vllm_args(args: list[str]) -> list[str]:
     return normalized
 
 
+def _parse_bool(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _query_nvidia_gpus() -> list[dict[str, object]]:
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,name,memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    gpus: list[dict[str, object]] = []
+    for line in result.stdout.strip().splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            gpus.append(
+                {
+                    "index": int(parts[0]),
+                    "name": parts[1],
+                    "free_vram_gb": float(parts[2]) / 1024.0,
+                }
+            )
+        except ValueError:
+            continue
+    return sorted(gpus, key=lambda item: float(item["free_vram_gb"]), reverse=True)
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     runtime: str
+    model_command: str
     model_path: str
     model_name: str
     vllm_model_id: str
+    service_role: str
+    auto_nvidia_gpu_selection: bool
+    model_memory_gb: float
+    peer_model_memory_gb: float
+    hot_set_memory_gb: float
+    shutdown_after_request: bool
     host: str
     public_port: int
     upstream_port: int
@@ -101,9 +149,10 @@ class RuntimeConfig:
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
         runtime = os.environ.get("MODEL_RUNTIME", "llama_server").strip() or "llama_server"
+        model_command = os.environ.get("MODEL_COMMAND", "").strip()
         model_path = os.environ.get("MODEL_PATH", "").strip()
         vllm_model_id = os.environ.get("VLLM_MODEL_ID", "").strip()
-        effective_model_source = model_path or vllm_model_id
+        effective_model_source = model_path or vllm_model_id or model_command
         if not effective_model_source:
             raise RuntimeError("MODEL_PATH is required.")
 
@@ -111,9 +160,16 @@ class RuntimeConfig:
 
         return cls(
             runtime=runtime,
+            model_command=model_command,
             model_path=model_path,
             model_name=model_name,
             vllm_model_id=vllm_model_id,
+            service_role=os.environ.get("SERVICE_ROLE", "").strip().lower(),
+            auto_nvidia_gpu_selection=_parse_bool(os.environ.get("AUTO_NVIDIA_GPU_SELECTION")),
+            model_memory_gb=float(os.environ.get("MODEL_MEMORY_GB", "0") or 0),
+            peer_model_memory_gb=float(os.environ.get("PEER_MODEL_MEMORY_GB", "0") or 0),
+            hot_set_memory_gb=float(os.environ.get("HOT_SET_MEMORY_GB", "0") or 0),
+            shutdown_after_request=_parse_bool(os.environ.get("SHUTDOWN_AFTER_REQUEST")),
             host=os.environ.get("LISTEN_HOST", "0.0.0.0"),
             public_port=int(os.environ.get("PORT", "8080")),
             upstream_port=int(os.environ.get("UPSTREAM_PORT", "18080")),
@@ -170,6 +226,11 @@ def build_runtime_command(config: RuntimeConfig) -> list[str]:
         command.extend(_normalize_vllm_args(config.vllm_extra_args))
         return command
 
+    if config.runtime == "command":
+        if not config.model_command:
+            raise RuntimeError("MODEL_COMMAND is required when MODEL_RUNTIME=command.")
+        return shlex.split(config.model_command)
+
     raise RuntimeError(f"Unsupported MODEL_RUNTIME: {config.runtime}")
 
 
@@ -194,6 +255,7 @@ class ManagedRuntime:
         self._last_request_ts = 0.0
         self._last_start_ts = 0.0
         self._active_requests = 0
+        self._shutdown_after_request = config.shutdown_after_request
 
     def note_activity(self) -> None:
         with self._lock:
@@ -209,6 +271,8 @@ class ManagedRuntime:
             self._last_request_ts = self._clock()
             if self._active_requests > 0:
                 self._active_requests -= 1
+            if self._active_requests == 0 and self._shutdown_after_request and self._child_running_locked():
+                self._terminate_locked()
 
     def child_running(self) -> bool:
         with self._lock:
@@ -225,7 +289,7 @@ class ManagedRuntime:
                 return self._health_check(self.config)
 
             command = build_runtime_command(self.config)
-            env = os.environ.copy()
+            env = self._build_child_env_locked()
             self._process = self._popen_factory(command, env=env, start_new_session=True)
             self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts
@@ -249,6 +313,38 @@ class ManagedRuntime:
 
     def _child_running_locked(self) -> bool:
         return self._process is not None and self._process.poll() is None
+
+    def _build_child_env_locked(self) -> dict[str, str]:
+        env = os.environ.copy()
+        env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+
+        explicit = env.get("CUDA_VISIBLE_DEVICES", "").strip()
+        if not explicit:
+            for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
+                value = env.get(key, "").strip()
+                if value:
+                    explicit = value
+                    break
+
+        if explicit:
+            env["CUDA_VISIBLE_DEVICES"] = explicit
+            self._shutdown_after_request = self.config.shutdown_after_request
+            return env
+
+        if not self.config.auto_nvidia_gpu_selection:
+            self._shutdown_after_request = self.config.shutdown_after_request
+            return env
+
+        gpus = _query_nvidia_gpus()
+        if not gpus:
+            self._shutdown_after_request = self.config.shutdown_after_request
+            return env
+
+        visible_devices, shutdown_after_request = _select_nvidia_visible_devices(self.config, gpus)
+        if visible_devices:
+            env["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
+        self._shutdown_after_request = shutdown_after_request
+        return env
 
     def _terminate_locked(self) -> None:
         if not self._process:
@@ -284,6 +380,42 @@ class ManagedRuntime:
                 return response.status < 500
         except (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout):
             return False
+
+
+def _select_nvidia_visible_devices(
+    config: RuntimeConfig,
+    gpus: list[dict[str, object]],
+) -> tuple[tuple[str, ...], bool]:
+    if not gpus:
+        return (), config.shutdown_after_request
+
+    best = gpus[0]
+    best_free = float(best.get("free_vram_gb", 0.0) or 0.0)
+    own_memory = max(float(config.model_memory_gb or 0.0), 0.0)
+    peer_memory = max(float(config.peer_model_memory_gb or 0.0), 0.0)
+    hot_set = max(float(config.hot_set_memory_gb or 0.0), own_memory + peer_memory)
+    selected = (str(int(best["index"])),)
+    shutdown_after_request = config.shutdown_after_request
+
+    if len(gpus) == 1:
+        if hot_set > 0 and best_free < hot_set:
+            shutdown_after_request = True
+        return selected, shutdown_after_request
+
+    if config.service_role == "summarization":
+        if hot_set > 0 and best_free >= hot_set:
+            return selected, shutdown_after_request
+        alternate = next(
+            (
+                gpu for gpu in gpus[1:]
+                if float(gpu.get("free_vram_gb", 0.0) or 0.0) >= own_memory
+            ),
+            None,
+        )
+        if alternate is not None:
+            return (str(int(alternate["index"])),), shutdown_after_request
+
+    return selected, shutdown_after_request
 
 
 class RuntimeProxyHandler(BaseHTTPRequestHandler):

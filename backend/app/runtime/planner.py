@@ -26,16 +26,20 @@ class RuntimePlan:
     available_accelerator_memory_gb: float
     effective_memory_budget_gb: float
     placement_mode: str
+    worker_execution_mode: str
     worker_model_loading: "ModelLoadingStrategy"
+    endpoint_model_loading: str
     keep_resident_models: tuple[str, ...]
     preferred_worker_device_indices: tuple[int, ...]
     preferred_worker_devices: tuple[str, ...]
     preferred_endpoint_device_indices: tuple[int, ...]
     preferred_endpoint_devices: tuple[str, ...]
+    preferred_model_devices: dict[str, tuple[str, ...]]
     can_keep_all_worker_models_loaded: bool
     can_keep_endpoint_models_loaded: bool
     requires_endpoint_idle_teardown: bool
     endpoint_idle_timeout_recommendation_s: int
+    shutdown_endpoint_after_request: bool
     estimated_memory_by_model_gb: dict[str, float]
     notes: tuple[str, ...]
 
@@ -43,6 +47,9 @@ class RuntimePlan:
         payload = asdict(self)
         payload["worker_model_loading"] = self.worker_model_loading.value
         payload["keep_resident_models"] = list(self.keep_resident_models)
+        payload["preferred_model_devices"] = {
+            key: list(value) for key, value in self.preferred_model_devices.items()
+        }
         payload["notes"] = list(self.notes)
         return payload
 
@@ -252,6 +259,18 @@ def _device_labels(gpus: tuple[dict, ...]) -> tuple[str, ...]:
     return tuple(_device_label(gpu) for gpu in gpus)
 
 
+def _unique_device_labels(*groups: tuple[dict, ...]) -> tuple[str, ...]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for label in _device_labels(group):
+            if label in seen:
+                continue
+            seen.add(label)
+            labels.append(label)
+    return tuple(labels)
+
+
 def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     from app.config import ModelLoadingStrategy
 
@@ -316,24 +335,32 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
 
     if can_keep_all_worker_models_loaded:
         keep_resident_models = tuple(worker_models)
+        worker_execution_mode = "resident_all"
     else:
         reserve_for_ephemeral_worker = max((estimates[key] for key in worker_models), default=0.0)
         resident_budget = max(available_for_worker_gb - reserve_for_ephemeral_worker, 0.0)
         keep_resident_models = _select_resident_models(estimates, budget_gb=resident_budget)
         if keep_resident_models:
+            worker_execution_mode = "hybrid_resident"
             notes.append(
                 "Planner selected a hybrid resident set for worker-side models; larger models still load on demand."
             )
+        else:
+            worker_execution_mode = "stage_by_stage"
 
     if budget_gb <= 0:
         worker_model_loading = ModelLoadingStrategy.SEQUENTIAL
         keep_resident_models = ()
+        worker_execution_mode = "stage_by_stage"
         notes.append("Detected accelerator memory is unavailable; planner falls back to sequential loading.")
 
     preferred_worker_indices: tuple[int, ...] = ()
     preferred_worker_devices: tuple[str, ...] = ()
     preferred_endpoint_indices: tuple[int, ...] = ()
     preferred_endpoint_devices: tuple[str, ...] = ()
+    preferred_model_devices: dict[str, tuple[str, ...]] = {}
+    endpoint_model_loading = "parallel" if can_keep_endpoint_models_loaded else "sequential"
+    shutdown_endpoint_after_request = False
     if placement == "multi_gpu" and nvidia_gpus:
         if len({round(float(gpu.get("vram_gb", 0.0)), 1) for gpu in nvidia_gpus}) > 1:
             notes.append("Heterogeneous NVIDIA VRAM sizes detected; planner prefers the largest currently free GPU before spreading work.")
@@ -341,33 +368,102 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
         best_gpu = sorted_gpus[0]
         best_gpu_free = _free_capacity_gb(best_gpu)
+        vision_requirement = estimates.get("vision", 0.0)
+        summary_requirement = estimates.get("summarization", 0.0)
+        summary_candidate = next(
+            (
+                gpu
+                for gpu in sorted_gpus[1:]
+                if _free_capacity_gb(gpu) >= summary_requirement
+            ),
+            None,
+        )
         if best_gpu_free >= total_hot_set:
             placement = "single_large_gpu_preferred"
             preferred_worker_indices = _device_indices((best_gpu,))
             preferred_worker_devices = _device_labels((best_gpu,))
             preferred_endpoint_indices = _device_indices((best_gpu,))
             preferred_endpoint_devices = _device_labels((best_gpu,))
+            preferred_model_devices["worker"] = preferred_worker_devices
+            if "vision" in endpoint_models:
+                preferred_model_devices["vision"] = _device_labels((best_gpu,))
+            if "summarization" in endpoint_models:
+                preferred_model_devices["summarization"] = _device_labels((best_gpu,))
             notes.append(
                 f"{_device_label(best_gpu)} can host the full active model set at current free memory."
             )
         else:
+            vision_group: tuple[dict, ...] = ()
+            summary_group: tuple[dict, ...] = ()
+            if "vision" in endpoint_models:
+                vision_group = _pick_gpu_group(
+                    nvidia_gpus,
+                    requirement_gb=vision_requirement,
+                    prefer_nvlink=False,
+                    topology=topology,
+                )
+            if "summarization" in endpoint_models:
+                if summary_candidate is not None:
+                    summary_group = (summary_candidate,)
+                else:
+                    summary_group = _pick_gpu_group(
+                        nvidia_gpus,
+                        requirement_gb=summary_requirement,
+                        prefer_nvlink=True,
+                        topology=topology,
+                    )
+
+            if not vision_group and "vision" in endpoint_models:
+                vision_group = ((best_gpu,) if best_gpu else ())
+            if not summary_group and "summarization" in endpoint_models:
+                summary_group = ((best_gpu,) if best_gpu else ())
+
+            if "vision" in endpoint_models:
+                preferred_model_devices["vision"] = _device_labels(vision_group)
+            if "summarization" in endpoint_models:
+                preferred_model_devices["summarization"] = _device_labels(summary_group)
+
+            preferred_endpoint_group = tuple(
+                gpu
+                for gpu in sorted_gpus
+                if _device_label(gpu) in set(_unique_device_labels(vision_group, summary_group))
+            )
+            preferred_endpoint_indices = _device_indices(preferred_endpoint_group)
+            preferred_endpoint_devices = _unique_device_labels(vision_group, summary_group)
+
+            shared_endpoint_gpu = (
+                bool(vision_group)
+                and bool(summary_group)
+                and _device_indices(vision_group) == _device_indices(summary_group)
+            )
+            if shared_endpoint_gpu:
+                endpoint_model_loading = "sequential"
+                shutdown_endpoint_after_request = True
+                notes.append(
+                    "Vision and summarization currently share the same preferred GPU set; endpoint runtimes should load and unload per stage."
+                )
+            else:
+                endpoint_model_loading = "parallel"
+
+            reserved_endpoint_indices = set(preferred_endpoint_indices)
+            remaining_for_worker = [
+                gpu for gpu in sorted_gpus
+                if int(gpu.get("index", -1)) not in reserved_endpoint_indices
+            ]
+            worker_requirement = worker_total if can_keep_all_worker_models_loaded else max(
+                reserve_for_ephemeral_worker,
+                max((estimates[key] for key in worker_models), default=0.0),
+            )
             preferred_worker_group = _pick_gpu_group(
-                nvidia_gpus,
-                requirement_gb=worker_total,
+                remaining_for_worker or nvidia_gpus,
+                requirement_gb=worker_requirement,
                 prefer_nvlink=False,
                 topology=topology,
             )
             preferred_worker_indices = _device_indices(preferred_worker_group)
             preferred_worker_devices = _device_labels(preferred_worker_group)
-            endpoint_requirement = endpoint_total if can_keep_endpoint_models_loaded else max_endpoint
-            preferred_endpoint_group = _pick_gpu_group(
-                nvidia_gpus,
-                requirement_gb=endpoint_requirement,
-                prefer_nvlink=True,
-                topology=topology,
-            )
-            preferred_endpoint_indices = _device_indices(preferred_endpoint_group)
-            preferred_endpoint_devices = _device_labels(preferred_endpoint_group)
+            if preferred_worker_devices:
+                preferred_model_devices["worker"] = preferred_worker_devices
             if preferred_worker_devices:
                 notes.append(f"Preferred worker placement: {', '.join(preferred_worker_devices)}.")
             if preferred_endpoint_devices:
@@ -382,6 +478,15 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
             "Multiple GPUs were detected. The planner records multi-GPU placement, but model splitting remains backend-specific work."
         )
 
+    if not endpoint_models:
+        endpoint_model_loading = "none"
+    elif accelerator_count <= 1 and not can_keep_endpoint_models_loaded:
+        endpoint_model_loading = "sequential"
+        shutdown_endpoint_after_request = True
+        notes.append(
+            "Single-accelerator endpoint plan does not fit both endpoint models hot; unload each endpoint after its stage completes."
+        )
+
     if settings.runtime_planner_enabled and can_keep_all_worker_models_loaded:
         notes.append("Worker-side models fit within the active memory budget and can stay resident.")
 
@@ -393,16 +498,20 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
         available_accelerator_memory_gb=available_memory_gb,
         effective_memory_budget_gb=budget_gb,
         placement_mode=placement,
+        worker_execution_mode=worker_execution_mode,
         worker_model_loading=worker_model_loading,
+        endpoint_model_loading=endpoint_model_loading,
         keep_resident_models=keep_resident_models,
         preferred_worker_device_indices=preferred_worker_indices,
         preferred_worker_devices=preferred_worker_devices,
         preferred_endpoint_device_indices=preferred_endpoint_indices,
         preferred_endpoint_devices=preferred_endpoint_devices,
+        preferred_model_devices=preferred_model_devices,
         can_keep_all_worker_models_loaded=can_keep_all_worker_models_loaded,
         can_keep_endpoint_models_loaded=can_keep_endpoint_models_loaded,
         requires_endpoint_idle_teardown=requires_idle_teardown,
         endpoint_idle_timeout_recommendation_s=endpoint_idle_timeout_recommendation_s,
+        shutdown_endpoint_after_request=shutdown_endpoint_after_request,
         estimated_memory_by_model_gb={
             key: _round_gb(value) for key, value in estimates.items()
         },

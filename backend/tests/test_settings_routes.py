@@ -15,14 +15,22 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         "available_accelerator_memory_gb": 124.94,
         "effective_memory_budget_gb": 93.7,
         "placement_mode": "unified_memory_apu",
+        "worker_execution_mode": "resident_all",
         "worker_model_loading": "parallel",
+        "endpoint_model_loading": "sequential",
         "keep_resident_models": ["whisper", "diarization", "embedding", "audio_event"],
         "preferred_worker_devices": ["APU unified memory"],
         "preferred_endpoint_devices": ["APU unified memory"],
+        "preferred_model_devices": {
+            "worker": ["APU unified memory"],
+            "vision": ["APU unified memory"],
+            "summarization": ["APU unified memory"],
+        },
         "can_keep_all_worker_models_loaded": True,
         "can_keep_endpoint_models_loaded": False,
         "requires_endpoint_idle_teardown": True,
         "endpoint_idle_timeout_recommendation_s": 120,
+        "shutdown_endpoint_after_request": False,
         "estimated_memory_by_model_gb": {
             "whisper": 6.0,
             "diarization": 2.0,
@@ -104,9 +112,12 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.runtime_planner.accelerator_count == 1
     assert response.runtime_planner.total_accelerator_memory_gb == 124.94
     assert response.runtime_planner.available_accelerator_memory_gb == 124.94
+    assert response.runtime_planner.worker_execution_mode == "resident_all"
     assert response.runtime_planner.worker_model_loading == "parallel"
+    assert response.runtime_planner.endpoint_model_loading == "sequential"
     assert response.runtime_planner.preferred_worker_devices == ["APU unified memory"]
     assert response.runtime_planner.preferred_endpoint_devices == ["APU unified memory"]
+    assert response.runtime_planner.preferred_model_devices["worker"] == ["APU unified memory"]
     assert response.duplicates.policy == "collapse_exact"
     assert response.duplicates.exact_threshold == 0.95
     assert response.duplicates.probable_threshold == 0.85

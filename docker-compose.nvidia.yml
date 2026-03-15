@@ -34,23 +34,26 @@ services:
     entrypoint:
       - /bin/bash
       - -lc
-      - |
-        export CUDA_DEVICE_ORDER=PCI_BUS_ID
-        if [ -n "${NVIDIA_VISION_VISIBLE_DEVICES:-}" ]; then
-          export CUDA_VISIBLE_DEVICES="${NVIDIA_VISION_VISIBLE_DEVICES}"
-        fi
-        exec vllm serve "${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}" \
-          --served-model-name "${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}" \
-          --host 0.0.0.0 \
-          --port 8000 \
-          --gpu-memory-utilization "${VISION_VLLM_GPU_MEMORY_UTILIZATION:-0.8}" \
-          --max-model-len "${VISION_CONTEXT_SIZE:-8192}"
+      - exec python3 /opt/echonyx-runtime/managed_openai_runtime.py
     environment:
+      - PORT=8000
+      - MODEL_RUNTIME=vllm
+      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
+      - VLLM_MODEL_ID=${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
+      - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
+      - VLLM_EXTRA_ARGS=--gpu-memory-utilization ${VISION_VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      - SERVICE_ROLE=vision
+      - AUTO_NVIDIA_GPU_SELECTION=1
+      - MODEL_MEMORY_GB=${VISION_ENDPOINT_ESTIMATED_MEMORY_GB:-62}
+      - PEER_MODEL_MEMORY_GB=${SUMMARIZATION_ENDPOINT_ESTIMATED_MEMORY_GB:-24}
+      - HOT_SET_MEMORY_GB=${NVIDIA_ENDPOINT_HOT_SET_MEMORY_GB:-86}
+      - IDLE_TIMEOUT_SECONDS=${NVIDIA_ENDPOINT_IDLE_TIMEOUT_SECONDS:-300}
       - NVIDIA_VISION_VISIBLE_DEVICES=${NVIDIA_VISION_VISIBLE_DEVICES:-}
       - HF_HOME=/root/.cache/huggingface
       - HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub
     volumes:
       - vllm_cache:/root/.cache/huggingface
+      - ./backend/app/runtime:/opt/echonyx-runtime:ro
     healthcheck:
       test:
         - CMD
@@ -70,19 +73,23 @@ services:
     env_file:
       - .env
     command:
-      - /bin/bash
-      - -lc
-      - |
-        export CUDA_DEVICE_ORDER=PCI_BUS_ID
-        if [ -n "${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-}" ]; then
-          export CUDA_VISIBLE_DEVICES="${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES}"
-        fi
-        python -m app.runtime.llama_cpp_server
+      - python
+      - -m
+      - app.runtime.managed_openai_runtime
     environment:
+      - PORT=8000
+      - MODEL_RUNTIME=command
+      - MODEL_COMMAND=python -m app.runtime.llama_cpp_server
       - MODEL_PATH=/data/models/${SUMMARIZATION_MODEL_PATH:-qwen3-30b-a3b-q4_k_m.gguf}
       - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
       - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
       - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
+      - SERVICE_ROLE=summarization
+      - AUTO_NVIDIA_GPU_SELECTION=1
+      - MODEL_MEMORY_GB=${SUMMARIZATION_ENDPOINT_ESTIMATED_MEMORY_GB:-24}
+      - PEER_MODEL_MEMORY_GB=${VISION_ENDPOINT_ESTIMATED_MEMORY_GB:-62}
+      - HOT_SET_MEMORY_GB=${NVIDIA_ENDPOINT_HOT_SET_MEMORY_GB:-86}
+      - IDLE_TIMEOUT_SECONDS=${NVIDIA_ENDPOINT_IDLE_TIMEOUT_SECONDS:-300}
       - NVIDIA_SUMMARIZATION_VISIBLE_DEVICES=${NVIDIA_SUMMARIZATION_VISIBLE_DEVICES:-}
       - LLAMA_SERVER_EXTRA_ARGS=${SUMMARIZATION_LLAMA_SERVER_EXTRA_ARGS:-}
     volumes:

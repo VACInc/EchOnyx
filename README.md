@@ -56,6 +56,7 @@ The NVIDIA override now uses `gpus: all`, so normal Docker Compose exposes every
 The NVIDIA worker currently runs Celery with `--pool=solo` for stability while local CUDA `llama.cpp` vision and summarization loads are being hardened.
 On NVIDIA, the audio-event path now reads extracted WAV audio directly instead of depending on `torchaudio` file I/O, so a bad `torchcodec` runtime no longer blocks summarization.
 The CUDA image now builds `llama-cpp-python` against its bundled vendored `llama.cpp` by default; only opt into an external `llama.cpp` checkout if you are intentionally testing an upstream override.
+The NVIDIA endpoint services now self-place from live `nvidia-smi` free-memory data when explicit device pins are unset. On a single smaller GPU, they automatically switch to stage-by-stage endpoint loading instead of trying to keep both vision and summarization hot.
 On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM 0.11.2`. That split is now live-accepted end to end for upload, batch, summary, search, ask, and similar.
 Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks before they are stored or returned.
 
@@ -83,7 +84,8 @@ Set these in `.env` as needed:
 - `CUDA_WHL_URL`, `CUDA_TORCH_VERSION`, `CUDA_TORCHAUDIO_VERSION`, `CUDA_TORCHVISION_VERSION`: CUDA PyTorch image build controls
 - `CUDA_ARCHITECTURES`: optional CUDA arch list for `llama.cpp` image builds; use target SMs such as `86;120` for `3090 + RTX PRO 6000 Blackwell`
 - `CUDA_VISIBLE_DEVICES`: leave it unset by default; setting it to an empty string hides all CUDA devices. When it is unset, the planner now narrows local `llama.cpp` loads to the selected CUDA devices automatically before the first import.
-- `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning for the CUDA `llama_cpp.server` containers on multi-GPU hosts; when set, the NVIDIA override exports them as `CUDA_VISIBLE_DEVICES` for the endpoint process
+- `NVIDIA_VISION_VISIBLE_DEVICES`, `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES`: optional NVIDIA endpoint-service pinning overrides; when they are unset, the managed NVIDIA endpoints auto-pick GPUs from current free memory
+- `NVIDIA_ENDPOINT_IDLE_TIMEOUT_SECONDS`: idle teardown for managed NVIDIA endpoint runtimes
 - `LLAMA_BUILD_CUDA=1`: enable CUDA `llama.cpp` builds in the NVIDIA backend image
 - `INSTALL_NEMO=1`: include NeMo so Canary ASR works in the NVIDIA image
 - Audio-event classification is treated as supporting context only; if that stage fails, summarization continues without audio hints

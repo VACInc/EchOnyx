@@ -36,9 +36,16 @@ class FakeProcess:
 def _runtime_config(**overrides):
     base = dict(
         runtime="llama_server",
+        model_command="",
         model_path="/models/model.gguf",
         model_name="model.gguf",
         vllm_model_id="",
+        service_role="",
+        auto_nvidia_gpu_selection=False,
+        model_memory_gb=0.0,
+        peer_model_memory_gb=0.0,
+        hot_set_memory_gb=0.0,
+        shutdown_after_request=False,
         host="0.0.0.0",
         public_port=8080,
         upstream_port=18080,
@@ -91,6 +98,19 @@ def test_build_runtime_command_for_vllm():
     assert command[-2:] == ["--dtype", "auto"]
 
 
+def test_build_runtime_command_for_custom_command():
+    config = _runtime_config(
+        runtime="command",
+        model_command="python -m app.runtime.llama_cpp_server",
+        model_path="",
+        model_name="summary-model",
+    )
+
+    command = build_runtime_command(config)
+
+    assert command == ["python", "-m", "app.runtime.llama_cpp_server"]
+
+
 def test_build_runtime_command_normalizes_vllm_mm_limits():
     config = _runtime_config(
         runtime="vllm",
@@ -120,6 +140,89 @@ def test_runtime_config_accepts_vllm_model_id_without_model_path(monkeypatch):
     assert config.model_path == ""
     assert config.vllm_model_id == "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
     assert config.model_name == "vision-endpoint"
+
+
+def test_managed_runtime_prefers_secondary_gpu_for_summary_when_hot_set_does_not_fit(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="5, RTX 6000, 40960\n0, RTX 3090, 24576\n1, RTX 3090, 24576\n",
+            stderr="",
+        )
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="summarization",
+            auto_nvidia_gpu_selection=True,
+            model_memory_gb=24.0,
+            peer_model_memory_gb=62.0,
+            hot_set_memory_gb=86.0,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="0, RTX 4090, 24576\n",
+            stderr="",
+        )
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="summarization",
+            auto_nvidia_gpu_selection=True,
+            model_memory_gb=24.0,
+            peer_model_memory_gb=62.0,
+            hot_set_memory_gb=86.0,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: True,
+    )
+
+    runtime.ensure_started()
+    runtime._process = process
+    runtime._process_group_id = process.pid
+    runtime.request_started()
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.os.killpg", lambda *_args: setattr(process, "returncode", 0))
+    runtime.request_finished()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+    assert runtime.child_running() is False
 
 
 def test_managed_runtime_starts_once_until_child_is_ready(monkeypatch):

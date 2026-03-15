@@ -149,14 +149,18 @@ class RuntimePlannerConfig(BaseModel):
     available_accelerator_memory_gb: float
     effective_memory_budget_gb: float
     placement_mode: str
+    worker_execution_mode: str
     worker_model_loading: str
+    endpoint_model_loading: str
     keep_resident_models: list[str]
     preferred_worker_devices: list[str]
     preferred_endpoint_devices: list[str]
+    preferred_model_devices: dict[str, list[str]]
     can_keep_all_worker_models_loaded: bool
     can_keep_endpoint_models_loaded: bool
     requires_endpoint_idle_teardown: bool
     endpoint_idle_timeout_recommendation_s: int
+    shutdown_endpoint_after_request: bool
     estimated_memory_by_model_gb: dict[str, float]
     notes: list[str]
 
@@ -299,14 +303,18 @@ def _runtime_planner_response(settings, runtime_plan: dict) -> RuntimePlannerCon
         available_accelerator_memory_gb=runtime_plan["available_accelerator_memory_gb"],
         effective_memory_budget_gb=runtime_plan["effective_memory_budget_gb"],
         placement_mode=runtime_plan["placement_mode"],
+        worker_execution_mode=runtime_plan["worker_execution_mode"],
         worker_model_loading=runtime_plan["worker_model_loading"],
+        endpoint_model_loading=runtime_plan["endpoint_model_loading"],
         keep_resident_models=runtime_plan["keep_resident_models"],
         preferred_worker_devices=runtime_plan["preferred_worker_devices"],
         preferred_endpoint_devices=runtime_plan["preferred_endpoint_devices"],
+        preferred_model_devices=runtime_plan["preferred_model_devices"],
         can_keep_all_worker_models_loaded=runtime_plan["can_keep_all_worker_models_loaded"],
         can_keep_endpoint_models_loaded=runtime_plan["can_keep_endpoint_models_loaded"],
         requires_endpoint_idle_teardown=runtime_plan["requires_endpoint_idle_teardown"],
         endpoint_idle_timeout_recommendation_s=runtime_plan["endpoint_idle_timeout_recommendation_s"],
+        shutdown_endpoint_after_request=runtime_plan["shutdown_endpoint_after_request"],
         estimated_memory_by_model_gb=runtime_plan["estimated_memory_by_model_gb"],
         notes=runtime_plan["notes"],
     )

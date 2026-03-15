@@ -90,6 +90,9 @@
     - single-accelerator fully resident target: about `100 GB` free at the default memory fraction
   - live `ai-server` acceptance on March 14, 2026 now covers single upload, batch upload, summary retrieval, search, ask, and similar on the mixed `3090 + RTX PRO 6000` split
   - both `ask` responses and generated summaries now strip `<think>...</think>` reasoning blocks before returning or persisting model output
+  - the runtime plan now exposes explicit worker execution mode, endpoint loading mode, per-model placement, and whether endpoint services should unload after each request
+  - managed NVIDIA endpoints now auto-pick GPUs from current `nvidia-smi` free-memory data when explicit pins are unset
+  - on a single smaller NVIDIA GPU, managed endpoints now switch to stage-by-stage loading instead of trying to keep both large endpoint models resident
 
 ## High Priority Requirements
 
