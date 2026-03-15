@@ -385,13 +385,23 @@ class ManagedRuntime:
             self._process_group_id = None
 
     def _default_health_check(self, config: RuntimeConfig) -> bool:
-        url = f"http://127.0.0.1:{config.upstream_port}/health"
-        request = urllib.request.Request(url, method="GET")
-        try:
-            with urllib.request.urlopen(request, timeout=1.0) as response:
-                return response.status < 500
-        except (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout):
-            return False
+        urls = [f"http://127.0.0.1:{config.upstream_port}/health"]
+        if config.runtime == "command":
+            urls.append(f"http://127.0.0.1:{config.upstream_port}/v1/models")
+
+        for url in urls:
+            request = urllib.request.Request(url, method="GET")
+            try:
+                with urllib.request.urlopen(request, timeout=1.0) as response:
+                    if response.status < 500:
+                        return True
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    continue
+                return False
+            except (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout):
+                return False
+        return False
 
 
 def _select_nvidia_visible_devices(

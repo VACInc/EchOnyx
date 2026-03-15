@@ -1,4 +1,5 @@
 import subprocess
+import urllib.error
 
 from app.runtime.managed_openai_runtime import (
     ManagedRuntime,
@@ -235,6 +236,36 @@ def test_managed_runtime_command_child_uses_upstream_port(monkeypatch):
 
     assert captured["env"]["PORT"] == "18080"
     assert captured["env"]["LISTEN_HOST"] == "127.0.0.1"
+
+
+def test_managed_runtime_health_check_falls_back_to_v1_models_for_command(monkeypatch):
+    runtime = ManagedRuntime(_runtime_config(runtime="command", model_command="python -m app.runtime.llama_cpp_server", model_path=""))
+
+    class FakeResponse:
+        def __init__(self, status):
+            self.status = status
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request.full_url)
+        if request.full_url.endswith("/health"):
+            raise urllib.error.HTTPError(request.full_url, 404, "not found", hdrs=None, fp=None)
+        return FakeResponse(200)
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.urllib.request.urlopen", fake_urlopen)
+
+    assert runtime._default_health_check(runtime.config) is True
+    assert calls == [
+        "http://127.0.0.1:18080/health",
+        "http://127.0.0.1:18080/v1/models",
+    ]
 
 
 def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monkeypatch):
