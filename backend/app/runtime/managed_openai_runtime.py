@@ -326,6 +326,9 @@ class ManagedRuntime:
     def _build_child_env_locked(self) -> dict[str, str]:
         env = os.environ.copy()
         env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+        if self.config.runtime == "command":
+            env["PORT"] = str(self.config.upstream_port)
+            env["LISTEN_HOST"] = "127.0.0.1"
 
         explicit = env.get("CUDA_VISIBLE_DEVICES", "").strip()
         if not explicit:

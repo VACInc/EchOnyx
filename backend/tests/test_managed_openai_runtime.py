@@ -210,6 +210,33 @@ def test_managed_runtime_uses_role_specific_explicit_gpu_pin(monkeypatch):
     assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
 
 
+def test_managed_runtime_command_child_uses_upstream_port(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="summarization",
+            public_port=8000,
+            upstream_port=18080,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["PORT"] == "18080"
+    assert captured["env"]["LISTEN_HOST"] == "127.0.0.1"
+
+
 def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monkeypatch):
     process = FakeProcess()
     captured = {}
