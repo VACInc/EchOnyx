@@ -321,6 +321,68 @@ def test_calibrate_clap_profile_uses_real_primary_prompt_variant_scores(monkeypa
     assert profile["metrics"]["fixtures_evaluated"] == 2
 
 
+def test_calibrate_clap_profile_uses_exploratory_fixtures_as_negatives(monkeypatch):
+    monkeypatch.setattr(
+        audio_calibration,
+        "get_settings",
+        lambda: types.SimpleNamespace(audio_event_min_score=0.15),
+    )
+
+    podcast_candidate = next(
+        candidate for candidate in audio_calibration.CLAP_PRIMARY_CANDIDATES
+        if candidate["key"] == "podcast_voiceover"
+    )
+    broad_prompt = podcast_candidate["prompt_variants"][1]
+    conservative_prompt = podcast_candidate["prompt_variants"][0]
+
+    observations = [
+        {
+            "label": "voiceover_positive",
+            "use_for_calibration": True,
+            "expected_primary_key": "podcast_voiceover",
+            "expected_supporting_keys": [],
+            "primary_window_scores": {
+                "meeting_room_speech": [0.02, 0.02],
+                "broadcast_playback": [0.01, 0.01],
+                "podcast_voiceover": [0.85, 0.84],
+                "software_demo": [0.01, 0.01],
+            },
+            "primary_prompt_scores": {
+                "podcast_voiceover": {
+                    conservative_prompt: [0.82, 0.81],
+                    broad_prompt: [0.9, 0.89],
+                }
+            },
+            "supporting_prompt_scores": {},
+        },
+        {
+            "label": "meeting_exploratory",
+            "use_for_calibration": False,
+            "expected_primary_key": "meeting_room_speech",
+            "expected_supporting_keys": [],
+            "primary_window_scores": {
+                "meeting_room_speech": [0.5, 0.49],
+                "broadcast_playback": [0.02, 0.02],
+                "podcast_voiceover": [0.3, 0.31],
+                "software_demo": [0.01, 0.01],
+            },
+            "primary_prompt_scores": {
+                "podcast_voiceover": {
+                    conservative_prompt: [0.08, 0.09],
+                    broad_prompt: [0.94, 0.93],
+                }
+            },
+            "supporting_prompt_scores": {},
+        },
+    ]
+
+    profile = audio_calibration.calibrate_clap_profile_from_observations(observations)
+
+    assert profile["primary_prompts"]["podcast_voiceover"] == conservative_prompt
+    assert profile["metrics"]["fixtures_evaluated"] == 1
+    assert profile["metrics"]["contrast_fixtures_evaluated"] == 2
+
+
 @pytest.mark.asyncio
 async def test_calibrate_audio_events_manifest_writes_profile(monkeypatch, tmp_path):
     manifest_path = tmp_path / "manifest.json"
@@ -365,6 +427,7 @@ async def test_calibrate_audio_events_manifest_writes_profile(monkeypatch, tmp_p
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert profile["supporting_rules"]["music_heavy"] == written["supporting_rules"]["music_heavy"]
     assert written["metrics"]["fixtures_evaluated"] == 3
+    assert written["metrics"]["contrast_fixtures_evaluated"] == 3
 
 
 @pytest.mark.asyncio
@@ -424,6 +487,7 @@ def test_packaged_audio_calibration_profile_stays_conservative_default():
         "broadcast_weather_radio",
         "applause_real",
     ]
+    assert profile["metrics"]["contrast_fixtures_evaluated"] == 6
     assert "music_heavy" in profile["supporting_prompts"]
     assert "corporate explainer narration with light underscore music" in profile["supporting_prompts"]["music_heavy"]
     assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.2)

@@ -8,8 +8,7 @@
   },
   "supporting_prompts": {
     "music_heavy": [
-      "corporate explainer narration with light underscore music",
-      "spoken narration with background music or soundtrack"
+      "corporate explainer narration with light underscore music"
     ],
     "crowd_applause": [
       "room applause after a talk or presentation",
@@ -35,6 +34,7 @@
       "voiceover_with_music",
       "broadcast_weather_radio",
       "applause_real"
-    ]
+    ],
+    "contrast_fixtures_evaluated": 6
   }
 }

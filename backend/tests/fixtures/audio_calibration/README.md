@@ -19,6 +19,7 @@ Why the split:
 - the real meeting and software-demo clips still collapsed toward produced narration in raw CLAP audio-only classification
 - the exploratory clips remain checked in so future prompt/model work can benchmark against them without distorting the default calibration path
 - primary prompt calibration now scores the actual prompt variants; the packaged baseline was regenerated from the four validated fixtures after fixing that bug
+- exploratory clips now also serve as negative contrast during calibration, so they can push back on over-broad prompts without being treated as validated positives
 
 Source and license notes:
 

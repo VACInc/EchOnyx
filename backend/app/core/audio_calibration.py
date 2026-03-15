@@ -215,6 +215,7 @@ async def collect_clap_fixture_observations(
                     "media_path": str(fixture.media_path),
                     "expected_primary_key": fixture.expected_primary_key,
                     "expected_supporting_keys": list(fixture.expected_supporting_keys),
+                    "use_for_calibration": fixture.use_for_calibration,
                     "primary_window_scores": primary_window_scores,
                     "primary_prompt_scores": primary_prompt_scores,
                     "supporting_prompt_scores": supporting_prompt_scores,
@@ -241,7 +242,11 @@ def _separation_score(positives: list[float], negatives: list[float]) -> float:
     return _safe_mean(positives) - (_safe_mean(negatives) * 0.6)
 
 
-def _choose_primary_prompts(observations: list[dict]) -> dict[str, str]:
+def _choose_primary_prompts(
+    observations: list[dict],
+    *,
+    calibration_labels: set[str],
+) -> dict[str, str]:
     selected: dict[str, str] = {}
     for candidate in CLAP_PRIMARY_CANDIDATES:
         best_prompt = candidate["prompt"]
@@ -252,7 +257,10 @@ def _choose_primary_prompts(observations: list[dict]) -> dict[str, str]:
             for observation in observations:
                 values = _primary_prompt_series(observation, candidate["key"], prompt)
                 score = _aggregate_series(values, PRIMARY_AGGREGATION)
-                if observation.get("expected_primary_key") == candidate["key"]:
+                if (
+                    observation.get("label") in calibration_labels
+                    and observation.get("expected_primary_key") == candidate["key"]
+                ):
                     positives.append(score)
                 else:
                     negatives.append(score)
@@ -275,7 +283,10 @@ def _choose_supporting_prompts(observations: list[dict]) -> dict[str, list[str]]
             for observation in observations:
                 prompt_scores = observation["supporting_prompt_scores"].get(candidate["key"], {})
                 score = _aggregate_series(prompt_scores.get(prompt, []), "top2_mean")
-                if candidate["key"] in observation.get("expected_supporting_keys", []):
+                if (
+                    observation.get("use_for_calibration", True)
+                    and candidate["key"] in observation.get("expected_supporting_keys", [])
+                ):
                     positives.append(score)
                 else:
                     negatives.append(score)
@@ -369,7 +380,10 @@ def _choose_supporting_rules(
                         observations, fixture_scores, primary_scores, strict=False
                     ):
                         predicted = score >= max(absolute_min, primary_score * relative_ratio)
-                        expected = key in observation.get("expected_supporting_keys", [])
+                        expected = (
+                            observation.get("use_for_calibration", True)
+                            and key in observation.get("expected_supporting_keys", [])
+                        )
                         if predicted and expected:
                             tp += 1
                         elif predicted and not expected:
@@ -415,7 +429,12 @@ def calibrate_clap_profile_from_observations(
         raise ValueError("At least one fixture observation is required for calibration.")
 
     profile = dict(base_profile or build_default_clap_runtime_profile(get_settings().audio_event_min_score))
-    primary_prompts = _choose_primary_prompts(observations)
+    calibration_labels = {
+        str(observation.get("label"))
+        for observation in observations
+        if observation.get("use_for_calibration", True)
+    }
+    primary_prompts = _choose_primary_prompts(observations, calibration_labels=calibration_labels)
     supporting_prompts = _choose_supporting_prompts(observations)
     supporting_rules = _choose_supporting_rules(observations, supporting_prompts, primary_prompts)
 
@@ -423,8 +442,9 @@ def calibrate_clap_profile_from_observations(
     profile["supporting_prompts"] = supporting_prompts
     profile["supporting_rules"] = supporting_rules
     profile["metrics"] = {
-        "fixtures_evaluated": len(observations),
-        "labels": [observation["label"] for observation in observations],
+        "fixtures_evaluated": len(calibration_labels),
+        "labels": [observation["label"] for observation in observations if observation.get("use_for_calibration", True)],
+        "contrast_fixtures_evaluated": len(observations),
     }
     return profile
 
@@ -447,7 +467,8 @@ async def calibrate_audio_events_manifest(
     *,
     scratch_dir: Path | None = None,
 ) -> dict:
-    fixtures = select_calibration_fixtures(load_audio_calibration_manifest(manifest_path))
+    fixtures = load_audio_calibration_manifest(manifest_path)
+    select_calibration_fixtures(fixtures)
     observations = await collect_clap_fixture_observations(fixtures, scratch_dir=scratch_dir)
     settings = get_settings()
     profile = calibrate_clap_profile_from_observations(

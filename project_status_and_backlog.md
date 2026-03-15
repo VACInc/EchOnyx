@@ -55,6 +55,9 @@
   - primary prompt variants were not actually being rescored during calibration
   - that bug is now fixed
   - the packaged baseline profile has been regenerated from the four validated fixtures
+- exploratory CLAP fixtures now participate as negative contrast during calibration:
+  - they can help reject over-broad prompt choices
+  - they still do not count as validated positives for the packaged baseline
 - Current Mac-side exploratory CLAP measurements still show the same core limit:
   - `meeting_room_real` still collapses to `podcast_voiceover`
   - `software_demo_real` still leans toward `podcast_voiceover`
