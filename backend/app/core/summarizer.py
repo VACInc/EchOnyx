@@ -14,6 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 THINK_BLOCK_REGEX = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+ENDPOINT_STARTUP_WAIT_CAP_S = 90.0
 
 
 SUMMARY_SYSTEM_PROMPT = """You are an expert at summarizing video presentations and meetings.
@@ -79,7 +80,7 @@ def _call_summarization_endpoint(
         "temperature": temperature,
     }
     request_timeout = min(settings.summarization_endpoint_timeout_s, 60.0)
-    deadline = time.monotonic() + max(settings.summarization_endpoint_timeout_s, 5.0)
+    deadline = time.monotonic() + max(min(settings.summarization_endpoint_timeout_s, ENDPOINT_STARTUP_WAIT_CAP_S), 5.0)
     attempt = 0
 
     while True:

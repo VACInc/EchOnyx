@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
 
 logger = logging.getLogger(__name__)
+ENDPOINT_STARTUP_WAIT_CAP_S = 90.0
 
 
 def encode_image_base64(image_path: Path) -> str:
@@ -110,7 +111,7 @@ def _call_vision_endpoint(
         "temperature": temperature,
     }
     request_timeout = min(settings.vision_endpoint_timeout_s, 60.0)
-    deadline = time.monotonic() + max(settings.vision_endpoint_timeout_s, 5.0)
+    deadline = time.monotonic() + max(min(settings.vision_endpoint_timeout_s, ENDPOINT_STARTUP_WAIT_CAP_S), 5.0)
     attempt = 0
 
     while True:

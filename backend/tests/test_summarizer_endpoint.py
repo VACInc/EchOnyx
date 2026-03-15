@@ -71,3 +71,41 @@ def test_call_summarization_endpoint_retries_request_errors(monkeypatch):
     assert calls["count"] == 2
     assert sleeps == [0.5]
     assert result == {"choices": []}
+
+
+def test_call_summarization_endpoint_stops_retrying_after_startup_cap(monkeypatch):
+    settings = Settings(
+        summarization_endpoint_url="http://summary-server:8080/v1",
+        summarization_model="summary.gguf",
+        summarization_endpoint_timeout_s=600.0,
+    )
+    calls = {"count": 0}
+    sleeps = []
+    monotonic_values = iter([0.0, 30.0, 60.0, 90.0])
+
+    def fake_post(url, **kwargs):
+        calls["count"] += 1
+        return _response(
+            503,
+            url,
+            json={"error": {"message": "Loading model", "type": "unavailable_error", "code": 503}},
+        )
+
+    monkeypatch.setattr("app.core.summarizer.httpx.post", fake_post)
+    monkeypatch.setattr("app.core.summarizer.time.sleep", sleeps.append)
+    monkeypatch.setattr("app.core.summarizer.time.monotonic", lambda: next(monotonic_values))
+
+    try:
+        _call_summarization_endpoint(
+            settings,
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=128,
+            temperature=0.1,
+        )
+    except httpx.HTTPStatusError:
+        pass
+    else:
+        raise AssertionError("expected loading retries to stop once the startup cap is reached")
+
+    assert calls["count"] == 3
+    assert sleeps == [0.5, 1.0]

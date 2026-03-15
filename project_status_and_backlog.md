@@ -101,6 +101,8 @@
     - warm worker models plus one local endpoint: about `50.5 GB` of budget
     - single-accelerator fully resident target: about `100 GB` free at the default memory fraction
   - live `ai-server` acceptance on March 14, 2026 now covers single upload, batch upload, summary retrieval, search, ask, and similar on the mixed `3090 + RTX PRO 6000` split
+  - the managed NVIDIA endpoint runtime must treat `NVIDIA_VISION_VISIBLE_DEVICES` and `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES` as role-specific; reading the wrong one can pin summarization onto the vision GPU and deadlock the pipeline
+  - endpoint startup retries are now bounded so a dead `503 Loading model` loop fails instead of hanging jobs for many minutes
   - both `ask` responses and generated summaries now strip `<think>...</think>` reasoning blocks before returning or persisting model output
   - the runtime plan now exposes explicit worker execution mode, endpoint loading mode, per-model placement, and whether endpoint services should unload after each request
   - managed NVIDIA endpoints now auto-pick GPUs from current `nvidia-smi` free-memory data when explicit pins are unset

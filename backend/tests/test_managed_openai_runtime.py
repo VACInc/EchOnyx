@@ -180,6 +180,36 @@ def test_managed_runtime_prefers_secondary_gpu_for_summary_when_hot_set_does_not
     assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
 
 
+def test_managed_runtime_uses_role_specific_explicit_gpu_pin(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "5")
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "0")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="summarization",
+            auto_nvidia_gpu_selection=True,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+
+
 def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monkeypatch):
     process = FakeProcess()
     captured = {}

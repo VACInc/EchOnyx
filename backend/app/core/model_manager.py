@@ -528,7 +528,9 @@ class ModelManager:
                 strict=self.requires_strict_accelerator,
                 runtime_label="audio event classification",
             )
-            dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or torch.float32
+            # CLAP batch norm is not reliable in half precision on CUDA here.
+            # Keep it in float32 and let this optional stage fail-soft only for other reasons.
+            dtype = torch.float32 if _is_clap_model(model_name) else (_torch_dtype_for_backend(self.settings.gpu_backend) or torch.float32)
         cache_dir = self.settings.model_cache_dir
         loop = asyncio.get_event_loop()
 

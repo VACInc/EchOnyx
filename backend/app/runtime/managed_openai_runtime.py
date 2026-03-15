@@ -84,6 +84,15 @@ def _parse_bool(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _explicit_visible_device_keys(service_role: str) -> tuple[str, ...]:
+    role = service_role.strip().lower()
+    if role == "vision":
+        return ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES")
+    if role == "summarization":
+        return ("MODEL_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES")
+    return ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES")
+
+
 def _query_nvidia_gpus() -> list[dict[str, object]]:
     try:
         result = subprocess.run(
@@ -320,7 +329,7 @@ class ManagedRuntime:
 
         explicit = env.get("CUDA_VISIBLE_DEVICES", "").strip()
         if not explicit:
-            for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
+            for key in _explicit_visible_device_keys(self.config.service_role):
                 value = env.get(key, "").strip()
                 if value:
                     explicit = value

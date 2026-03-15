@@ -322,6 +322,68 @@ async def test_load_audio_event_forces_cpu_for_metal(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_load_audio_event_keeps_clap_float32_on_cuda(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        audio_event_model="laion/clap-htsat-fused",
+        gpu_backend=GPUBackend.CUDA,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        model_loading=ModelLoadingStrategy.PARALLEL,
+        whisper_model="large-v3",
+        granite_force_cpu=False,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.PARALLEL,
+        preferred_worker_device_indices=(0,),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [{"index": 0}], "amd_gpus": [], "apple_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.setattr(model_manager_module.ModelManager, "_torch_runtime_device", lambda self, **kwargs: "cuda:0")
+
+    class FakeModel:
+        def __init__(self):
+            self.to_calls = []
+
+        def to(self, device):
+            self.to_calls.append(device)
+            return self
+
+        def eval(self):
+            return self
+
+    clap_calls = {}
+    fake_model = FakeModel()
+    fake_processor = object()
+    fake_torch = types.SimpleNamespace(float16="float16", float32="float32", device=lambda value: value)
+
+    def fake_clap_from_pretrained(*args, **kwargs):
+        clap_calls.update(kwargs)
+        return fake_model
+
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        types.SimpleNamespace(
+            AutoProcessor=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: fake_processor),
+            ClapModel=types.SimpleNamespace(from_pretrained=fake_clap_from_pretrained),
+            AutoFeatureExtractor=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: object()),
+            AutoModelForAudioClassification=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: object()),
+        ),
+    )
+
+    manager = ModelManager()
+    bundle = await manager._load_audio_event()
+
+    assert bundle["type"] == "audio_event_clap"
+    assert clap_calls["torch_dtype"] == "float32"
+    assert bundle["device"] == "cuda:0"
+
+
+@pytest.mark.asyncio
 async def test_load_embedding_enables_trust_remote_code_for_nomic(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         embedding_model="nomic-ai/nomic-embed-text-v1.5",
