@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import batch, jobs, search, settings as settings_routes, summaries, videos
+from app.api.routes import action_items, batch, jobs, search, settings as settings_routes, summaries, videos
 from app.api.websocket import router as ws_router
 from app.config import get_settings
 
@@ -88,6 +88,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(videos.router, prefix=f"{settings.api_prefix}/videos", tags=["videos"])
+    app.include_router(action_items.router, prefix=f"{settings.api_prefix}/action-items", tags=["action-items"])
     app.include_router(jobs.router, prefix=f"{settings.api_prefix}/jobs", tags=["jobs"])
     app.include_router(batch.router, prefix=f"{settings.api_prefix}/batch", tags=["batch"])
     app.include_router(summaries.router, prefix=f"{settings.api_prefix}/summaries", tags=["summaries"])

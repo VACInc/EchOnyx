@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     duplicate_detection_policy: DuplicateHandlingPolicy = DuplicateHandlingPolicy.COLLAPSE_EXACT
     duplicate_exact_threshold: float = 0.95
     duplicate_probable_threshold: float = 0.85
+    action_items_enabled: bool = True
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/video_summarizer"

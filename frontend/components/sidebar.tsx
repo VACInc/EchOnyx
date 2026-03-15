@@ -1,15 +1,18 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Home,
-  Upload,
-  Video,
+  ListTodo,
   Search,
   Settings,
+  Upload,
+  Video,
 } from "lucide-react";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useUploadModal } from "@/components/upload-modal";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -18,12 +21,18 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Videos", href: "/videos", icon: Video },
   { name: "Search", href: "/search", icon: Search },
+  { name: "Todos", href: "/todos", icon: ListTodo, requiresActionItems: true },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const { openModal } = useUploadModal();
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.getSettings,
+  });
+  const actionItemsEnabled = settings?.action_items.enabled ?? true;
 
   return (
     <div className="flex h-full w-64 flex-col bg-gradient-to-b from-[#0a0d18] via-[#0e1326] to-[#0b0f1a]">
@@ -52,7 +61,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 px-3 py-4">
-        {navigation.map((item) => {
+        {navigation.filter((item) => !item.requiresActionItems || actionItemsEnabled).map((item) => {
           const isActive =
             pathname === item.href ||
             (item.href !== "/" && pathname.startsWith(item.href));

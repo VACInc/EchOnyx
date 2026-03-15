@@ -12,6 +12,7 @@ import {
   Image as ImageIcon,
   CheckCircle,
   List,
+  Plus,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -47,6 +48,8 @@ const formatDuration = (seconds?: number) => {
   return formatTimestamp(seconds);
 };
 
+const normalizeActionItemText = (value: string) => value.trim().replace(/\s+/g, " ").toLowerCase();
+
 export default function VideoDetailPage({
   params,
 }: {
@@ -59,6 +62,7 @@ export default function VideoDetailPage({
   const [tags, setTags] = useState<string[]>([]);
   const [isSavingTags, setIsSavingTags] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [todoInput, setTodoInput] = useState("");
   const queryClient = useQueryClient();
   const router = useRouter();
 
@@ -105,6 +109,25 @@ export default function VideoDetailPage({
     queryFn: () => api.getSummary(id),
     enabled: video?.status === "completed",
   });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.getSettings,
+  });
+
+  const actionItemsEnabled = settings?.action_items.enabled ?? true;
+
+  const { data: actionItemsData } = useQuery({
+    queryKey: ["action-items", { videoId: id }],
+    queryFn: () => api.getActionItems({ videoId: id, status: "all", sort: "updated_at", pageSize: 100 }),
+    enabled: video?.status === "completed" && actionItemsEnabled,
+  });
+
+  const actionItems = useMemo(() => actionItemsData?.items ?? [], [actionItemsData]);
+  const existingActionItemTexts = useMemo(
+    () => new Set(actionItems.map((item) => normalizeActionItemText(item.text))),
+    [actionItems],
+  );
 
   const handleExport = async (format: "md" | "pdf" | "json") => {
     const blob = await api.exportSummary(id, format);
@@ -171,6 +194,30 @@ export default function VideoDetailPage({
   const removeTag = async (tagToRemove: string) => {
     const nextTags = tags.filter((tag) => tag !== tagToRemove);
     await saveTags(nextTags);
+  };
+
+  const invalidateActionItems = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["action-items"] }),
+      queryClient.invalidateQueries({ queryKey: ["summary", id] }),
+    ]);
+  };
+
+  const addActionItem = async (text: string, source: "manual" | "summary") => {
+    if (!text.trim()) return;
+    await api.createActionItem({ videoId: id, text, source });
+    setTodoInput("");
+    await invalidateActionItems();
+  };
+
+  const toggleActionItem = async (actionItemId: string, completed: boolean) => {
+    await api.updateActionItem(actionItemId, { completed });
+    await invalidateActionItems();
+  };
+
+  const deleteActionItem = async (actionItemId: string) => {
+    await api.deleteActionItem(actionItemId);
+    await invalidateActionItems();
   };
 
   if (isVideoLoading) {
@@ -471,12 +518,93 @@ export default function VideoDetailPage({
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Action Items</h2>
               <ul className="mt-2 space-y-2">
                 {summary.summary.action_items.map((item, idx) => (
-                  <li key={idx} className="flex items-center">
-                    <input type="checkbox" className="mr-3 h-4 w-4 rounded" />
+                  <li key={idx} className="flex items-center justify-between gap-4 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
                     <span className="text-slate-700 dark:text-slate-200">{item}</span>
+                    {actionItemsEnabled ? (
+                      <button
+                        type="button"
+                        disabled={existingActionItemTexts.has(normalizeActionItemText(item))}
+                        onClick={() => void addActionItem(item, "summary")}
+                        className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+                      >
+                        {existingActionItemTexts.has(normalizeActionItemText(item)) ? "Added" : "Add to todos"}
+                      </button>
+                    ) : null}
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {actionItemsEnabled && (
+            <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Todo List</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Tracked separately so you can filter and check them off later.</p>
+                </div>
+                <Link href="/todos" className="text-sm font-medium text-blue-600 hover:underline">
+                  Open all todos
+                </Link>
+              </div>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="text"
+                  value={todoInput}
+                  onChange={(event) => setTodoInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void addActionItem(todoInput, "manual");
+                    }
+                  }}
+                  placeholder="Add a manual todo for this video"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none dark:border-slate-700 dark:bg-slate-900/70"
+                />
+                <button
+                  type="button"
+                  onClick={() => void addActionItem(todoInput, "manual")}
+                  disabled={todoInput.trim().length === 0}
+                  className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-white dark:text-slate-900"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add todo
+                </button>
+              </div>
+              <div className="mt-4 space-y-2">
+                {actionItems.length === 0 ? (
+                  <p className="text-sm text-slate-500 dark:text-slate-400">No todos for this video yet.</p>
+                ) : (
+                  actionItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between gap-4 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800/60"
+                    >
+                      <label className="flex flex-1 items-center gap-3">
+                        <input
+                          type="checkbox"
+                          checked={item.completed}
+                          onChange={() => void toggleActionItem(item.id, !item.completed)}
+                          className="h-4 w-4 rounded"
+                        />
+                        <span className={item.completed ? "text-slate-400 line-through dark:text-slate-500" : "text-slate-700 dark:text-slate-200"}>
+                          {item.text}
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
+                        <span className="rounded-full bg-white px-2 py-1 dark:bg-slate-900">{item.source}</span>
+                        <button
+                          type="button"
+                          onClick={() => void deleteActionItem(item.id)}
+                          className="text-red-600 hover:underline dark:text-red-300"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 

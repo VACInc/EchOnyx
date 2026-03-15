@@ -16,6 +16,7 @@
 - Semantic search + question answering across all content
 - Ask mode keeps a local follow-up chat thread and reuses prior turns for grounded follow-up questions
 - User labels (tags) and label-scoped search/ask
+- First-class todos/action items with a dedicated list view, video-linked add/remove flows, and label-aware filtering
 - Retry (resume) and Reset (reprocess) pipeline controls
 - Duplicate detection with configurable suppression thresholds
 - Settings model management with verify/add flow for built-in entries and Hugging Face model ids
@@ -187,6 +188,12 @@ python -m app.core.audio_calibration \
 ### Labels (Tags)
 - Add labels on a video’s detail page.
 - Use labels as filters in Search/Ask to target only those videos.
+
+### Todos / Action Items
+- Summary action items can be added into a real todo list instead of acting like one-off checkboxes.
+- The video detail page lets you add summary-derived todos, add manual todos, complete them, and remove them.
+- The dedicated `/todos` view lets you filter by completion state, text, and video labels.
+- `/api/action-items` exposes the same data for automation and later external sync work.
 
 ### Model Management
 - Settings now exposes selectors for ASR, diarization, vision, summarization, embeddings, and audio events.

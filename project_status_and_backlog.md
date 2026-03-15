@@ -8,6 +8,7 @@
 - Live validation on the Strix Halo remains part of the acceptance bar for runtime changes.
 - Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
 - `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks.
+- Action items now have a first-class todo system with `/api/action-items`, a dedicated `/todos` page, and a Settings toggle for feature visibility.
 
 ## Validated Findings And Constraints
 
@@ -126,6 +127,11 @@
     - `/api/search/ask` accepts optional prior turns
     - retrieval expands follow-up queries with recent user turns
     - the Search UI keeps a local conversation thread instead of replacing the last answer
+  - Summary action items can now be promoted into a dedicated todo list:
+    - `/api/action-items` supports create/update/delete/list
+    - list filtering can use linked video labels
+    - the video detail page can add summary suggestions or manual todos directly
+    - the `/todos` page is the global check-off view
   - Settings now exposes model selectors for all main runtime model slots plus a verify/add flow:
     - built-in catalog entries can be reselected directly
     - custom candidates can be checked against the built-in GGUF registry or Hugging Face before being added
@@ -152,6 +158,7 @@
 ## Product And Pipeline Enhancements
 
 - Keep sourcing better real meeting-room and software-demo fixtures until CLAP can separate them cleanly enough to promote them from exploratory to validated calibration inputs.
+- Add external sync/export for the action-item system once the target integration format is decided.
 - Let the summarization model reconcile CLAP-derived audio hints with transcript, slides, and vision context, but do not rely on the transcription model alone for audio-scene hints because ASR text drops nonverbal audio information.
 - Keep benchmarking whether CLAP-derived audio context materially improves summaries enough to justify the extra prompt and latency cost on Strix Halo and NVIDIA.
 - Incremental recomputation with step-level caching and lineage or versioning for transcripts, frames, vision metadata, and summaries.

@@ -223,6 +223,12 @@ class DuplicateConfig(BaseModel):
     probable_threshold: float
 
 
+class ActionItemsConfig(BaseModel):
+    """Action item feature configuration."""
+
+    enabled: bool
+
+
 class SettingsResponse(BaseModel):
     """Full settings response."""
 
@@ -232,6 +238,7 @@ class SettingsResponse(BaseModel):
     models: ModelConfig
     runtime_planner: RuntimePlannerConfig
     duplicates: DuplicateConfig
+    action_items: ActionItemsConfig
     processing: ProcessingConfig
 
 
@@ -249,6 +256,7 @@ class SettingsUpdate(BaseModel):
     duplicate_detection_policy: DuplicateHandlingPolicy | None = None
     duplicate_exact_threshold: float | None = None
     duplicate_probable_threshold: float | None = None
+    action_items_enabled: bool | None = None
     asr_model: str | None = None
     granite_force_cpu: bool | None = None
     diarization_model: str | None = None
@@ -301,6 +309,7 @@ ENV_FIELD_MAP: dict[str, str] = {
     "duplicate_detection_policy": "DUPLICATE_DETECTION_POLICY",
     "duplicate_exact_threshold": "DUPLICATE_EXACT_THRESHOLD",
     "duplicate_probable_threshold": "DUPLICATE_PROBABLE_THRESHOLD",
+    "action_items_enabled": "ACTION_ITEMS_ENABLED",
     "asr_model": "WHISPER_MODEL",
     "granite_force_cpu": "GRANITE_FORCE_CPU",
     "diarization_model": "DIARIZATION_MODEL",
@@ -401,6 +410,7 @@ async def get_current_settings() -> SettingsResponse:
             exact_threshold=settings.duplicate_exact_threshold,
             probable_threshold=settings.duplicate_probable_threshold,
         ),
+        action_items=ActionItemsConfig(enabled=settings.action_items_enabled),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,
             keyframe_extraction_interval=settings.keyframe_extraction_interval,

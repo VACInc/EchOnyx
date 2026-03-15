@@ -94,6 +94,7 @@ export default function SettingsPage() {
   const [duplicatePolicy, setDuplicatePolicy] = useState("collapse_exact");
   const [duplicateExactThreshold, setDuplicateExactThreshold] = useState("0.95");
   const [duplicateProbableThreshold, setDuplicateProbableThreshold] = useState("0.85");
+  const [actionItemsEnabled, setActionItemsEnabled] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
   const [modelDraftComponent, setModelDraftComponent] = useState<ModelKey>("embedding");
   const [modelDraftName, setModelDraftName] = useState("");
@@ -123,6 +124,7 @@ export default function SettingsPage() {
     setDuplicatePolicy(settings.duplicates.policy);
     setDuplicateExactThreshold(settings.duplicates.exact_threshold.toString());
     setDuplicateProbableThreshold(settings.duplicates.probable_threshold.toString());
+    setActionItemsEnabled(settings.action_items.enabled);
   }, [settings]);
 
   const modelOptions = useMemo(() => {
@@ -155,6 +157,7 @@ export default function SettingsPage() {
         duplicate_detection_policy: duplicatePolicy,
         duplicate_exact_threshold: Number(duplicateExactThreshold),
         duplicate_probable_threshold: Number(duplicateProbableThreshold),
+        action_items_enabled: actionItemsEnabled,
       }),
     onSuccess: async () => {
       setSaveMessage("Saved");
@@ -416,6 +419,17 @@ export default function SettingsPage() {
               onChange={(event) => setDuplicateProbableThreshold(event.target.value)}
               className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             />
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Todos / Action Items</span>
+            <select
+              value={actionItemsEnabled ? "enabled" : "disabled"}
+              onChange={(event) => setActionItemsEnabled(event.target.value === "enabled")}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
           </label>
         </div>
 

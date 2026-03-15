@@ -94,6 +94,9 @@ interface SettingsResponse {
     exact_threshold: number;
     probable_threshold: number;
   };
+  action_items: {
+    enabled: boolean;
+  };
   processing: {
     max_video_length_hours: number;
     keyframe_extraction_interval: number;
@@ -123,6 +126,27 @@ interface SettingsUpdatePayload {
   duplicate_detection_policy?: string;
   duplicate_exact_threshold?: number;
   duplicate_probable_threshold?: number;
+  action_items_enabled?: boolean;
+}
+
+interface ActionItemResponse {
+  id: string;
+  video_id: string;
+  video_title: string;
+  text: string;
+  source: string;
+  completed: boolean;
+  completed_at: string | null;
+  labels: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+interface ActionItemListResponse {
+  items: ActionItemResponse[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 interface SummaryResponse {
@@ -290,6 +314,55 @@ export const api = {
     return fetchApi<VideoResponse>(`/api/videos/${id}/tags`, {
       method: "PUT",
       body: JSON.stringify({ tags }),
+    });
+  },
+
+  // Action items
+  async getActionItems(params: {
+    videoId?: string;
+    tags?: string[];
+    status?: "open" | "completed" | "all";
+    search?: string;
+    sort?: "created_at" | "updated_at" | "completed_at" | "video_title";
+    order?: "asc" | "desc";
+    page?: number;
+    pageSize?: number;
+  }) {
+    const query = new URLSearchParams();
+    if (params.videoId) query.set("video_id", params.videoId);
+    if (params.status) query.set("status", params.status);
+    if (params.search) query.set("search", params.search);
+    if (params.sort) query.set("sort", params.sort);
+    if (params.order) query.set("order", params.order);
+    if (params.page) query.set("page", params.page.toString());
+    if (params.pageSize) query.set("page_size", params.pageSize.toString());
+    if (params.tags?.length) {
+      params.tags.forEach((tag) => query.append("tags", tag));
+    }
+    return fetchApi<ActionItemListResponse>(`/api/action-items?${query}`);
+  },
+
+  async createActionItem(payload: { videoId: string; text: string; source?: "manual" | "summary" }) {
+    return fetchApi<ActionItemResponse>("/api/action-items", {
+      method: "POST",
+      body: JSON.stringify({
+        video_id: payload.videoId,
+        text: payload.text,
+        source: payload.source ?? "manual",
+      }),
+    });
+  },
+
+  async updateActionItem(id: string, payload: { text?: string; completed?: boolean }) {
+    return fetchApi<ActionItemResponse>(`/api/action-items/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async deleteActionItem(id: string) {
+    return fetchApi<{ message: string }>(`/api/action-items/${id}`, {
+      method: "DELETE",
     });
   },
 

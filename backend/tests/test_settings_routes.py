@@ -66,6 +66,7 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         duplicate_detection_policy=DuplicateHandlingPolicy.COLLAPSE_EXACT,
         duplicate_exact_threshold=0.95,
         duplicate_probable_threshold=0.85,
+        action_items_enabled=True,
         max_video_length_hours=4,
         keyframe_extraction_interval=5,
         frame_persistence_seconds=3.0,
@@ -121,6 +122,7 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
     assert response.duplicates.policy == "collapse_exact"
     assert response.duplicates.exact_threshold == 0.95
     assert response.duplicates.probable_threshold == 0.85
+    assert response.action_items.enabled is True
     assert "transcription_fallback_model" not in response.models.model_dump()
     assert "transcription_fallback_enabled" not in response.models.model_dump()
 
@@ -193,6 +195,7 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
             models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
             runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
             duplicates=types.SimpleNamespace(policy="collapse_probable"),
+            action_items=types.SimpleNamespace(enabled=False),
             processing=types.SimpleNamespace(max_video_length_hours=4),
         )
 
@@ -207,6 +210,7 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
             duplicate_detection_policy=DuplicateHandlingPolicy.COLLAPSE_PROBABLE,
             duplicate_exact_threshold=0.96,
             duplicate_probable_threshold=0.88,
+            action_items_enabled=False,
         )
     )
 
@@ -218,6 +222,7 @@ async def test_update_settings_persists_asr_and_planner_fields(monkeypatch, tmp_
     assert "DUPLICATE_DETECTION_POLICY=collapse_probable" in persisted
     assert "DUPLICATE_EXACT_THRESHOLD=0.96" in persisted
     assert "DUPLICATE_PROBABLE_THRESHOLD=0.88" in persisted
+    assert "ACTION_ITEMS_ENABLED=false" in persisted
     assert captured["reloaded"] is True
 
 
@@ -240,6 +245,7 @@ async def test_update_settings_removes_nullable_env_fields(monkeypatch, tmp_path
             models=types.SimpleNamespace(asr_model="nvidia/canary-qwen-2.5b"),
             runtime_planner=types.SimpleNamespace(worker_model_loading="parallel"),
             duplicates=types.SimpleNamespace(policy="collapse_exact"),
+            action_items=types.SimpleNamespace(enabled=True),
             processing=types.SimpleNamespace(max_video_length_hours=4),
         )
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.action_item import ActionItem
     from app.models.job import Job
 
 
@@ -53,6 +54,11 @@ class Video(Base, TimestampMixin):
 
     # Relationships
     jobs: Mapped[list["Job"]] = relationship("Job", back_populates="video", cascade="all, delete-orphan")
+    action_items: Mapped[list["ActionItem"]] = relationship(
+        "ActionItem",
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Video(id={self.id}, filename={self.original_filename})>"
