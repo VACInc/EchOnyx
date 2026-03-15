@@ -297,6 +297,9 @@ async def _process_video_async(task, video_id: str, job_id: str):
             async with progress_lock:
                 job.status = JobStatus.PROCESSING.value
                 job.started_at = datetime.now(timezone.utc)
+                job.completed_at = None
+                job.error_message = None
+                job.error_step = None
                 job.celery_task_id = task.request.id
                 await session.commit()
 

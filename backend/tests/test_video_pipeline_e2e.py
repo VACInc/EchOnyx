@@ -121,6 +121,9 @@ async def test_process_video_pipeline_with_real_sample_video(
         status=JobStatus.QUEUED.value,
         created_at=created_at,
     )
+    job.error_message = "stale failure"
+    job.error_step = "summarization"
+    job.completed_at = created_at
 
     captured_embeddings: list[dict] = []
     captured_summary_calls: list[dict] = []
@@ -237,6 +240,8 @@ async def test_process_video_pipeline_with_real_sample_video(
     work_dir = tmp_path / f"work_{video_id}"
     assert result["status"] == "success"
     assert job.status == JobStatus.COMPLETED.value
+    assert job.error_message is None
+    assert job.error_step is None
     assert video.duration_seconds == pytest.approx(1.0)
     assert video.transcript is not None
     assert video.summary is not None
