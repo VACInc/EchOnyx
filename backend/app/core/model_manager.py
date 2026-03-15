@@ -33,6 +33,10 @@ def _is_clap_model(model_name: str) -> bool:
     return "clap" in model_name.lower()
 
 
+def _embedding_requires_trust_remote_code(model_name: str) -> bool:
+    return model_name.lower().startswith("nomic-ai/")
+
+
 def _normalize_whisper_model_name(
     model_name: str,
     *,
@@ -514,11 +518,17 @@ class ModelManager:
         import torch
 
         model_name = self.settings.audio_event_model
-        device = self._torch_runtime_device(
-            strict=self.requires_strict_accelerator,
-            runtime_label="audio event classification",
-        )
-        dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or torch.float32
+        # CLAP on Apple Metal currently crashes inside MPS graph normalization,
+        # so keep this optional stage on CPU there and let the main pipeline stay on Metal.
+        if self.settings.gpu_backend == GPUBackend.METAL:
+            device = "cpu"
+            dtype = torch.float32
+        else:
+            device = self._torch_runtime_device(
+                strict=self.requires_strict_accelerator,
+                runtime_label="audio event classification",
+            )
+            dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or torch.float32
         cache_dir = self.settings.model_cache_dir
         loop = asyncio.get_event_loop()
 
@@ -885,6 +895,7 @@ class ModelManager:
                 model_name,
                 device=device,
                 cache_folder=str(self.settings.model_cache_dir),
+                trust_remote_code=_embedding_requires_trust_remote_code(model_name),
             ),
         )
         logger.info(f"Loaded embedding model: {model_name}")

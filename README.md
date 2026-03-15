@@ -62,12 +62,12 @@ Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks befo
 
 **Apple Silicon / Metal:**
 Run backend and worker on the host, not Docker. The initial Metal bring-up now auto-selects smaller defaults on unified-memory Macs:
-- `WHISPER_MODEL=medium`
+- `WHISPER_MODEL=small`
 - `EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5`
 - `VISION_MODEL=Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf`
 - `SUMMARIZATION_MODEL=Qwen2.5-3B-Instruct.Q4_K_M.gguf`
 
-Follow `backend/README.md` for the host-run commands. This path is meant to prove functionality on a `16 GB` Apple Silicon machine, not the full high-capacity default stack yet.
+On Apple host runs, the worker should use Celery `--pool=solo`, and the default Apple path now uses local project `data/` directories instead of `/data/...`. Follow `backend/README.md` for the host-run commands. This path is meant to prove functionality on a `16 GB` Apple Silicon machine, not the full high-capacity default stack yet.
 
 ### 3) Access
 

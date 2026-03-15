@@ -101,7 +101,14 @@ def _collect_active_task_ids() -> tuple[set[str], bool]:
 async def recover_stale_processing_jobs(db: AsyncSession) -> int:
     """Requeue processing jobs that have no active Celery task and are stale."""
     settings = get_settings()
-    active_task_ids, workers_present = _collect_active_task_ids()
+    try:
+        active_task_ids, workers_present = await asyncio.wait_for(
+            asyncio.to_thread(_collect_active_task_ids),
+            timeout=5.0,
+        )
+    except TimeoutError:
+        logger.warning("Celery inspect timed out; skipping stale job recovery.")
+        return 0
     if not workers_present:
         logger.warning("No Celery workers found; skipping stale job recovery.")
         return 0

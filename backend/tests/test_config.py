@@ -2,6 +2,7 @@ import os
 import sys
 import types
 from io import StringIO
+from pathlib import Path
 
 import pytest
 
@@ -226,7 +227,8 @@ def test_validate_hardware_requirements_accepts_rocm_ready_strix_halo(monkeypatc
     validate_hardware_requirements(settings)
 
 
-def test_settings_default_to_managed_llama_server_runtime(monkeypatch):
+def test_settings_default_to_managed_llama_server_runtime(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("RUNTIME_MEMORY_CEILING_GB", raising=False)
     monkeypatch.delenv("GPU_MEMORY_FRACTION", raising=False)
     monkeypatch.delenv("RUNTIME_PLANNER_ENABLED", raising=False)
@@ -243,7 +245,8 @@ def test_get_settings_attaches_qwen3vl_defaults(monkeypatch):
     get_settings.cache_clear()
 
 
-def test_get_settings_applies_apple_silicon_small_model_defaults(monkeypatch):
+def test_get_settings_applies_apple_silicon_small_model_defaults(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     get_settings.cache_clear()
 
     monkeypatch.delenv("HARDWARE_PROFILE", raising=False)
@@ -271,12 +274,16 @@ def test_get_settings_applies_apple_silicon_small_model_defaults(monkeypatch):
 
     assert settings.hardware_profile == HardwareProfile.APPLE_SILICON
     assert settings.gpu_backend == GPUBackend.METAL
-    assert settings.whisper_model == "medium"
+    assert settings.whisper_model == "small"
     assert settings.embedding_model == "nomic-ai/nomic-embed-text-v1.5"
     assert settings.vision_model == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
     assert settings.vision_mmproj == "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
     assert settings.vision_chat_format == "qwen2.5-vl"
     assert settings.summarization_model == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+    assert settings.upload_dir == Path("/Users/vac/EchOnyx/data/uploads")
+    assert settings.model_cache_dir == Path("/Users/vac/EchOnyx/data/models")
+    assert settings.chroma_persist_dir == Path("/Users/vac/EchOnyx/data/chroma")
+    assert settings.audio_event_calibration_path == Path("/Users/vac/EchOnyx/data/models/audio_event_calibration.json")
     assert settings.gpu_memory_fraction == 0.65
     assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
 

@@ -34,18 +34,27 @@ Use a smaller sequential stack on a `16 GB` Mac:
 export HARDWARE_PROFILE=apple_silicon
 export GPU_BACKEND=metal
 export MODEL_LOADING=sequential
-export WHISPER_MODEL=medium
+export WHISPER_MODEL=small
 export EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
 export VISION_MODEL=Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf
 export VISION_MMPROJ=Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf
 export VISION_CHAT_FORMAT=qwen2.5-vl
 export SUMMARIZATION_MODEL=Qwen2.5-3B-Instruct.Q4_K_M.gguf
+export UPLOAD_DIR=$PWD/data/uploads
+export MODEL_CACHE_DIR=$PWD/data/models
+export CHROMA_PERSIST_DIR=$PWD/data/chroma
 ```
 
 Install `llama-cpp-python` with Metal enabled before you start the backend or worker:
 
 ```bash
 CMAKE_ARGS="-DGGML_METAL=on" uv sync
+```
+
+Start the host worker with `--pool=solo` on Apple Silicon:
+
+```bash
+uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --loglevel=info
 ```
 
 ## Notes
@@ -59,6 +68,7 @@ CMAKE_ARGS="-DGGML_METAL=on" uv sync
 - The NVIDIA Docker path now builds from `backend/Dockerfile.cuda` with CUDA PyTorch wheels, CUDA `llama.cpp`, and NeMo enabled by default.
 - The NVIDIA Compose override now uses `gpus: all` so backend and worker actually see every visible NVIDIA GPU under normal Docker Compose.
 - The NVIDIA worker currently uses Celery `--pool=solo`, and the NVIDIA Compose override now routes vision/summarization through managed endpoint runtimes instead of the in-process worker path.
+- Apple Silicon host runs currently need Celery `--pool=solo`; the default prefork worker path stalled during the first real Metal validation run.
 - On NVIDIA, leave `CUDA_VISIBLE_DEVICES` unset unless you intentionally want to hide GPUs from the planner; an empty string hides all CUDA devices. When it is unset, local `llama.cpp` loads now narrow visibility to the planner-selected GPUs before first import.
 - On heterogeneous NVIDIA hosts, `NVIDIA_VISION_VISIBLE_DEVICES` and `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES` can pin the endpoint runtimes to specific cards. When they are unset, the managed NVIDIA endpoints auto-pick GPUs from current free memory and fall back to stage-by-stage endpoint loading on single smaller GPUs.
 - The CUDA image now smoke-builds on the live `ai-server`; when `docker build` has no visible GPU, set `CUDA_ARCHITECTURES` explicitly for your target cards. The live `3090 + RTX PRO 6000 Blackwell` mix was validated with `86;120`.

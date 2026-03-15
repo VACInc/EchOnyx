@@ -266,14 +266,19 @@ def _env_present(name: str) -> bool:
     return value is not None and bool(str(value).strip())
 
 
+def _project_root_dir() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 def _apply_apple_silicon_defaults(settings: Settings, gpu_info: dict) -> None:
     if settings.hardware_profile != HardwareProfile.APPLE_SILICON:
         return
 
     os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    project_root = _project_root_dir()
 
     if not _env_present("WHISPER_MODEL"):
-        settings.whisper_model = "medium"
+        settings.whisper_model = "small"
     if not _env_present("EMBEDDING_MODEL"):
         settings.embedding_model = "nomic-ai/nomic-embed-text-v1.5"
     if not _env_present("VISION_MODEL"):
@@ -284,6 +289,14 @@ def _apply_apple_silicon_defaults(settings: Settings, gpu_info: dict) -> None:
         settings.vision_chat_format = "qwen2.5-vl"
     if not _env_present("SUMMARIZATION_MODEL"):
         settings.summarization_model = "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+    if not _env_present("UPLOAD_DIR"):
+        settings.upload_dir = project_root / "data" / "uploads"
+    if not _env_present("MODEL_CACHE_DIR"):
+        settings.model_cache_dir = project_root / "data" / "models"
+    if not _env_present("CHROMA_PERSIST_DIR"):
+        settings.chroma_persist_dir = project_root / "data" / "chroma"
+    if not _env_present("AUDIO_EVENT_CALIBRATION_PATH"):
+        settings.audio_event_calibration_path = settings.model_cache_dir / "audio_event_calibration.json"
 
     unified_memory = float(gpu_info.get("unified_memory_gb") or 0.0)
     if unified_memory and unified_memory <= 24 and not _env_present("GPU_MEMORY_FRACTION"):

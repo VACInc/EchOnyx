@@ -137,7 +137,7 @@ updates = {
 }
 if "$HARDWARE_PROFILE" == "apple_silicon":
     updates.update({
-        "WHISPER_MODEL": "medium",
+        "WHISPER_MODEL": "small",
         "EMBEDDING_MODEL": "nomic-ai/nomic-embed-text-v1.5",
         "VISION_MODEL": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
         "VISION_MMPROJ": "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf",
@@ -203,15 +203,24 @@ print_instructions() {
     else
         echo "  Metal on Apple Silicon runs on the host, not Docker."
         echo "  Follow backend/README.md for the host startup commands."
+        echo "  Use Celery --pool=solo for the host worker on Apple Silicon."
     fi
     echo ""
     echo "Then open http://localhost:3000 in your browser."
     echo ""
     echo "To view logs:"
-    echo "  docker compose logs -f"
+    if [ "$START_MODE" = "docker" ]; then
+        echo "  docker compose logs -f"
+    else
+        echo "  tail -f /tmp/echonyx-backend.log /tmp/echonyx-worker.log"
+    fi
     echo ""
     echo "To stop:"
-    echo "  docker compose down"
+    if [ "$START_MODE" = "docker" ]; then
+        echo "  docker compose down"
+    else
+        echo "  pkill -f 'uvicorn app.main:app' && pkill -f 'celery -A app.workers.celery_app worker'"
+    fi
     echo ""
 }
 

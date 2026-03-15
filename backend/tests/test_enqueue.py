@@ -179,6 +179,34 @@ async def test_recover_stale_processing_jobs_skips_without_workers(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_recover_stale_processing_jobs_skips_when_inspect_times_out(monkeypatch):
+    job = Job(
+        id=uuid.uuid4(),
+        video_id=uuid.uuid4(),
+        status=JobStatus.PROCESSING.value,
+        celery_task_id="old-task",
+        started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+
+    class DummySettings:
+        job_stale_minutes = 10
+
+    async def fake_wait_for(_awaitable, timeout):
+        assert timeout == 5.0
+        _awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(enqueue_module, "get_settings", lambda: DummySettings())
+    monkeypatch.setattr(enqueue_module.asyncio, "wait_for", fake_wait_for)
+
+    db = DummySession(results=[job])
+    recovered = await enqueue_module.recover_stale_processing_jobs(db)
+
+    assert recovered == 0
+    assert job.status == JobStatus.PROCESSING.value
+
+
+@pytest.mark.asyncio
 async def test_recover_stale_processing_jobs_with_zero_grace_recovers_recent_job(monkeypatch):
     recent_job = Job(
         id=uuid.uuid4(),

@@ -29,6 +29,7 @@ dependencies = [
     "pyannote.audio>=3.3.0",
     "scenedetect[opencv]>=0.6.0",
     "ffmpeg-python>=0.2.0",
+    "soundfile>=0.12.1",
 
     # LLM inference
     "llama-cpp-python @ git+https://github.com/abetlen/llama-cpp-python.git",

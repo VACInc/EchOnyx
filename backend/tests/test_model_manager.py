@@ -265,6 +265,109 @@ async def test_load_whisper_uses_transformers_repo_on_metal(monkeypatch, tmp_pat
     assert seen["model_name"] == "openai/whisper-medium"
 
 
+@pytest.mark.asyncio
+async def test_load_audio_event_forces_cpu_for_metal(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        audio_event_model="laion/clap-htsat-fused",
+        gpu_backend=GPUBackend.METAL,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.APPLE_SILICON,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        whisper_model="small",
+        granite_force_cpu=False,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": [], "apple_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    class FakeModel:
+        def __init__(self):
+            self.to_calls = []
+
+        def to(self, device):
+            self.to_calls.append(device)
+            return self
+
+        def eval(self):
+            return self
+
+    fake_model = FakeModel()
+    fake_processor = object()
+    fake_torch = types.SimpleNamespace(float32="float32")
+
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        types.SimpleNamespace(
+            AutoProcessor=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: fake_processor),
+            ClapModel=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: fake_model),
+            AutoFeatureExtractor=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: object()),
+            AutoModelForAudioClassification=types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: object()),
+        ),
+    )
+
+    manager = ModelManager()
+    bundle = await manager._load_audio_event()
+
+    assert bundle["type"] == "audio_event_clap"
+    assert bundle["device"] == "cpu"
+    assert fake_model.to_calls == []
+
+
+@pytest.mark.asyncio
+async def test_load_embedding_enables_trust_remote_code_for_nomic(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        embedding_model="nomic-ai/nomic-embed-text-v1.5",
+        gpu_backend=GPUBackend.METAL,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.APPLE_SILICON,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        whisper_model="small",
+        granite_force_cpu=False,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": [], "apple_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True))),
+    )
+
+    seen = {}
+
+    class FakeSentenceTransformer:
+        def __init__(self, model_name, **kwargs):
+            seen["model_name"] = model_name
+            seen["kwargs"] = kwargs
+
+    monkeypatch.setitem(
+        sys.modules,
+        "sentence_transformers",
+        types.SimpleNamespace(SentenceTransformer=FakeSentenceTransformer),
+    )
+
+    manager = ModelManager()
+    await manager._load_embedding()
+
+    assert seen["model_name"] == "nomic-ai/nomic-embed-text-v1.5"
+    assert seen["kwargs"]["device"] == "mps"
+    assert seen["kwargs"]["trust_remote_code"] is True
+
+
 def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         whisper_model="large-v3",

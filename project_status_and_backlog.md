@@ -6,7 +6,7 @@
 - The live Strix Halo default should remain `llama_server` for now.
 - The `vllm` runtime stays in the repo as an opt-in ROCm backend for future work and for later NVIDIA comparison.
 - Live validation on the Strix Halo remains part of the acceptance bar for runtime changes.
-- Apple Silicon now has an initial Metal host-run bring-up path with small defaults, but it is not live-accepted yet because we do not have an active Mac validation box in this repo workflow.
+- Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
 
 ## Validated Findings And Constraints
 
@@ -96,12 +96,16 @@
   - on a single smaller NVIDIA GPU, managed endpoints now switch to stage-by-stage loading instead of trying to keep both large endpoint models resident
   - Apple Silicon now auto-detects as `hardware_profile=apple_silicon` with `gpu_backend=metal`
   - the initial Apple bring-up path uses smaller default models on unified-memory Macs:
-    - `medium` Whisper
+    - `small` Whisper
     - `nomic-ai/nomic-embed-text-v1.5`
     - `Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf`
     - `Qwen2.5-3B-Instruct.Q4_K_M.gguf`
   - on smaller Apple unified-memory systems, the planner now forces full stage-by-stage loading instead of trying to keep a hybrid resident set hot
   - the repo bootstrap scripts now detect Apple Silicon and stop recommending the old Vulkan Strix-Halo path
+  - live Mac mini validation on March 15, 2026 exposed three host-run requirements:
+    - default Apple host paths should be repo-local `data/` directories instead of `/data/...`
+    - the Apple worker should use Celery `--pool=solo`
+    - the Metal Whisper transformers path needs the `soundfile` dependency installed
 
 ## High Priority Requirements
 

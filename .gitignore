@@ -12,6 +12,8 @@
 
 # local data
 uploads/
+data/
+tmp/
 
 # OS/editor
 .DS_Store
