@@ -51,6 +51,14 @@
   - the real applause clip separated correctly as a `crowd_applause` supporting cue
   - the current real meeting and software-demo clips still collapsed toward produced narration in raw CLAP audio-only classification
   - those exploratory real clips remain useful for benchmarking and future model or prompt work, but should not tune the default calibration path yet
+- CLAP calibration had a real primary-prompt-selection bug:
+  - primary prompt variants were not actually being rescored during calibration
+  - that bug is now fixed
+  - the packaged baseline profile has been regenerated from the four validated fixtures
+- Current Mac-side exploratory CLAP measurements still show the same core limit:
+  - `meeting_room_real` still collapses to `podcast_voiceover`
+  - `software_demo_real` still leans toward `podcast_voiceover`
+  - newer screencast candidates can flip toward `meeting_room_speech`, but they still do not separate cleanly enough to promote `software_demo`
 - Post-benchmark idle validation remained clean on Strix Halo:
   - after processing and two direct summary comparisons, the GPU returned to `0%` use at roughly `608-609 MHz`
 - Live Strix Halo duplicate handling is now in place:

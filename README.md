@@ -156,6 +156,7 @@ The repo now ships:
 That packaged baseline loads automatically when `/data/models/audio_event_calibration.json` is absent, and a custom `AUDIO_EVENT_CALIBRATION_PATH` still overrides it.
 
 Current note: the default packaged profile intentionally remains conservative. Live Strix Halo validation on March 10, 2026 confirmed that the real weather-radio and applause fixtures are audio-separable enough to keep in the active calibration path, while the current real meeting and software-demo fixtures remain exploratory because raw CLAP audio-only classification still collapses them toward produced narration.
+Primary prompt calibration now scores the real primary prompt variants instead of reusing one score per class, and the packaged baseline has been regenerated from the four validated fixtures.
 
 Regenerate the packaged baseline with:
 

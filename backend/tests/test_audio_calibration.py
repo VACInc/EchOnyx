@@ -258,9 +258,67 @@ def test_calibrate_clap_profile_from_observations_selects_music_prompt_and_rule(
     assert "music_heavy" in profile["supporting_prompts"]
     assert len(profile["supporting_prompts"]["music_heavy"]) >= 1
     assert "corporate explainer narration with light underscore music" in profile["supporting_prompts"]["music_heavy"]
+
+
+def test_calibrate_clap_profile_uses_real_primary_prompt_variant_scores(monkeypatch):
+    monkeypatch.setattr(
+        audio_calibration,
+        "get_settings",
+        lambda: types.SimpleNamespace(audio_event_min_score=0.15),
+    )
+
+    meeting_candidate = next(
+        candidate for candidate in audio_calibration.CLAP_PRIMARY_CANDIDATES
+        if candidate["key"] == "meeting_room_speech"
+    )
+    default_prompt = meeting_candidate["prompt_variants"][0]
+    alternate_prompt = meeting_candidate["prompt_variants"][1]
+
+    observations = [
+        {
+            "label": "meeting_positive",
+            "expected_primary_key": "meeting_room_speech",
+            "expected_supporting_keys": [],
+            "primary_window_scores": {
+                "meeting_room_speech": [0.12, 0.1],
+                "broadcast_playback": [0.02, 0.02],
+                "podcast_voiceover": [0.6, 0.58],
+                "software_demo": [0.05, 0.04],
+            },
+            "primary_prompt_scores": {
+                "meeting_room_speech": {
+                    default_prompt: [0.12, 0.1],
+                    alternate_prompt: [0.83, 0.81],
+                }
+            },
+            "supporting_prompt_scores": {},
+        },
+        {
+            "label": "voiceover_negative",
+            "expected_primary_key": "podcast_voiceover",
+            "expected_supporting_keys": [],
+            "primary_window_scores": {
+                "meeting_room_speech": [0.11, 0.09],
+                "broadcast_playback": [0.01, 0.01],
+                "podcast_voiceover": [0.9, 0.88],
+                "software_demo": [0.02, 0.02],
+            },
+            "primary_prompt_scores": {
+                "meeting_room_speech": {
+                    default_prompt: [0.11, 0.09],
+                    alternate_prompt: [0.03, 0.04],
+                }
+            },
+            "supporting_prompt_scores": {},
+        },
+    ]
+
+    profile = audio_calibration.calibrate_clap_profile_from_observations(observations)
+
+    assert profile["primary_prompts"]["meeting_room_speech"] == alternate_prompt
     assert profile["supporting_rules"]["music_heavy"]["aggregation"] in {"mean", "max", "top2_mean"}
     assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] in audio_calibration.ABSOLUTE_THRESHOLD_GRID
-    assert profile["metrics"]["fixtures_evaluated"] == 3
+    assert profile["metrics"]["fixtures_evaluated"] == 2
 
 
 @pytest.mark.asyncio
@@ -359,11 +417,16 @@ def test_packaged_audio_calibration_profile_stays_conservative_default():
     profile_path = Path(__file__).resolve().parents[1] / "app" / "assets" / "audio_event_calibration.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
-    assert profile["metrics"]["fixtures_evaluated"] == 2
-    assert profile["metrics"]["labels"] == ["voiceover_no_music", "voiceover_with_music"]
+    assert profile["metrics"]["fixtures_evaluated"] == 4
+    assert profile["metrics"]["labels"] == [
+        "voiceover_no_music",
+        "voiceover_with_music",
+        "broadcast_weather_radio",
+        "applause_real",
+    ]
     assert "music_heavy" in profile["supporting_prompts"]
     assert "corporate explainer narration with light underscore music" in profile["supporting_prompts"]["music_heavy"]
-    assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.03)
+    assert profile["supporting_rules"]["music_heavy"]["absolute_min_score"] == pytest.approx(0.2)
 
 
 async def _async_result(value):

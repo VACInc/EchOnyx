@@ -144,6 +144,22 @@ async def collect_clap_fixture_observations(
                 ]
 
                 primary_window_scores = {candidate["key"]: [] for candidate in CLAP_PRIMARY_CANDIDATES}
+                primary_prompt_scores = {
+                    candidate["key"]: {
+                        prompt: []
+                        for prompt in candidate["prompt_variants"]
+                    }
+                    for candidate in CLAP_PRIMARY_CANDIDATES
+                }
+                selected_primary_prompts = {
+                    candidate["key"]: candidate["prompt"]
+                    for candidate in primary_candidates
+                }
+                primary_prompt_specs = [
+                    {"key": candidate["key"], "prompt": prompt}
+                    for candidate in CLAP_PRIMARY_CANDIDATES
+                    for prompt in candidate["prompt_variants"]
+                ]
                 supporting_prompt_scores = {
                     candidate["key"]: {
                         prompt: []
@@ -164,12 +180,21 @@ async def collect_clap_fixture_observations(
                         device,
                         waveform,
                         target_sample_rate,
-                        [candidate["prompt"] for candidate in primary_candidates],
+                        [spec["prompt"] for spec in primary_prompt_specs],
                     )
-                    for prompt_idx, candidate in enumerate(primary_candidates):
-                        primary_window_scores[candidate["key"]].append(
-                            float(primary_probs[prompt_idx].item())
-                        )
+                    per_key_window_scores = {candidate["key"]: [] for candidate in primary_candidates}
+                    for prompt_idx, spec in enumerate(primary_prompt_specs):
+                        value = float(primary_probs[prompt_idx].item())
+                        primary_prompt_scores[spec["key"]].setdefault(spec["prompt"], []).append(value)
+                        if spec["prompt"] == selected_primary_prompts.get(spec["key"]):
+                            per_key_window_scores[spec["key"]].append(value)
+
+                    for candidate in primary_candidates:
+                        aggregated = per_key_window_scores.get(candidate["key"], [])
+                        if aggregated:
+                            primary_window_scores[candidate["key"]].append(max(aggregated))
+                        else:
+                            primary_window_scores[candidate["key"]].append(0.0)
 
                     if supporting_prompt_specs:
                         supporting_probs = _run_clap_prompt_set(
@@ -191,6 +216,7 @@ async def collect_clap_fixture_observations(
                     "expected_primary_key": fixture.expected_primary_key,
                     "expected_supporting_keys": list(fixture.expected_supporting_keys),
                     "primary_window_scores": primary_window_scores,
+                    "primary_prompt_scores": primary_prompt_scores,
                     "supporting_prompt_scores": supporting_prompt_scores,
                 }
 
@@ -224,7 +250,7 @@ def _choose_primary_prompts(observations: list[dict]) -> dict[str, str]:
             positives = []
             negatives = []
             for observation in observations:
-                values = observation["primary_window_scores"].get(candidate["key"], [])
+                values = _primary_prompt_series(observation, candidate["key"], prompt)
                 score = _aggregate_series(values, PRIMARY_AGGREGATION)
                 if observation.get("expected_primary_key") == candidate["key"]:
                     positives.append(score)
@@ -281,6 +307,21 @@ def _fixture_support_score(observation: dict, key: str, prompts: list[str], aggr
 
 
 def _fixture_primary_score(observation: dict) -> float:
+    return _fixture_primary_score_for_prompts(observation)
+
+
+def _fixture_primary_score_for_prompts(
+    observation: dict,
+    primary_prompts: dict[str, str] | None = None,
+) -> float:
+    if primary_prompts:
+        return max(
+            (
+                _aggregate_series(_primary_prompt_series(observation, key, prompt), PRIMARY_AGGREGATION)
+                for key, prompt in primary_prompts.items()
+            ),
+            default=0.0,
+        )
     return max(
         (_aggregate_series(values, PRIMARY_AGGREGATION) for values in observation["primary_window_scores"].values()),
         default=0.0,
@@ -300,6 +341,7 @@ def _f_beta(precision: float, recall: float, beta: float) -> float:
 def _choose_supporting_rules(
     observations: list[dict],
     supporting_prompts: dict[str, list[str]],
+    primary_prompts: dict[str, str],
 ) -> dict[str, dict]:
     rules: dict[str, dict] = {}
     for candidate in CLAP_SUPPORTING_CANDIDATES:
@@ -316,7 +358,10 @@ def _choose_supporting_rules(
                 _fixture_support_score(observation, key, prompts, aggregation)
                 for observation in observations
             ]
-            primary_scores = [_fixture_primary_score(observation) for observation in observations]
+            primary_scores = [
+                _fixture_primary_score_for_prompts(observation, primary_prompts)
+                for observation in observations
+            ]
             for absolute_min in ABSOLUTE_THRESHOLD_GRID:
                 for relative_ratio in RELATIVE_RATIO_GRID:
                     tp = fp = fn = 0
@@ -372,7 +417,7 @@ def calibrate_clap_profile_from_observations(
     profile = dict(base_profile or build_default_clap_runtime_profile(get_settings().audio_event_min_score))
     primary_prompts = _choose_primary_prompts(observations)
     supporting_prompts = _choose_supporting_prompts(observations)
-    supporting_rules = _choose_supporting_rules(observations, supporting_prompts)
+    supporting_rules = _choose_supporting_rules(observations, supporting_prompts, primary_prompts)
 
     profile["primary_prompts"] = primary_prompts
     profile["supporting_prompts"] = supporting_prompts
@@ -382,6 +427,18 @@ def calibrate_clap_profile_from_observations(
         "labels": [observation["label"] for observation in observations],
     }
     return profile
+
+
+def _primary_prompt_series(observation: dict, key: str, prompt: str) -> list[float]:
+    prompt_scores = observation.get("primary_prompt_scores") or {}
+    per_prompt = prompt_scores.get(key)
+    if isinstance(per_prompt, dict):
+        values = per_prompt.get(prompt)
+        if isinstance(values, list):
+            return values
+
+    fallback = observation.get("primary_window_scores", {}).get(key, [])
+    return fallback if isinstance(fallback, list) else []
 
 
 async def calibrate_audio_events_manifest(
