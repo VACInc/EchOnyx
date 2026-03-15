@@ -1,7 +1,9 @@
 """Embeddings and vector search using ChromaDB."""
 
 import asyncio
+import json
 import logging
+import math
 import re
 import uuid
 from collections.abc import Sequence
@@ -155,8 +157,47 @@ def _append_chunk(
 
     seen_texts.add(dedupe_key)
     chunks.append(normalized)
-    metadatas.append(metadata)
+    metadatas.append(_sanitize_metadata(metadata))
     ids.append(chunk_id)
+
+
+def _sanitize_metadata_value(value: Any) -> str | int | float | bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return value
+        return None
+    if isinstance(value, str):
+        normalized = " ".join(value.split()).strip()
+        return normalized or None
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        compact = [item for item in value if item is not None]
+        if not compact:
+            return None
+        return json.dumps(compact, ensure_ascii=True, sort_keys=True, default=str)
+    if isinstance(value, dict):
+        compact = {str(key): item for key, item in value.items() if item is not None}
+        if not compact:
+            return None
+        return json.dumps(compact, ensure_ascii=True, sort_keys=True, default=str)
+    return str(value)
+
+
+def _sanitize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in metadata.items():
+        sanitized_value = _sanitize_metadata_value(value)
+        if sanitized_value is None:
+            continue
+        sanitized[str(key)] = sanitized_value
+    return sanitized
 
 
 async def index_video_content(

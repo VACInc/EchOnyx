@@ -126,6 +126,64 @@ async def test_index_video_content_skips_low_signal_and_duplicate_chunks(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_index_video_content_sanitizes_chroma_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        embeddings,
+        "_chroma_client",
+        chromadb.PersistentClient(
+            path=str(tmp_path / "chroma"),
+            settings=ChromaSettings(anonymized_telemetry=False, allow_reset=True),
+        ),
+    )
+
+    async def fake_generate_embeddings(texts: list[str]) -> list[list[float]]:
+        return [_fake_embedding_for(text) for text in texts]
+
+    monkeypatch.setattr(embeddings, "generate_embeddings", fake_generate_embeddings)
+
+    video_id = "44444444-4444-4444-4444-444444444444"
+    indexed = await embeddings.index_video_content(
+        video_id=video_id,
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "Budget review includes timeline and owners.",
+                    "speaker": {"name": "Speaker 1"},
+                },
+            ]
+        },
+        summary={
+            "executive_summary": "Budget review for launch.",
+            "key_points": ["Budget owners confirmed"],
+            "topics": [
+                {
+                    "timestamp": float("nan"),
+                    "topic": {"label": "Budget"},
+                    "summary": "Budget owners and timeline reviewed.",
+                }
+            ],
+        },
+        slides=[
+            {
+                "timestamp": 2.0,
+                "title": ["Launch", "Budget"],
+                "content": "Budget timeline and owners",
+            }
+        ],
+    )
+
+    stored = embeddings.get_collection().get(where={"video_id": video_id}, include=["metadatas"])
+    metadatas = stored["metadatas"]
+
+    assert indexed == 5
+    assert any(metadata["topic_name"] == '{"label": "Budget"}' for metadata in metadatas if "topic_name" in metadata)
+    assert all("nan" not in str(metadata.get("timestamp", "")) for metadata in metadatas)
+    assert any(metadata["slide_title"] == '["Launch", "Budget"]' for metadata in metadatas if "slide_title" in metadata)
+
+
+@pytest.mark.asyncio
 async def test_find_similar_rebuilds_query_embedding_from_documents(monkeypatch):
     calls: dict[str, object] = {}
 

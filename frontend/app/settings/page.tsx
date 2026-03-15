@@ -437,9 +437,15 @@ export default function SettingsPage() {
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
-            <p className="text-sm text-slate-500 dark:text-slate-400">Budget</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Free Budget</p>
             <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
               {runtimePlan?.effective_memory_budget_gb} GB / {runtimePlan?.available_accelerator_memory_gb} GB free
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">
+            <p className="text-sm text-slate-500 dark:text-slate-400">Installed VRAM</p>
+            <p className="text-lg font-medium text-slate-900 dark:text-slate-100">
+              {runtimePlan?.total_accelerator_memory_gb} GB
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-800/60">

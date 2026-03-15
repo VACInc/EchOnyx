@@ -73,6 +73,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - Apple Silicon host runs currently need Celery `--pool=solo`; the default prefork worker path stalled during the first real Metal validation run.
 - On NVIDIA, leave `CUDA_VISIBLE_DEVICES` unset unless you intentionally want to hide GPUs from the planner; an empty string hides all CUDA devices. When it is unset, local `llama.cpp` loads now narrow visibility to the planner-selected GPUs before first import.
 - On heterogeneous NVIDIA hosts, `NVIDIA_VISION_VISIBLE_DEVICES` and `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES` are role-specific pins. A summary service now ignores the vision pin and vice versa. When they are unset, the managed NVIDIA endpoints auto-pick GPUs from current free memory and fall back to stage-by-stage endpoint loading on single smaller GPUs.
+- The runtime planner reports installed accelerator memory separately from the current free-memory budget; the budget is intentionally based on currently free memory, not raw installed VRAM.
 - Vision and summarization endpoint warmup is now bounded; if an endpoint keeps returning `503 Loading model` for too long, the worker stops waiting and surfaces the failure instead of hanging for many minutes.
 - The CUDA image now smoke-builds on the live `ai-server`; when `docker build` has no visible GPU, set `CUDA_ARCHITECTURES` explicitly for your target cards. The live `3090 + RTX PRO 6000 Blackwell` mix was validated with `86;120`.
 - The CUDA image now uses the `llama-cpp-python` vendored `llama.cpp` by default; only set an external `LLAMA_CPP_REPO` / `LLAMA_CPP_REF` when intentionally testing a specific upstream checkout.
@@ -84,4 +85,5 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - The audio-event step now reads extracted WAV files directly before CLAP scoring, so CUDA deployments do not depend on `torchaudio` + `torchcodec` just to build summary-side audio hints.
 - Audio-event classification is fail-soft: if it breaks, summarization continues with empty audio context instead of failing the whole job.
 - Similar-video reranking now leans more heavily on transcript and key-point overlap so generic narrated videos do not outrank truly related ones as easily.
+- Embedding indexing now sanitizes slide/topic metadata to Chroma-safe scalar values before insert so one malformed payload does not fail the job at the final embedding stage.
 - For the current model set, plan around `24 GB` free accelerator memory as the rough floor, `32 GB` free as the practical single-accelerator target, about `50.5 GB` of budget for warm worker models plus one endpoint, and about `100 GB` free if you expect the whole stack to stay resident at the default memory fraction.

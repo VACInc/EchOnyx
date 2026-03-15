@@ -215,6 +215,7 @@ Use the Search page to:
 
 Current accelerator sizing guidance for the shipped model set:
 - Plan against free accelerator memory, not only installed VRAM or unified memory.
+- The Settings runtime panel now shows installed accelerator memory separately from the active free-memory budget.
 - Rough floor is about `24 GB` free to run the largest current stage sequentially.
 - Practical single-accelerator target is about `32 GB` free.
 - Keeping the worker-side models warm needs about `26.5 GB` of budget.
@@ -223,6 +224,7 @@ Current accelerator sizing guidance for the shipped model set:
 - On multi-GPU systems, the planner now prefers the largest currently free accelerator first, then falls back to topology-aware spread.
 - CUDA worker-side models now honor the planner's preferred device selection, and the NVIDIA Compose override now defaults vision/summarization to dedicated CUDA `llama_cpp.server` containers instead of in-process worker loads.
 - The CUDA backend image now smoke-builds successfully on the live `ai-server`, and the mixed `3090 + RTX PRO 6000` runtime has now passed a live end-to-end acceptance run.
+- Embedding indexing now sanitizes Chroma metadata to scalar-safe values before insert so malformed slide/topic payloads do not fail the whole job near the end.
 
 Current AMD note:
 - Strix Halo is treated as a ROCm-only profile; Vulkan and CPU fallbacks are rejected.
