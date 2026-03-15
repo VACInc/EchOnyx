@@ -18,6 +18,7 @@
 - User labels (tags) and label-scoped search/ask
 - Retry (resume) and Reset (reprocess) pipeline controls
 - Duplicate detection with configurable suppression thresholds
+- Settings model management with verify/add flow for built-in entries and Hugging Face model ids
 
 ## Quick Start (Docker)
 
@@ -185,6 +186,10 @@ python -m app.core.audio_calibration \
 - Add labels on a video’s detail page.
 - Use labels as filters in Search/Ask to target only those videos.
 
+### Model Management
+- Settings now exposes selectors for ASR, diarization, vision, summarization, embeddings, and audio events.
+- You can verify a built-in registry name or Hugging Face model id, then add it into the selector before saving.
+
 ### Delete Videos
 - Use the Delete button on a video detail page to remove the video and all associated data (artifacts + embeddings).
 
@@ -195,6 +200,7 @@ Use the Search page to:
 - Search transcripts and summaries
 - Ask natural-language questions with follow-up chat in the same thread
 - Apply label filters to narrow the scope
+- Similar-video ranking now favors transcript and key-point overlap more heavily than generic narration style
 
 ## Hardware Support
 

@@ -11,6 +11,7 @@ Backend service for the video summarization system.
 - Vector search with ChromaDB
 - Chat-style follow-up Q&A on top of retrieval
 - Duplicate detection and suppression metadata during processing
+- Settings-side model verification and add flow for built-in entries and Hugging Face model ids
 
 ## Development
 
@@ -78,6 +79,8 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - Live `ai-server` acceptance now covers single upload, batch upload, summary retrieval, search, ask, and similar on that mixed NVIDIA split.
 - Summary generation and `ask` answers now strip `<think>...</think>` reasoning blocks before persistence or API response.
 - `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
+- `/api/settings/models/verify` checks a candidate model against the built-in catalog, GGUF registry, or Hugging Face before the UI adds it to a selector.
 - The audio-event step now reads extracted WAV files directly before CLAP scoring, so CUDA deployments do not depend on `torchaudio` + `torchcodec` just to build summary-side audio hints.
 - Audio-event classification is fail-soft: if it breaks, summarization continues with empty audio context instead of failing the whole job.
+- Similar-video reranking now leans more heavily on transcript and key-point overlap so generic narrated videos do not outrank truly related ones as easily.
 - For the current model set, plan around `24 GB` free accelerator memory as the rough floor, `32 GB` free as the practical single-accelerator target, about `50.5 GB` of budget for warm worker models plus one endpoint, and about `100 GB` free if you expect the whole stack to stay resident at the default memory fraction.

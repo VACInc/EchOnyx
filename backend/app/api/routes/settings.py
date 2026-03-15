@@ -23,6 +23,39 @@ from app.config import (
 )
 from app.core.model_manager import reset_model_manager
 
+MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
+    "asr": [
+        {"name": "nvidia/canary-qwen-2.5b", "size_gb": 6.0, "recommended": True},
+        {"name": "ibm-granite/granite-speech-3.3-8b", "size_gb": 16.0, "recommended": True},
+        {"name": "large-v3", "size_gb": 6.0, "recommended": False},
+        {"name": "large-v3-turbo", "size_gb": 3.0, "recommended": False},
+        {"name": "medium", "size_gb": 1.5, "recommended": False},
+        {"name": "small", "size_gb": 0.5, "recommended": False},
+    ],
+    "diarization": [
+        {"name": "pyannote/speaker-diarization-community-1", "size_gb": 2.0, "recommended": True},
+        {"name": "pyannote/speaker-diarization-3.1", "size_gb": 2.0, "recommended": False},
+    ],
+    "vision": [
+        {"name": "Qwen3VL-32B-Instruct-Q4_K_M.gguf", "size_gb": 24.0, "recommended": True},
+        {"name": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf", "size_gb": 4.0, "recommended": False},
+    ],
+    "summarization": [
+        {"name": "Qwen3-30B-A3B-Q4_K_M.gguf", "size_gb": 24.0, "recommended": True},
+        {"name": "Qwen2.5-3B-Instruct.Q4_K_M.gguf", "size_gb": 3.0, "recommended": False},
+    ],
+    "embedding": [
+        {"name": "Qwen/Qwen3-Embedding-8B", "size_gb": 16.0, "recommended": True},
+        {"name": "nomic-ai/nomic-embed-text-v1.5", "size_gb": 0.6, "recommended": False},
+    ],
+    "audio_event": [
+        {"name": "laion/clap-htsat-fused", "size_gb": 2.5, "recommended": True},
+        {"name": "MIT/ast-finetuned-audioset-10-10-0.4593", "size_gb": 0.4, "recommended": False},
+    ],
+}
+
+MODEL_COMPONENTS = tuple(MODEL_OPTIONS.keys())
+
 router = APIRouter()
 
 
@@ -243,6 +276,19 @@ class SettingsUpdate(BaseModel):
     summary_chunk_overlap_minutes: float | None = None
 
 
+class ModelVerifyRequest(BaseModel):
+    component: str
+    model_name: str
+
+
+class ModelVerifyResponse(BaseModel):
+    component: str
+    model_name: str
+    exists: bool
+    source: str
+    detail: str
+
+
 ENV_FIELD_MAP: dict[str, str] = {
     "hardware_profile": "HARDWARE_PROFILE",
     "gpu_backend": "GPU_BACKEND",
@@ -446,39 +492,66 @@ async def get_hardware() -> HardwareInfo:
 @router.get("/models/available")
 async def list_available_models() -> dict:
     """List available models for each component."""
-    return {
-        "asr": [
-            {"name": "nvidia/canary-qwen-2.5b", "size_gb": 6.0, "recommended": True},
-            {"name": "ibm-granite/granite-speech-3.3-8b", "size_gb": 16.0, "recommended": True},
-            {"name": "large-v3", "size_gb": 6.0, "recommended": False},
-            {"name": "large-v3-turbo", "size_gb": 3.0, "recommended": False},
-            {"name": "medium", "size_gb": 1.5, "recommended": False},
-        ],
-        "diarization": [
-            {"name": "pyannote/speaker-diarization-community-1", "size_gb": 2.0, "recommended": True},
-            {"name": "pyannote/speaker-diarization-3.1", "size_gb": 2.0, "recommended": False},
-        ],
-        "vision": [
-            {"name": "llama.cpp endpoint (Qwen3-VL)", "size_gb": 0.0, "recommended": False},
-            {"name": "qwen3-omni-30b-a3b-q4_k_m.gguf", "size_gb": 15.0, "recommended": True},
-            {"name": "qwen3-omni-30b-a3b-q5_k_m.gguf", "size_gb": 20.0, "recommended": False},
-            {"name": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf", "size_gb": 4.0, "recommended": False},
-        ],
-        "summarization": [
-            {"name": "llama.cpp endpoint (gptoss-120b)", "size_gb": 0.0, "recommended": True},
-            {"name": "qwen3-30b-a3b-q4_k_m.gguf", "size_gb": 15.0, "recommended": False},
-            {"name": "qwen3-30b-a3b-q5_k_m.gguf", "size_gb": 20.0, "recommended": False},
-            {"name": "Qwen2.5-3B-Instruct.Q4_K_M.gguf", "size_gb": 3.0, "recommended": False},
-        ],
-        "embedding": [
-            {"name": "Qwen/Qwen3-Embedding-8B", "size_gb": 16.0, "recommended": True},
-            {"name": "nomic-ai/nomic-embed-text-v1.5", "size_gb": 0.6, "recommended": False},
-        ],
-        "audio_event": [
-            {"name": "laion/clap-htsat-fused", "size_gb": 2.5, "recommended": True},
-            {"name": "MIT/ast-finetuned-audioset-10-10-0.4593", "size_gb": 0.4, "recommended": False},
-        ],
-    }
+    return MODEL_OPTIONS
+
+
+@router.post("/models/verify", response_model=ModelVerifyResponse)
+async def verify_model_candidate(request: ModelVerifyRequest) -> ModelVerifyResponse:
+    component = request.component.strip()
+    model_name = request.model_name.strip()
+    if component not in MODEL_COMPONENTS:
+        return ModelVerifyResponse(
+            component=component,
+            model_name=model_name,
+            exists=False,
+            source="invalid",
+            detail="Unknown model component.",
+        )
+    if not model_name:
+        return ModelVerifyResponse(
+            component=component,
+            model_name=model_name,
+            exists=False,
+            source="invalid",
+            detail="Model name is required.",
+        )
+
+    catalog_match = _find_catalog_model(component, model_name)
+    if catalog_match:
+        return ModelVerifyResponse(
+            component=component,
+            model_name=catalog_match["name"],
+            exists=True,
+            source="catalog",
+            detail="Model is already available in the built-in catalog.",
+        )
+
+    if model_name in _gguf_registry_names():
+        return ModelVerifyResponse(
+            component=component,
+            model_name=model_name,
+            exists=True,
+            source="registry",
+            detail="Model is available in the built-in GGUF registry.",
+        )
+
+    if "/" in model_name:
+        exists = await _huggingface_model_exists(model_name)
+        return ModelVerifyResponse(
+            component=component,
+            model_name=model_name,
+            exists=exists,
+            source="huggingface",
+            detail="Hugging Face model repo found." if exists else "Hugging Face model repo was not found.",
+        )
+
+    return ModelVerifyResponse(
+        component=component,
+        model_name=model_name,
+        exists=False,
+        source="unsupported",
+        detail="Unknown local alias or GGUF filename. Use a built-in registry name or a Hugging Face repo id.",
+    )
 
 
 @router.get("/models/status")
@@ -597,6 +670,38 @@ def _hf_cache_dir() -> Path:
     if hf_home:
         return Path(hf_home) / "hub"
     return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _find_catalog_model(component: str, model_name: str) -> dict[str, Any] | None:
+    normalized = model_name.strip().lower()
+    for item in MODEL_OPTIONS.get(component, []):
+        if str(item["name"]).strip().lower() == normalized:
+            return item
+    return None
+
+
+def _gguf_registry_names() -> set[str]:
+    from app.core.model_downloader import MODEL_REGISTRY
+
+    return set(MODEL_REGISTRY.keys())
+
+
+async def _huggingface_model_exists(model_name: str) -> bool:
+    from huggingface_hub import HfApi
+
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+    def check() -> bool:
+        api = HfApi()
+        try:
+            api.model_info(model_name, token=token)
+            return True
+        except Exception:
+            return False
+
+    import asyncio
+
+    return await asyncio.to_thread(check)
 
 
 def _hf_model_cached(model_name: str) -> bool:

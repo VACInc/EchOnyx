@@ -304,7 +304,10 @@ async def find_similar(
     except Exception:
         semantic_similar = []
 
+    matched_videos = {str(item.id): item for item in all_candidates}
     similar_videos = _merge_similar_candidates(
+        source_video=video,
+        candidate_videos=matched_videos,
         semantic_matches=semantic_similar,
         lexical_matches=lexical_similar,
         limit=limit,
@@ -315,8 +318,6 @@ async def find_similar(
             results=[],
             total=0,
         )
-
-    matched_videos = {str(item.id): item for item in all_candidates}
 
     results = []
     for item in similar_videos:
@@ -905,6 +906,38 @@ def _video_similarity_text(video: Video) -> str:
     return " ".join(part for part in parts if part).strip()
 
 
+def _video_transcript_similarity_text(video: Video) -> str:
+    if not video.transcript:
+        return ""
+    return " ".join(
+        str(segment.get("text") or "")
+        for segment in (video.transcript.get("segments") or [])[:32]
+        if str(segment.get("text") or "").strip()
+    ).strip()
+
+
+def _video_keypoint_similarity_text(video: Video) -> str:
+    if not video.summary:
+        return ""
+    parts: list[str] = []
+    for point in video.summary.get("key_points") or []:
+        text = str(point or "").strip()
+        if text:
+            parts.append(text)
+    for topic in video.summary.get("topics") or []:
+        topic_text = " ".join(
+            value
+            for value in (
+                str(topic.get("topic") or "").strip(),
+                str(topic.get("summary") or "").strip(),
+            )
+            if value
+        )
+        if topic_text:
+            parts.append(topic_text)
+    return " ".join(parts).strip()
+
+
 def _similarity_tokens(text: str) -> set[str]:
     return set(SIMILARITY_TOKEN_REGEX.findall(text.lower()))
 
@@ -1115,6 +1148,8 @@ def _fallback_similar_videos(source_video: Video, candidates: Sequence[Video], l
 
 def _merge_similar_candidates(
     *,
+    source_video: Video,
+    candidate_videos: dict[str, Video],
     semantic_matches: Sequence[dict],
     lexical_matches: Sequence[dict],
     limit: int,
@@ -1139,15 +1174,95 @@ def _merge_similar_candidates(
     for video_id, signals in merged.items():
         if not signals["semantic"] and signals["lexical"] < 0.12:
             continue
-        score = (signals["semantic"] * 0.75) + (signals["lexical"] * 0.45)
+        candidate = candidate_videos.get(video_id)
+        transcript_overlap = _structured_similarity_overlap(
+            _video_transcript_similarity_text(source_video),
+            _video_transcript_similarity_text(candidate) if candidate else "",
+        )
+        keypoint_overlap = _structured_similarity_overlap(
+            _video_keypoint_similarity_text(source_video),
+            _video_keypoint_similarity_text(candidate) if candidate else "",
+        )
+        title_overlap = _structured_similarity_overlap(
+            source_video.title or source_video.original_filename,
+            (candidate.title or candidate.original_filename) if candidate else "",
+        )
+        phrase_overlap = _shared_phrase_overlap(
+            _video_transcript_similarity_text(source_video),
+            _video_transcript_similarity_text(candidate) if candidate else "",
+        )
+
+        score = (
+            (signals["semantic"] * 0.45)
+            + (signals["lexical"] * 0.55)
+            + (transcript_overlap * 0.7)
+            + (keypoint_overlap * 0.35)
+            + (title_overlap * 0.15)
+            + (phrase_overlap * 0.25)
+        )
         if signals["semantic"] and signals["lexical"]:
             score += 0.1
+        if transcript_overlap < 0.05 and signals["lexical"] < 0.12:
+            score *= 0.55
         if score <= 0:
             continue
-        ranked.append({"video_id": video_id, "score": score})
+        ranked.append(
+            {
+                "video_id": video_id,
+                "score": score,
+                "transcript_overlap": transcript_overlap,
+                "lexical": signals["lexical"],
+            }
+        )
 
-    ranked.sort(key=lambda item: item["score"], reverse=True)
+    ranked.sort(
+        key=lambda item: (
+            item["score"],
+            item["transcript_overlap"],
+            item["lexical"],
+        ),
+        reverse=True,
+    )
     return ranked[:limit]
+
+
+def _structured_similarity_overlap(source_text: str, candidate_text: str) -> float:
+    source_tokens = _search_tokens(source_text)
+    candidate_tokens = _search_tokens(candidate_text)
+    if not source_tokens or not candidate_tokens:
+        return 0.0
+    overlap = source_tokens & candidate_tokens
+    if not overlap:
+        return 0.0
+    source_coverage = len(overlap) / len(source_tokens)
+    candidate_precision = len(overlap) / len(candidate_tokens)
+    return (source_coverage * 0.65) + (candidate_precision * 0.35)
+
+
+def _shared_phrase_overlap(source_text: str, candidate_text: str) -> float:
+    source_phrases = _similarity_phrases(source_text)
+    candidate_phrases = _similarity_phrases(candidate_text)
+    if not source_phrases or not candidate_phrases:
+        return 0.0
+    overlap = source_phrases & candidate_phrases
+    if not overlap:
+        return 0.0
+    return len(overlap) / len(source_phrases)
+
+
+def _similarity_phrases(text: str) -> set[str]:
+    tokens = [
+        token
+        for token in SIMILARITY_TOKEN_REGEX.findall(text.lower())
+        if token not in SEARCH_STOPWORDS
+    ]
+    if len(tokens) < 3:
+        return set()
+    phrases: set[str] = set()
+    for size in (3, 4):
+        for index in range(0, len(tokens) - size + 1):
+            phrases.add(" ".join(tokens[index:index + size]))
+    return phrases
 
 
 def _normalize_tag_filter(tags: Sequence[str] | None) -> list[str]:

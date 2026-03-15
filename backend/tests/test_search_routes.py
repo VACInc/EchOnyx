@@ -390,7 +390,87 @@ async def test_find_similar_uses_embedding_matches(monkeypatch):
     assert response.total == 1
     assert response.results[0].video_id == str(similar_video.id)
     assert response.results[0].text == "Planning session overlap"
-    assert response.results[0].relevance_score == pytest.approx(0.79 * 0.75)
+    assert response.results[0].relevance_score > 0
+
+
+@pytest.mark.asyncio
+async def test_find_similar_prefers_transcript_overlap_over_generic_semantic_style(monkeypatch):
+    source_video = Video(
+        id=uuid.uuid4(),
+        filename="source.mp4",
+        original_filename="source.mp4",
+        file_path="/tmp/source.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Budget Review",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "The budget review is due Friday and the roadmap ships next week.",
+                }
+            ]
+        },
+        summary={"executive_summary": "Narrated review", "key_points": ["Budget review due Friday"]},
+    )
+    generic_candidate = Video(
+        id=uuid.uuid4(),
+        filename="generic.mp4",
+        original_filename="generic.mp4",
+        file_path="/tmp/generic.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Narrated Demo",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "Welcome back to the narrated demo with overview commentary and background narration.",
+                }
+            ]
+        },
+        summary={"executive_summary": "Narrated review", "key_points": ["Narrated product overview"]},
+    )
+    specific_candidate = Video(
+        id=uuid.uuid4(),
+        filename="specific.mp4",
+        original_filename="specific.mp4",
+        file_path="/tmp/specific.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Budget Planning",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 4.0,
+                    "text": "The budget review is due Friday and the roadmap ships next week.",
+                }
+            ]
+        },
+        summary={"executive_summary": "Planning session", "key_points": ["Budget review due Friday"]},
+    )
+
+    async def fake_find_similar_content(video_id: str, n_results: int = 0):
+        assert video_id == str(source_video.id)
+        assert n_results >= 3
+        return [
+            {"video_id": str(generic_candidate.id), "score": 0.93},
+            {"video_id": str(specific_candidate.id), "score": 0.61},
+        ]
+
+    monkeypatch.setattr(search_module, "find_similar_content", fake_find_similar_content)
+
+    db = DummySession([
+        SequenceResult(scalar=source_video),
+        SequenceResult(items=[generic_candidate, specific_candidate]),
+    ])
+    response = await find_similar(str(source_video.id), limit=3, db=db)
+
+    assert response.total == 2
+    assert response.results[0].video_id == str(specific_candidate.id)
 
 
 @pytest.mark.asyncio

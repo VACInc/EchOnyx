@@ -1,9 +1,75 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Settings, Zap } from "lucide-react";
+import { CheckCircle2, Plus, Settings, ShieldCheck, Zap } from "lucide-react";
+
+const MODEL_KEYS = [
+  "asr",
+  "diarization",
+  "vision",
+  "summarization",
+  "embedding",
+  "audio_event",
+] as const;
+
+type ModelKey = (typeof MODEL_KEYS)[number];
+
+type ModelOption = {
+  name: string;
+  size_gb: number;
+  recommended: boolean;
+};
+
+type ModelSelections = Record<ModelKey, string>;
+type CustomModelState = Record<ModelKey, ModelOption[]>;
+
+const MODEL_LABELS: Record<ModelKey, string> = {
+  asr: "ASR",
+  diarization: "Diarization",
+  vision: "Vision",
+  summarization: "Summarization",
+  embedding: "Embeddings",
+  audio_event: "Audio Events",
+};
+
+const EMPTY_SELECTIONS: ModelSelections = {
+  asr: "",
+  diarization: "",
+  vision: "",
+  summarization: "",
+  embedding: "",
+  audio_event: "",
+};
+
+const EMPTY_CUSTOM_MODELS: CustomModelState = {
+  asr: [],
+  diarization: [],
+  vision: [],
+  summarization: [],
+  embedding: [],
+  audio_event: [],
+};
+
+function mergeModelOptions(...groups: Array<ModelOption[] | undefined>): ModelOption[] {
+  const merged = new Map<string, ModelOption>();
+  for (const group of groups) {
+    for (const option of group ?? []) {
+      const key = option.name.trim().toLowerCase();
+      if (!key || merged.has(key)) {
+        continue;
+      }
+      merged.set(key, option);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => {
+    if (a.recommended !== b.recommended) {
+      return a.recommended ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
@@ -20,7 +86,8 @@ export default function SettingsPage() {
     queryFn: api.getAvailableModels,
   });
 
-  const [asrModel, setAsrModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState<ModelSelections>(EMPTY_SELECTIONS);
+  const [customModels, setCustomModels] = useState<CustomModelState>(EMPTY_CUSTOM_MODELS);
   const [plannerEnabled, setPlannerEnabled] = useState(true);
   const [gpuMemoryFraction, setGpuMemoryFraction] = useState("0.75");
   const [memoryCeilingGb, setMemoryCeilingGb] = useState("");
@@ -28,10 +95,24 @@ export default function SettingsPage() {
   const [duplicateExactThreshold, setDuplicateExactThreshold] = useState("0.95");
   const [duplicateProbableThreshold, setDuplicateProbableThreshold] = useState("0.85");
   const [saveMessage, setSaveMessage] = useState("");
+  const [modelDraftComponent, setModelDraftComponent] = useState<ModelKey>("embedding");
+  const [modelDraftName, setModelDraftName] = useState("");
+  const [modelVerifyMessage, setModelVerifyMessage] = useState("");
+  const [verifiedCandidate, setVerifiedCandidate] = useState<{
+    component: ModelKey;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!settings) return;
-    setAsrModel(settings.models.asr_model);
+    setSelectedModels({
+      asr: settings.models.asr_model,
+      diarization: settings.models.diarization_model,
+      vision: settings.models.vision_model,
+      summarization: settings.models.summarization_model,
+      embedding: settings.models.embedding_model,
+      audio_event: settings.models.audio_event_model,
+    });
     setPlannerEnabled(settings.runtime_planner.enabled);
     setGpuMemoryFraction(settings.runtime_planner.gpu_memory_fraction.toString());
     setMemoryCeilingGb(
@@ -44,10 +125,30 @@ export default function SettingsPage() {
     setDuplicateProbableThreshold(settings.duplicates.probable_threshold.toString());
   }, [settings]);
 
+  const modelOptions = useMemo(() => {
+    const byKey = {} as Record<ModelKey, ModelOption[]>;
+    for (const key of MODEL_KEYS) {
+      const current = selectedModels[key]
+        ? [{ name: selectedModels[key], size_gb: 0, recommended: false }]
+        : [];
+      byKey[key] = mergeModelOptions(
+        availableModels?.[key],
+        customModels[key],
+        current,
+      );
+    }
+    return byKey;
+  }, [availableModels, customModels, selectedModels]);
+
   const saveMutation = useMutation({
     mutationFn: () =>
       api.updateSettings({
-        asr_model: asrModel,
+        asr_model: selectedModels.asr,
+        diarization_model: selectedModels.diarization,
+        vision_model: selectedModels.vision,
+        summarization_model: selectedModels.summarization,
+        embedding_model: selectedModels.embedding,
+        audio_event_model: selectedModels.audio_event,
         runtime_planner_enabled: plannerEnabled,
         gpu_memory_fraction: Number(gpuMemoryFraction),
         runtime_memory_ceiling_gb: memoryCeilingGb === "" ? null : Number(memoryCeilingGb),
@@ -67,17 +168,57 @@ export default function SettingsPage() {
     },
   });
 
+  const verifyMutation = useMutation({
+    mutationFn: ({ component, modelName }: { component: ModelKey; modelName: string }) =>
+      api.verifyModel(component, modelName),
+    onSuccess: (response) => {
+      setModelVerifyMessage(response.detail);
+      setVerifiedCandidate(
+        response.exists
+          ? {
+              component: response.component as ModelKey,
+              name: response.model_name,
+            }
+          : null
+      );
+    },
+    onError: (error) => {
+      setVerifiedCandidate(null);
+      setModelVerifyMessage(error instanceof Error ? error.message : "Verification failed");
+    },
+  });
+
   if (settingsLoading || hardwareLoading) {
     return <div className="py-12 text-center text-slate-500 dark:text-slate-400">Loading...</div>;
   }
 
-  const visionLabel = settings?.models.vision_endpoint_url
-    ? `${settings.models.vision_endpoint_model || settings.models.vision_model} (endpoint)`
-    : settings?.models.vision_model;
-  const summarizationLabel = settings?.models.summarization_endpoint_url
-    ? `${settings.models.summarization_endpoint_model || settings.models.summarization_model} (endpoint)`
-    : settings?.models.summarization_model;
   const runtimePlan = settings?.runtime_planner;
+
+  const handleModelChange = (key: ModelKey, value: string) => {
+    setSelectedModels((current) => ({ ...current, [key]: value }));
+  };
+
+  const addVerifiedModel = () => {
+    if (!verifiedCandidate) {
+      return;
+    }
+    const option: ModelOption = {
+      name: verifiedCandidate.name,
+      size_gb: 0,
+      recommended: false,
+    };
+    setCustomModels((current) => ({
+      ...current,
+      [verifiedCandidate.component]: mergeModelOptions(current[verifiedCandidate.component], [option]),
+    }));
+    setSelectedModels((current) => ({
+      ...current,
+      [verifiedCandidate.component]: verifiedCandidate.name,
+    }));
+    setModelVerifyMessage(`Added ${verifiedCandidate.name} to ${MODEL_LABELS[verifiedCandidate.component]}.`);
+    setModelDraftName("");
+    setVerifiedCandidate(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -99,137 +240,188 @@ export default function SettingsPage() {
             {saveMutation.isPending ? "Saving..." : "Save Settings"}
           </button>
         </div>
-        <div className="mt-4 space-y-4">
-          <label className="block">
-            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">ASR Model</span>
-            <select
-              value={asrModel}
-              onChange={(event) => setAsrModel(event.target.value)}
-              className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          {MODEL_KEYS.map((key) => (
+            <label
+              key={key}
+              className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60"
             >
-              {availableModels?.asr.map((model) => (
-                <option key={model.name} value={model.name}>
-                  {model.name}
+              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">
+                {MODEL_LABELS[key]}
+              </span>
+              <select
+                value={selectedModels[key]}
+                onChange={(event) => handleModelChange(key, event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              >
+                {modelOptions[key].map((model) => (
+                  <option key={model.name} value={model.name}>
+                    {model.name}
+                    {model.recommended ? " (recommended)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+            <ShieldCheck className="h-4 w-4" />
+            Verify and add a model
+          </div>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            Use a built-in registry name or a Hugging Face repo id, verify it, then add it to the selector.
+          </p>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[180px_minmax(0,1fr)_auto_auto]">
+            <select
+              value={modelDraftComponent}
+              onChange={(event) => {
+                setModelDraftComponent(event.target.value as ModelKey);
+                setVerifiedCandidate(null);
+                setModelVerifyMessage("");
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              {MODEL_KEYS.map((key) => (
+                <option key={key} value={key}>
+                  {MODEL_LABELS[key]}
                 </option>
               ))}
             </select>
-          </label>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Runtime Planner</span>
-              <select
-                value={plannerEnabled ? "enabled" : "disabled"}
-                onChange={(event) => setPlannerEnabled(event.target.value === "enabled")}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              >
-                <option value="enabled">Enabled</option>
-                <option value="disabled">Disabled</option>
-              </select>
-            </label>
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">GPU Memory Fraction</span>
-              <input
-                type="number"
-                min="0.1"
-                max="1"
-                step="0.05"
-                value={gpuMemoryFraction}
-                onChange={(event) => setGpuMemoryFraction(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-            </label>
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Memory Ceiling (GB)</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                placeholder="Auto"
-                value={memoryCeilingGb}
-                onChange={(event) => setMemoryCeilingGb(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-            </label>
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <p className="text-sm text-slate-500 dark:text-slate-400">Current ASR Family</p>
-              <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{settings?.models.asr_family}</p>
-            </div>
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Duplicate Policy</span>
-              <select
-                value={duplicatePolicy}
-                onChange={(event) => setDuplicatePolicy(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              >
-                <option value="off">Off</option>
-                <option value="warn">Warn only</option>
-                <option value="collapse_exact">Collapse exact duplicates</option>
-                <option value="collapse_probable">Collapse probable duplicates</option>
-              </select>
-            </label>
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Exact Threshold</span>
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                value={duplicateExactThreshold}
-                onChange={(event) => setDuplicateExactThreshold(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-            </label>
-            <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
-              <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Probable Threshold</span>
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                value={duplicateProbableThreshold}
-                onChange={(event) => setDuplicateProbableThreshold(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-            </label>
+            <input
+              type="text"
+              value={modelDraftName}
+              onChange={(event) => {
+                setModelDraftName(event.target.value);
+                setVerifiedCandidate(null);
+                setModelVerifyMessage("");
+              }}
+              placeholder="Model id or built-in registry name"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() =>
+                verifyMutation.mutate({
+                  component: modelDraftComponent,
+                  modelName: modelDraftName.trim(),
+                })
+              }
+              disabled={verifyMutation.isPending || modelDraftName.trim().length === 0}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
+            >
+              {verifyMutation.isPending ? "Checking..." : "Check"}
+            </button>
+            <button
+              type="button"
+              onClick={addVerifiedModel}
+              disabled={!verifiedCandidate}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
+            >
+              Add
+            </button>
           </div>
-          {saveMessage ? (
-            <p className="text-sm text-slate-600 dark:text-slate-300">{saveMessage}</p>
+          {modelVerifyMessage ? (
+            <p className="mt-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+              {verifiedCandidate ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : null}
+              {modelVerifyMessage}
+            </p>
           ) : null}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">Diarization</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.diarization_model}</span>
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">Vision</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">{visionLabel}</span>
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">Summarization</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">{summarizationLabel}</span>
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">Audio Events</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.audio_event_model}</span>
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">ROCm LLM Runtime</span>
-              <span className="font-medium capitalize text-slate-900 dark:text-slate-100">
-                {settings?.models.rocm_llm_runtime.replaceAll("_", " ")}
-              </span>
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <span className="text-slate-600 dark:text-slate-300">ROCm Idle Timeout</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">
-                {settings?.models.rocm_llm_idle_timeout_s}s
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-slate-600 dark:text-slate-300">Embeddings</span>
-              <span className="font-medium text-slate-900 dark:text-slate-100">{settings?.models.embedding_model}</span>
-            </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <p className="text-sm text-slate-500 dark:text-slate-400">Current ASR Family</p>
+            <p className="mt-1 font-medium text-slate-900 dark:text-slate-100">{settings?.models.asr_family}</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <p className="text-sm text-slate-500 dark:text-slate-400">ROCm Runtime</p>
+            <p className="mt-1 font-medium capitalize text-slate-900 dark:text-slate-100">
+              {settings?.models.rocm_llm_runtime.replaceAll("_", " ")}
+            </p>
           </div>
         </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Runtime Planner</span>
+            <select
+              value={plannerEnabled ? "enabled" : "disabled"}
+              onChange={(event) => setPlannerEnabled(event.target.value === "enabled")}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">GPU Memory Fraction</span>
+            <input
+              type="number"
+              min="0.1"
+              max="1"
+              step="0.05"
+              value={gpuMemoryFraction}
+              onChange={(event) => setGpuMemoryFraction(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Memory Ceiling (GB)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="Auto"
+              value={memoryCeilingGb}
+              onChange={(event) => setMemoryCeilingGb(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Duplicate Policy</span>
+            <select
+              value={duplicatePolicy}
+              onChange={(event) => setDuplicatePolicy(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              <option value="off">Off</option>
+              <option value="warn">Warn only</option>
+              <option value="collapse_exact">Collapse exact duplicates</option>
+              <option value="collapse_probable">Collapse probable duplicates</option>
+            </select>
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Exact Threshold</span>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={duplicateExactThreshold}
+              onChange={(event) => setDuplicateExactThreshold(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+          </label>
+          <label className="block rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">
+            <span className="mb-1 block text-sm text-slate-600 dark:text-slate-300">Probable Threshold</span>
+            <input
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              value={duplicateProbableThreshold}
+              onChange={(event) => setDuplicateProbableThreshold(event.target.value)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+          </label>
+        </div>
+
+        {saveMessage ? (
+          <p className="mt-4 text-sm text-slate-600 dark:text-slate-300">{saveMessage}</p>
+        ) : null}
       </div>
 
       <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
@@ -277,13 +469,13 @@ export default function SettingsPage() {
               {runtimePlan?.preferred_endpoint_devices.length ? (
                 <p>Endpoint placement: {runtimePlan.preferred_endpoint_devices.join(", ")}</p>
               ) : null}
-              {runtimePlan?.preferred_model_devices && Object.keys(runtimePlan.preferred_model_devices).length ? (
-                Object.entries(runtimePlan.preferred_model_devices).map(([key, devices]) => (
-                  <p key={key}>
-                    {key} placement: {devices.join(", ")}
-                  </p>
-                ))
-              ) : null}
+              {runtimePlan?.preferred_model_devices && Object.keys(runtimePlan.preferred_model_devices).length
+                ? Object.entries(runtimePlan.preferred_model_devices).map(([key, devices]) => (
+                    <p key={key}>
+                      {key} placement: {devices.join(", ")}
+                    </p>
+                  ))
+                : null}
             </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/60">

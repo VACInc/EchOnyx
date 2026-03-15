@@ -110,6 +110,10 @@
     - `/api/search/ask` accepts optional prior turns
     - retrieval expands follow-up queries with recent user turns
     - the Search UI keeps a local conversation thread instead of replacing the last answer
+  - Settings now exposes model selectors for all main runtime model slots plus a verify/add flow:
+    - built-in catalog entries can be reselected directly
+    - custom candidates can be checked against the built-in GGUF registry or Hugging Face before being added
+  - Similar-video ranking now weights transcript and key-point overlap more heavily than generic summary tone, which reduces false neighbors for generic narrated videos
 
 ## High Priority Requirements
 
@@ -128,11 +132,6 @@
 - Replace automatic transcription fallback with an explicit ASR model switcher or selector so one chosen ASR path runs deterministically instead of silently falling back to Whisper.
 - Add full NVIDIA runtime support after the AMD ROCm path is solid.
 - Live-validate the new macOS Metal bring-up path on an actual Apple Silicon machine.
-- Add model management UX in Settings:
-  - dropdown model selection
-  - Hugging Face existence verification before add or save
-  - add-model flow with an explicit validation action
-
 ## Product And Pipeline Enhancements
 
 - Keep sourcing better real meeting-room and software-demo fixtures until CLAP can separate them cleanly enough to promote them from exploratory to validated calibration inputs.

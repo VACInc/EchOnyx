@@ -135,6 +135,43 @@ async def test_list_available_models_uses_asr_key():
     assert response["audio_event"][0]["name"] == "laion/clap-htsat-fused"
     assert any(model["name"] == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf" for model in response["vision"])
     assert any(model["name"] == "Qwen2.5-3B-Instruct.Q4_K_M.gguf" for model in response["summarization"])
+    assert any(model["name"] == "Qwen3VL-32B-Instruct-Q4_K_M.gguf" for model in response["vision"])
+    assert any(model["name"] == "Qwen3-30B-A3B-Q4_K_M.gguf" for model in response["summarization"])
+
+
+@pytest.mark.asyncio
+async def test_verify_model_candidate_accepts_catalog_model():
+    response = await settings_module.verify_model_candidate(
+        settings_module.ModelVerifyRequest(component="embedding", model_name="Qwen/Qwen3-Embedding-8B")
+    )
+
+    assert response.exists is True
+    assert response.source == "catalog"
+
+
+@pytest.mark.asyncio
+async def test_verify_model_candidate_checks_huggingface(monkeypatch):
+    async def fake_exists(_model_name: str) -> bool:
+        return True
+
+    monkeypatch.setattr(settings_module, "_huggingface_model_exists", fake_exists)
+
+    response = await settings_module.verify_model_candidate(
+        settings_module.ModelVerifyRequest(component="embedding", model_name="sentence-transformers/all-MiniLM-L6-v2")
+    )
+
+    assert response.exists is True
+    assert response.source == "huggingface"
+
+
+@pytest.mark.asyncio
+async def test_verify_model_candidate_rejects_unknown_gguf_name():
+    response = await settings_module.verify_model_candidate(
+        settings_module.ModelVerifyRequest(component="vision", model_name="unknown.gguf")
+    )
+
+    assert response.exists is False
+    assert response.source == "unsupported"
 
 
 @pytest.mark.asyncio

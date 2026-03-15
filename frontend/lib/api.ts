@@ -112,6 +112,11 @@ interface SettingsResponse {
 
 interface SettingsUpdatePayload {
   asr_model?: string;
+  diarization_model?: string;
+  vision_model?: string;
+  summarization_model?: string;
+  embedding_model?: string;
+  audio_event_model?: string;
   runtime_planner_enabled?: boolean;
   gpu_memory_fraction?: number;
   runtime_memory_ceiling_gb?: number | null;
@@ -171,6 +176,29 @@ interface SearchResponse {
   query: string;
   results: SearchResult[];
   total: number;
+}
+
+interface ModelOption {
+  name: string;
+  size_gb: number;
+  recommended: boolean;
+}
+
+interface AvailableModelsResponse {
+  asr: ModelOption[];
+  diarization: ModelOption[];
+  vision: ModelOption[];
+  summarization: ModelOption[];
+  embedding: ModelOption[];
+  audio_event: ModelOption[];
+}
+
+interface ModelVerifyResponse {
+  component: string;
+  model_name: string;
+  exists: boolean;
+  source: string;
+  detail: string;
 }
 
 async function fetchApi<T>(
@@ -327,9 +355,14 @@ export const api = {
   },
 
   async getAvailableModels() {
-    return fetchApi<{
-      asr: Array<{ name: string; size_gb: number; recommended: boolean }>;
-    }>("/api/settings/models/available");
+    return fetchApi<AvailableModelsResponse>("/api/settings/models/available");
+  },
+
+  async verifyModel(component: string, modelName: string) {
+    return fetchApi<ModelVerifyResponse>("/api/settings/models/verify", {
+      method: "POST",
+      body: JSON.stringify({ component, model_name: modelName }),
+    });
   },
 
   async getHardwareInfo() {
