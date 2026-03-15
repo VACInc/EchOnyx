@@ -1,3 +1,4 @@
+import os
 import sys
 import types
 from io import StringIO
@@ -28,6 +29,17 @@ def test_auto_detect_hardware_profile_prefers_rocm_for_strix_halo():
     assert backend == GPUBackend.ROCM
 
 
+def test_auto_detect_hardware_profile_prefers_metal_for_apple_silicon():
+    profile, backend = auto_detect_hardware_profile({
+        "apple_gpus": [{"name": "Apple M4", "vram_gb": 16}],
+        "unified_memory_gb": 16,
+        "total_vram_gb": 16,
+    })
+
+    assert profile == HardwareProfile.APPLE_SILICON
+    assert backend == GPUBackend.METAL
+
+
 def test_detect_gpu_info_does_not_flag_strix_halo_without_amd_gpu(monkeypatch):
     class Completed:
         def __init__(self, returncode: int, stdout: str = ""):
@@ -47,6 +59,40 @@ def test_detect_gpu_info_does_not_flag_strix_halo_without_amd_gpu(monkeypatch):
     gpu_info = detect_gpu_info()
 
     assert "unified_memory_gb" not in gpu_info
+
+
+def test_detect_gpu_info_parses_apple_silicon_memory(monkeypatch):
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_run(cmd, *_args, **_kwargs):
+        if cmd == ["sysctl", "-n", "hw.memsize"]:
+            return Completed(returncode=0, stdout=str(16 * 1024**3))
+        if cmd == ["vm_stat"]:
+            return Completed(
+                returncode=0,
+                stdout=(
+                    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+                    "Pages free: 65536.\n"
+                    "Pages inactive: 131072.\n"
+                    "Pages speculative: 32768.\n"
+                ),
+            )
+        if cmd == ["sysctl", "-n", "machdep.cpu.brand_string"]:
+            return Completed(returncode=0, stdout="Apple M4")
+        return Completed(returncode=1)
+
+    monkeypatch.setattr("app.config.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("app.config.platform.machine", lambda: "arm64")
+    monkeypatch.setattr("app.config.subprocess.run", fake_run)
+
+    gpu_info = detect_gpu_info()
+
+    assert gpu_info["unified_memory_gb"] == pytest.approx(16.0, rel=1e-4)
+    assert gpu_info["available_vram_gb"] == pytest.approx(3.5, rel=1e-4)
+    assert gpu_info["apple_gpus"][0]["name"] == "Apple M4"
 
 
 def test_detect_gpu_info_parses_nvidia_free_memory_and_topology(monkeypatch):
@@ -194,6 +240,46 @@ def test_settings_default_to_managed_llama_server_runtime(monkeypatch):
 
 
 def test_get_settings_attaches_qwen3vl_defaults(monkeypatch):
+    get_settings.cache_clear()
+
+
+def test_get_settings_applies_apple_silicon_small_model_defaults(monkeypatch):
+    get_settings.cache_clear()
+
+    monkeypatch.delenv("HARDWARE_PROFILE", raising=False)
+    monkeypatch.delenv("GPU_BACKEND", raising=False)
+    monkeypatch.delenv("WHISPER_MODEL", raising=False)
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("VISION_MODEL", raising=False)
+    monkeypatch.delenv("VISION_MMPROJ", raising=False)
+    monkeypatch.delenv("VISION_CHAT_FORMAT", raising=False)
+    monkeypatch.delenv("SUMMARIZATION_MODEL", raising=False)
+    monkeypatch.delenv("GPU_MEMORY_FRACTION", raising=False)
+    monkeypatch.setattr(
+        "app.config.detect_gpu_info",
+        lambda: {
+            "apple_gpus": [{"index": 0, "name": "Apple M4", "vram_gb": 16.0, "free_vram_gb": 10.0}],
+            "nvidia_gpus": [],
+            "amd_gpus": [],
+            "unified_memory_gb": 16.0,
+            "total_vram_gb": 16.0,
+            "available_vram_gb": 10.0,
+        },
+    )
+
+    settings = get_settings()
+
+    assert settings.hardware_profile == HardwareProfile.APPLE_SILICON
+    assert settings.gpu_backend == GPUBackend.METAL
+    assert settings.whisper_model == "medium"
+    assert settings.embedding_model == "nomic-ai/nomic-embed-text-v1.5"
+    assert settings.vision_model == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
+    assert settings.vision_mmproj == "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
+    assert settings.vision_chat_format == "qwen2.5-vl"
+    assert settings.summarization_model == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+    assert settings.gpu_memory_fraction == 0.65
+    assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
+
     get_settings.cache_clear()
 
     monkeypatch.setenv("HARDWARE_PROFILE", "cpu_only")

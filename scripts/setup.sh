@@ -19,9 +19,14 @@ check_requirements() {
     echo -e "\n${YELLOW}Checking requirements...${NC}"
 
     local missing=()
+    command -v python3 >/dev/null 2>&1 || missing+=("python3")
 
-    command -v docker >/dev/null 2>&1 || missing+=("docker")
-    command -v docker-compose >/dev/null 2>&1 || command -v "docker compose" >/dev/null 2>&1 || missing+=("docker-compose")
+    if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+        command -v ffmpeg >/dev/null 2>&1 || missing+=("ffmpeg")
+    else
+        command -v docker >/dev/null 2>&1 || missing+=("docker")
+        command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || missing+=("docker-compose")
+    fi
 
     if [ ${#missing[@]} -ne 0 ]; then
         echo -e "${RED}Missing required tools: ${missing[*]}${NC}"
@@ -39,9 +44,18 @@ detect_hardware() {
     HARDWARE_PROFILE=""
     GPU_BACKEND=""
     COMPOSE_FILE="docker-compose.yml"
+    START_MODE="docker"
+
+    if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+        echo -e "${GREEN}Detected Apple Silicon${NC}"
+        HARDWARE_PROFILE="apple_silicon"
+        GPU_BACKEND="metal"
+        START_MODE="host"
+        COMPOSE_FILE=""
+    fi
 
     # Check for NVIDIA GPUs
-    if command -v nvidia-smi >/dev/null 2>&1; then
+    if [ -z "$GPU_BACKEND" ] && command -v nvidia-smi >/dev/null 2>&1; then
         GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
         GPU_NAMES=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
         TOTAL_VRAM=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | awk '{sum+=$1} END {print sum/1024}')
@@ -75,7 +89,7 @@ detect_hardware() {
                 TOTAL_RAM=$(grep MemTotal /proc/meminfo | awk '{print $2/1024/1024}')
                 if (( $(echo "$TOTAL_RAM >= 96" | bc -l) )); then
                     echo -e "${GREEN}Detected AMD Strix Halo (high unified memory: ${TOTAL_RAM}GB)${NC}"
-                    GPU_BACKEND="vulkan"
+                    GPU_BACKEND="rocm"
                     COMPOSE_FILE="docker-compose.yml -f docker-compose.amd.yml"
                     HARDWARE_PROFILE="strix_halo"
                 fi
@@ -93,7 +107,11 @@ detect_hardware() {
     echo ""
     echo "Hardware Profile: $HARDWARE_PROFILE"
     echo "GPU Backend: $GPU_BACKEND"
-    echo "Compose File: $COMPOSE_FILE"
+    if [ "$START_MODE" = "docker" ]; then
+        echo "Compose File: $COMPOSE_FILE"
+    else
+        echo "Start Mode: host"
+    fi
 }
 
 # Create .env file
@@ -108,15 +126,38 @@ create_env() {
     cp .env.example .env
 
     # Update hardware settings
-    sed -i "s/^HARDWARE_PROFILE=.*/HARDWARE_PROFILE=$HARDWARE_PROFILE/" .env
-    sed -i "s/^GPU_BACKEND=.*/GPU_BACKEND=$GPU_BACKEND/" .env
-
-    # Set model loading strategy
-    if [ "$HARDWARE_PROFILE" = "strix_halo" ] || [ "$HARDWARE_PROFILE" = "cpu_only" ]; then
-        sed -i "s/^MODEL_LOADING=.*/MODEL_LOADING=sequential/" .env
-    else
-        sed -i "s/^MODEL_LOADING=.*/MODEL_LOADING=parallel/" .env
-    fi
+    python3 - <<PY
+from pathlib import Path
+path = Path(".env")
+payload = path.read_text(encoding="utf-8")
+updates = {
+    "HARDWARE_PROFILE": "$HARDWARE_PROFILE",
+    "GPU_BACKEND": "$GPU_BACKEND",
+    "MODEL_LOADING": "sequential" if "$HARDWARE_PROFILE" in {"strix_halo", "cpu_only", "apple_silicon"} else "parallel",
+}
+if "$HARDWARE_PROFILE" == "apple_silicon":
+    updates.update({
+        "WHISPER_MODEL": "medium",
+        "EMBEDDING_MODEL": "nomic-ai/nomic-embed-text-v1.5",
+        "VISION_MODEL": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+        "VISION_MMPROJ": "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf",
+        "VISION_CHAT_FORMAT": "qwen2.5-vl",
+        "SUMMARIZATION_MODEL": "Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+        "GPU_MEMORY_FRACTION": "0.65",
+    })
+for key, value in updates.items():
+    lines = payload.splitlines()
+    replaced = False
+    for index, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[index] = f"{key}={value}"
+            replaced = True
+            break
+    if not replaced:
+        lines.append(f"{key}={value}")
+    payload = "\\n".join(lines) + "\\n"
+path.write_text(payload, encoding="utf-8")
+PY
 
     echo -e "${GREEN}.env file created${NC}"
     echo ""
@@ -157,7 +198,12 @@ print_instructions() {
     echo ""
     echo "To start the application:"
     echo ""
-    echo "  docker compose $COMPOSE_FILE up -d"
+    if [ "$START_MODE" = "docker" ]; then
+        echo "  docker compose $COMPOSE_FILE up -d"
+    else
+        echo "  Metal on Apple Silicon runs on the host, not Docker."
+        echo "  Follow backend/README.md for the host startup commands."
+    fi
     echo ""
     echo "Then open http://localhost:3000 in your browser."
     echo ""

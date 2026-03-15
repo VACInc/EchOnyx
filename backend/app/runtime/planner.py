@@ -99,6 +99,10 @@ def _estimate_endpoint_model_memory_gb(
     runtime_value: str,
 ) -> float:
     lowered = model_name.lower()
+    if "qwen2.5-vl-3b" in lowered:
+        return 4.0
+    if "qwen2.5-3b" in lowered:
+        return 3.0
     if runtime_value == "vllm":
         if "30b" in lowered or "32b" in lowered:
             return 62.0
@@ -135,7 +139,7 @@ def estimate_model_memory_by_type_gb(settings: "Settings") -> dict[str, float]:
 
 
 def _resolve_total_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -> float:
-    if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
+    if getattr(settings.hardware_profile, "value", settings.hardware_profile) in {"strix_halo", "apple_silicon"}:
         unified = gpu_info.get("unified_memory_gb") or gpu_info.get("system_memory_gb")
         if unified:
             return _round_gb(unified)
@@ -143,10 +147,10 @@ def _resolve_total_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -
 
 
 def _resolve_available_accelerator_memory_gb(settings: "Settings", gpu_info: dict) -> float:
-    if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
+    if getattr(settings.hardware_profile, "value", settings.hardware_profile) in {"strix_halo", "apple_silicon"}:
         unified = gpu_info.get("unified_memory_gb") or gpu_info.get("system_memory_gb")
         if unified:
-            return _round_gb(unified)
+            return _round_gb(gpu_info.get("available_vram_gb", unified))
     return _round_gb(gpu_info.get("available_vram_gb", gpu_info.get("total_vram_gb", 0.0)))
 
 
@@ -175,6 +179,8 @@ def _placement_mode(settings: "Settings", gpu_info: dict) -> str:
     backend_value = getattr(settings.gpu_backend, "value", settings.gpu_backend)
     if backend_value == "cpu":
         return "cpu_only"
+    if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "apple_silicon":
+        return "apple_unified_memory"
     if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
         return "unified_memory_apu"
     nvidia_count = len(gpu_info.get("nvidia_gpus", []))
@@ -281,11 +287,11 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     budget_gb = _resolve_effective_budget_gb(settings, total_memory_gb, available_memory_gb, notes)
     placement = _placement_mode(settings, gpu_info)
     accelerator_count = len(gpu_info.get("nvidia_gpus", [])) + len(gpu_info.get("amd_gpus", []))
-    if accelerator_count == 0 and getattr(settings.hardware_profile, "value", settings.hardware_profile) == "strix_halo":
+    if accelerator_count == 0 and getattr(settings.hardware_profile, "value", settings.hardware_profile) in {"strix_halo", "apple_silicon"}:
         accelerator_count = 1
         if gpu_info.get("system_memory_gb") and not gpu_info.get("unified_memory_gb"):
             notes.append(
-                "Planner inferred Strix Halo unified memory from host RAM because direct ROCm memory telemetry was unavailable."
+                f"Planner inferred {getattr(settings.hardware_profile, 'value', settings.hardware_profile).replace('_', ' ')} unified memory from host RAM because direct accelerator telemetry was unavailable."
             )
 
     endpoint_models = []
@@ -347,6 +353,12 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
             )
         else:
             worker_execution_mode = "stage_by_stage"
+
+    if getattr(settings.hardware_profile, "value", settings.hardware_profile) == "apple_silicon":
+        keep_resident_models = ()
+        worker_model_loading = ModelLoadingStrategy.SEQUENTIAL
+        worker_execution_mode = "stage_by_stage"
+        notes.append("Apple Silicon bring-up defaults to full stage-by-stage loading on smaller unified-memory systems.")
 
     if budget_gb <= 0:
         worker_model_loading = ModelLoadingStrategy.SEQUENTIAL

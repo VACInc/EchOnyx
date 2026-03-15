@@ -462,11 +462,13 @@ async def list_available_models() -> dict:
             {"name": "llama.cpp endpoint (Qwen3-VL)", "size_gb": 0.0, "recommended": False},
             {"name": "qwen3-omni-30b-a3b-q4_k_m.gguf", "size_gb": 15.0, "recommended": True},
             {"name": "qwen3-omni-30b-a3b-q5_k_m.gguf", "size_gb": 20.0, "recommended": False},
+            {"name": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf", "size_gb": 4.0, "recommended": False},
         ],
         "summarization": [
             {"name": "llama.cpp endpoint (gptoss-120b)", "size_gb": 0.0, "recommended": True},
             {"name": "qwen3-30b-a3b-q4_k_m.gguf", "size_gb": 15.0, "recommended": False},
             {"name": "qwen3-30b-a3b-q5_k_m.gguf", "size_gb": 20.0, "recommended": False},
+            {"name": "Qwen2.5-3B-Instruct.Q4_K_M.gguf", "size_gb": 3.0, "recommended": False},
         ],
         "embedding": [
             {"name": "Qwen/Qwen3-Embedding-8B", "size_gb": 16.0, "recommended": True},

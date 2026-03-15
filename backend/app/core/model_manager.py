@@ -59,6 +59,8 @@ def _normalize_whisper_model_name(
         return "openai/whisper-large-v3"
     if lower == "whisper-large":
         return "openai/whisper-large"
+    if "/" not in model_name and lower in {"tiny", "base", "small", "medium", "large"}:
+        return f"openai/whisper-{lower}"
     if lower.startswith("whisper-") and "/" not in model_name:
         return f"openai/{model_name}"
     return model_name
@@ -72,11 +74,11 @@ def _torch_dtype_for_backend(backend: GPUBackend):
         return None
     if backend == GPUBackend.ROCM:
         return torch.float32
-    return torch.float16 if backend == GPUBackend.CUDA else torch.float32
+    return torch.float16 if backend in {GPUBackend.CUDA, GPUBackend.METAL} else torch.float32
 
 
-def _is_cuda_device_name(device: str) -> bool:
-    return device == "cuda" or device.startswith("cuda:")
+def _is_accelerated_torch_device_name(device: str) -> bool:
+    return device == "mps" or device == "cuda" or device.startswith("cuda:")
 
 
 def _torch_device(
@@ -106,6 +108,25 @@ def _torch_device(
                 f"{runtime_label} requires {backend.value} acceleration, but no GPU device is available."
             )
         logger.warning("GPU backend requested but no CUDA/ROCm device found, using CPU.")
+    if backend == GPUBackend.METAL:
+        try:
+            import torch
+
+            mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
+            if mps_backend is not None and mps_backend.is_available():
+                return "mps"
+        except Exception:
+            if strict:
+                raise RuntimeError(
+                    f"{runtime_label} requires metal acceleration, but PyTorch MPS support is unavailable."
+                ) from None
+            logger.warning("PyTorch MPS not available, falling back to CPU.")
+            return "cpu"
+        if strict:
+            raise RuntimeError(
+                f"{runtime_label} requires metal acceleration, but no MPS device is available."
+            )
+        logger.warning("Metal backend requested but no MPS device found, using CPU.")
     return "cpu"
 
 
@@ -174,7 +195,7 @@ async def _load_faster_whisper(
 
     device = _faster_whisper_device(backend)
     compute_type = _faster_whisper_compute_type(backend)
-    if backend in {GPUBackend.ROCM, GPUBackend.VULKAN} and device == "cpu":
+    if backend in {GPUBackend.ROCM, GPUBackend.VULKAN, GPUBackend.METAL} and device == "cpu":
         logger.warning(
             "faster-whisper GPU acceleration is CUDA-only; using CPU for %s backend.",
             backend.value,
@@ -225,7 +246,7 @@ async def _load_transformers_whisper(
         device_index=device_index,
     )
     dtype = _torch_dtype_for_backend(backend) or (
-        torch.float16 if _is_cuda_device_name(device) else torch.float32
+        torch.float16 if _is_accelerated_torch_device_name(device) else torch.float32
     )
     loop = asyncio.get_event_loop()
 
@@ -249,7 +270,7 @@ async def _load_transformers_whisper(
             model_name,
             **model_kwargs,
         )
-        if _is_cuda_device_name(device):
+        if _is_accelerated_torch_device_name(device):
             model = model.to(torch.device(device))
         return {
             "type": "whisper_transformers",
@@ -524,7 +545,7 @@ class ModelManager:
                     torch_dtype=dtype,
                 )
                 bundle_type = "audio_event_classifier"
-            if _is_cuda_device_name(device):
+            if _is_accelerated_torch_device_name(device):
                 model = model.to(torch.device(device))
             model.eval()
             return {
@@ -560,11 +581,10 @@ class ModelManager:
 
             def load_canary():
                 model = SALM.from_pretrained(model_name)
-                if _is_cuda_device_name(device):
+                if _is_accelerated_torch_device_name(device):
                     import torch
 
-                    if torch.cuda.is_available():
-                        model = model.to(torch.device(device))
+                    model = model.to(torch.device(device))
                 model.eval()
                 return {
                     "type": "nemo_canary",
@@ -590,7 +610,7 @@ class ModelManager:
             if self.settings.granite_force_cpu:
                 device = "cpu"
             dtype = _torch_dtype_for_backend(self.settings.gpu_backend) or (
-                    torch.float16 if _is_cuda_device_name(device) else torch.float32
+                    torch.float16 if _is_accelerated_torch_device_name(device) else torch.float32
             )
 
             loop = asyncio.get_event_loop()
@@ -625,7 +645,7 @@ class ModelManager:
                     model_name,
                     **model_kwargs,
                 )
-                if _is_cuda_device_name(device):
+                if _is_accelerated_torch_device_name(device):
                     model = model.to(torch.device(device))
                 return {
                     "type": "granite",
@@ -640,7 +660,7 @@ class ModelManager:
             logger.info(f"Loaded Granite speech model: {model_name}")
             return model_bundle
 
-        if self.settings.gpu_backend in {GPUBackend.ROCM, GPUBackend.VULKAN}:
+        if self.settings.gpu_backend in {GPUBackend.ROCM, GPUBackend.VULKAN, GPUBackend.METAL}:
             model = await _load_transformers_whisper(
                 resolved_name,
                 self.settings.gpu_backend,
@@ -680,14 +700,19 @@ class ModelManager:
         )
 
         # Move to GPU for CUDA/ROCm if available; Vulkan falls back to CPU.
-        if self.settings.gpu_backend in {GPUBackend.CUDA, GPUBackend.ROCM}:
+        if self.settings.gpu_backend in {GPUBackend.CUDA, GPUBackend.ROCM, GPUBackend.METAL}:
             import torch
-            if torch.cuda.is_available():
-                device = self._torch_runtime_device(
-                    strict=self.requires_strict_accelerator,
-                    runtime_label="diarization",
-                )
-                pipeline.to(torch.device(device))
+            device = self._torch_runtime_device(
+                strict=self.requires_strict_accelerator,
+                runtime_label="diarization",
+            )
+            if device != "cpu":
+                try:
+                    pipeline.to(torch.device(device))
+                except Exception:
+                    if self.requires_strict_accelerator:
+                        raise
+                    logger.warning("Diarization could not use %s; falling back to CPU.", device, exc_info=True)
             elif self.requires_strict_accelerator:
                 raise RuntimeError(
                     "Diarization requires ROCm acceleration on Strix Halo, but no GPU device is available."
@@ -885,6 +910,11 @@ class ModelManager:
                 torch.cuda.empty_cache()
                 if hasattr(torch.cuda, "ipc_collect"):
                     torch.cuda.ipc_collect()
+            elif hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                _offload_model_to_cpu(model)
+                del model
+                gc.collect()
+                torch.mps.empty_cache()
         except ImportError:
             del model
 

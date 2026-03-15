@@ -1,5 +1,8 @@
 """Application configuration with hardware detection."""
 
+import os
+import platform
+import re
 import subprocess
 from enum import Enum
 from functools import lru_cache
@@ -16,6 +19,7 @@ NVIDIA_SMI_TIMEOUT_S = 30
 
 class HardwareProfile(str, Enum):
     STRIX_HALO = "strix_halo"
+    APPLE_SILICON = "apple_silicon"
     RTX_5090 = "rtx_5090"
     MULTI_GPU = "multi_gpu"
     CPU_ONLY = "cpu_only"
@@ -23,6 +27,7 @@ class HardwareProfile(str, Enum):
 
 class GPUBackend(str, Enum):
     CUDA = "cuda"
+    METAL = "metal"
     VULKAN = "vulkan"
     ROCM = "rocm"
     CPU = "cpu"
@@ -191,11 +196,106 @@ def validate_hardware_requirements(settings: Settings) -> None:
         )
 
 
+def _detect_macos_total_memory_gb() -> float:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return 0.0
+    if result.returncode != 0:
+        return 0.0
+    try:
+        return int(result.stdout.strip()) / (1024**3)
+    except ValueError:
+        return 0.0
+
+
+def _detect_macos_available_memory_gb() -> float:
+    try:
+        result = subprocess.run(
+            ["vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return 0.0
+    if result.returncode != 0:
+        return 0.0
+
+    match = re.search(r"page size of (\d+) bytes", result.stdout)
+    page_size = int(match.group(1)) if match else 4096
+    page_counts: dict[str, int] = {}
+    for line in result.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        digits = re.sub(r"[^0-9]", "", value)
+        if digits:
+            page_counts[key.strip().lower()] = int(digits)
+
+    free_pages = (
+        page_counts.get("pages free", 0)
+        + page_counts.get("pages inactive", 0)
+        + page_counts.get("pages speculative", 0)
+    )
+    return (free_pages * page_size) / (1024**3)
+
+
+def _detect_apple_chip_name() -> str:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return "Apple Silicon"
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return "Apple Silicon"
+
+
+def _env_present(name: str) -> bool:
+    value = os.environ.get(name)
+    return value is not None and bool(str(value).strip())
+
+
+def _apply_apple_silicon_defaults(settings: Settings, gpu_info: dict) -> None:
+    if settings.hardware_profile != HardwareProfile.APPLE_SILICON:
+        return
+
+    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+    if not _env_present("WHISPER_MODEL"):
+        settings.whisper_model = "medium"
+    if not _env_present("EMBEDDING_MODEL"):
+        settings.embedding_model = "nomic-ai/nomic-embed-text-v1.5"
+    if not _env_present("VISION_MODEL"):
+        settings.vision_model = "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
+    if not _env_present("VISION_MMPROJ"):
+        settings.vision_mmproj = "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
+    if not _env_present("VISION_CHAT_FORMAT"):
+        settings.vision_chat_format = "qwen2.5-vl"
+    if not _env_present("SUMMARIZATION_MODEL"):
+        settings.summarization_model = "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+
+    unified_memory = float(gpu_info.get("unified_memory_gb") or 0.0)
+    if unified_memory and unified_memory <= 24 and not _env_present("GPU_MEMORY_FRACTION"):
+        settings.gpu_memory_fraction = 0.65
+
+
 def detect_gpu_info() -> dict:
     """Detect GPU information from the system."""
     gpu_info = {
         "nvidia_gpus": [],
         "amd_gpus": [],
+        "apple_gpus": [],
         "total_vram_gb": 0,
         "available_vram_gb": 0,
         "system_memory_gb": 0,
@@ -204,6 +304,24 @@ def detect_gpu_info() -> dict:
             "nvlink_groups": [],
         },
     }
+
+    if platform.system() == "Darwin" and platform.machine() == "arm64":
+        total_memory_gb = _detect_macos_total_memory_gb()
+        available_memory_gb = _detect_macos_available_memory_gb() or total_memory_gb
+        if total_memory_gb > 0:
+            chip_name = _detect_apple_chip_name()
+            gpu_info["system_memory_gb"] = total_memory_gb
+            gpu_info["unified_memory_gb"] = total_memory_gb
+            gpu_info["total_vram_gb"] = total_memory_gb
+            gpu_info["available_vram_gb"] = available_memory_gb
+            gpu_info["apple_gpus"].append({
+                "index": 0,
+                "name": chip_name,
+                "vram_gb": total_memory_gb,
+                "free_vram_gb": available_memory_gb,
+                "unified_memory": True,
+            })
+            return gpu_info
 
     # Check for NVIDIA GPUs
     try:
@@ -346,8 +464,12 @@ def auto_detect_hardware_profile(gpu_info: dict) -> tuple[HardwareProfile, GPUBa
     """Auto-detect the best hardware profile based on available GPUs."""
     nvidia_gpus = gpu_info.get("nvidia_gpus", [])
     amd_gpus = gpu_info.get("amd_gpus", [])
+    apple_gpus = gpu_info.get("apple_gpus", [])
     unified_memory = gpu_info.get("unified_memory_gb", 0)
     total_vram = gpu_info.get("total_vram_gb", 0)
+
+    if apple_gpus:
+        return HardwareProfile.APPLE_SILICON, GPUBackend.METAL
 
     # Check for multi-GPU NVIDIA setup
     if len(nvidia_gpus) > 1 or (len(nvidia_gpus) == 1 and total_vram >= 40):
@@ -377,7 +499,7 @@ def auto_detect_hardware_profile(gpu_info: dict) -> tuple[HardwareProfile, GPUBa
 
 def get_model_loading_strategy(profile: HardwareProfile) -> ModelLoadingStrategy:
     """Determine model loading strategy based on hardware profile."""
-    if profile == HardwareProfile.STRIX_HALO:
+    if profile in {HardwareProfile.STRIX_HALO, HardwareProfile.APPLE_SILICON}:
         return ModelLoadingStrategy.SEQUENTIAL
     elif profile == HardwareProfile.MULTI_GPU:
         return ModelLoadingStrategy.PARALLEL
@@ -406,15 +528,21 @@ def get_settings() -> Settings:
     if settings.model_loading == ModelLoadingStrategy.SEQUENTIAL:
         settings.model_loading = get_model_loading_strategy(settings.hardware_profile)
 
+    _apply_apple_silicon_defaults(settings, gpu_info)
+
     # Auto-attach mmproj/chat format for Qwen3VL GGUFs when not explicitly set
     if not settings.vision_mmproj:
         vision_name = settings.vision_model.lower()
         if "qwen3vl-32b-instruct" in vision_name:
             settings.vision_mmproj = "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+        elif "qwen2.5-vl-3b-instruct" in vision_name:
+            settings.vision_mmproj = "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
     if not settings.vision_chat_format:
         vision_name = settings.vision_model.lower()
         if "qwen3vl-32b-instruct" in vision_name:
             settings.vision_chat_format = "qwen3-vl"
+        elif "qwen2.5-vl-3b-instruct" in vision_name:
+            settings.vision_chat_format = "qwen2.5-vl"
 
     # Adjust batch concurrent jobs based on hardware
     if settings.hardware_profile == HardwareProfile.MULTI_GPU:
@@ -445,6 +573,8 @@ def get_hardware_info() -> dict:
     else:
         if settings.gpu_backend == GPUBackend.CUDA:
             whisper_backend = "cuda"
+        elif settings.gpu_backend == GPUBackend.METAL:
+            whisper_backend = "metal"
         elif settings.gpu_backend == GPUBackend.ROCM:
             whisper_backend = "rocm"
         elif settings.gpu_backend == GPUBackend.VULKAN:
@@ -456,6 +586,7 @@ def get_hardware_info() -> dict:
         "detected_gpus": {
             "nvidia": gpu_info.get("nvidia_gpus", []),
             "amd": gpu_info.get("amd_gpus", []),
+            "apple": gpu_info.get("apple_gpus", []),
         },
         "unified_memory_gb": gpu_info.get("unified_memory_gb"),
         "total_vram_gb": gpu_info.get("total_vram_gb", 0),

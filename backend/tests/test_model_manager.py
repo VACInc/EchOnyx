@@ -30,6 +30,7 @@ def test_resolve_llama_gpu_layers_respects_explicit_override():
 
 def test_normalize_whisper_model_name_uses_transformers_ids_for_rocm():
     assert _normalize_whisper_model_name("large-v3", backend=GPUBackend.ROCM) == "openai/whisper-large-v3"
+    assert _normalize_whisper_model_name("medium", backend=GPUBackend.METAL) == "openai/whisper-medium"
     assert (
         _normalize_whisper_model_name("whisper-large-v3-turbo", backend=GPUBackend.ROCM)
         == "openai/whisper-large-v3-turbo"
@@ -67,6 +68,15 @@ def test_torch_device_returns_specific_cuda_index_when_requested(monkeypatch):
         runtime_label="embedding",
         device_index=5,
     ) == "cuda:5"
+
+
+def test_torch_device_returns_mps_when_available(monkeypatch):
+    fake_torch = types.SimpleNamespace(
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True))
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    assert _torch_device(GPUBackend.METAL, strict=True, runtime_label="embedding") == "mps"
 
 
 def test_offload_model_to_cpu_handles_nested_model_bundles():
@@ -219,6 +229,40 @@ async def test_load_whisper_uses_transformers_repo_on_rocm(monkeypatch, tmp_path
     await manager._load_whisper()
 
     assert seen["model_name"] == "openai/whisper-large-v3"
+
+
+@pytest.mark.asyncio
+async def test_load_whisper_uses_transformers_repo_on_metal(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="medium",
+        gpu_backend=GPUBackend.METAL,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.APPLE_SILICON,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(0,),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": [], "apple_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    seen: dict[str, str] = {}
+
+    async def fake_load_transformers_whisper(model_name, *_args, **_kwargs):
+        seen["model_name"] = model_name
+        return {"type": "whisper_transformers"}
+
+    monkeypatch.setattr(model_manager_module, "_load_transformers_whisper", fake_load_transformers_whisper)
+
+    manager = ModelManager()
+    await manager._load_whisper()
+
+    assert seen["model_name"] == "openai/whisper-medium"
 
 
 def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, tmp_path):

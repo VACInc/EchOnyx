@@ -98,12 +98,24 @@ MODEL_REGISTRY = {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf",
     },
+    "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf": {
+        "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
+        "filename": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+    },
+    "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf": {
+        "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
+        "filename": "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf",
+    },
     # Summarization models - Qwen3 30B A3B (MoE)
     "Qwen3-30B-A3B-Q4_K_M.gguf": {
         "repo_id": "Qwen/Qwen3-30B-A3B-GGUF",
         "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
         "fallback_repo": "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
         "fallback_filename": "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
+    },
+    "Qwen2.5-3B-Instruct.Q4_K_M.gguf": {
+        "repo_id": "mradermacher/Qwen2.5-3B-Instruct-GGUF",
+        "filename": "Qwen2.5-3B-Instruct.Q4_K_M.gguf",
     },
     # Alternative smaller models for testing/lower memory
     "qwen2.5-7b-instruct-q4_k_m.gguf": {

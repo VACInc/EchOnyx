@@ -60,6 +60,15 @@ The NVIDIA endpoint services now self-place from live `nvidia-smi` free-memory d
 On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM 0.11.2`. That split is now live-accepted end to end for upload, batch, summary, search, ask, and similar.
 Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks before they are stored or returned.
 
+**Apple Silicon / Metal:**
+Run backend and worker on the host, not Docker. The initial Metal bring-up now auto-selects smaller defaults on unified-memory Macs:
+- `WHISPER_MODEL=medium`
+- `EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5`
+- `VISION_MODEL=Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf`
+- `SUMMARIZATION_MODEL=Qwen2.5-3B-Instruct.Q4_K_M.gguf`
+
+Follow `backend/README.md` for the host-run commands. This path is meant to prove functionality on a `16 GB` Apple Silicon machine, not the full high-capacity default stack yet.
+
 ### 3) Access
 
 - Frontend: `http://localhost:3000`
@@ -71,7 +80,7 @@ Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks befo
 
 Set these in `.env` as needed:
 
-- `GPU_BACKEND`: `cuda` | `vulkan` | `rocm` | `cpu`
+- `GPU_BACKEND`: `cuda` | `metal` | `vulkan` | `rocm` | `cpu`
 - `MODEL_LOADING`: `sequential` (low memory) or `parallel`
 - `HF_TOKEN`: optional overall, but required if you want pyannote diarization
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
@@ -103,6 +112,8 @@ Defaults are configured in `.env.example`. All models are swappable:
 - **Summarization**: `SUMMARIZATION_MODEL` (GGUF) or `SUMMARIZATION_ENDPOINT_*`
 - **Embeddings**: `EMBEDDING_MODEL` (HF)
 - **Audio Hints**: `AUDIO_EVENT_MODEL` (defaults to CLAP for raw-audio source cues)
+
+On Apple Silicon bring-up, the repo now defaults to smaller local models so a `16 GB` Mac can process videos sequentially on Metal.
 
 GGUF models can be downloaded automatically via the built-in model downloader when needed.
 

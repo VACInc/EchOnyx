@@ -133,6 +133,8 @@ async def test_list_available_models_uses_asr_key():
     assert "whisper" not in response
     assert response["asr"][0]["name"] == "nvidia/canary-qwen-2.5b"
     assert response["audio_event"][0]["name"] == "laion/clap-htsat-fused"
+    assert any(model["name"] == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf" for model in response["vision"])
+    assert any(model["name"] == "Qwen2.5-3B-Instruct.Q4_K_M.gguf" for model in response["summarization"])
 
 
 @pytest.mark.asyncio

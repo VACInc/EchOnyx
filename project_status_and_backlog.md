@@ -6,6 +6,7 @@
 - The live Strix Halo default should remain `llama_server` for now.
 - The `vllm` runtime stays in the repo as an opt-in ROCm backend for future work and for later NVIDIA comparison.
 - Live validation on the Strix Halo remains part of the acceptance bar for runtime changes.
+- Apple Silicon now has an initial Metal host-run bring-up path with small defaults, but it is not live-accepted yet because we do not have an active Mac validation box in this repo workflow.
 
 ## Validated Findings And Constraints
 
@@ -93,6 +94,14 @@
   - the runtime plan now exposes explicit worker execution mode, endpoint loading mode, per-model placement, and whether endpoint services should unload after each request
   - managed NVIDIA endpoints now auto-pick GPUs from current `nvidia-smi` free-memory data when explicit pins are unset
   - on a single smaller NVIDIA GPU, managed endpoints now switch to stage-by-stage loading instead of trying to keep both large endpoint models resident
+  - Apple Silicon now auto-detects as `hardware_profile=apple_silicon` with `gpu_backend=metal`
+  - the initial Apple bring-up path uses smaller default models on unified-memory Macs:
+    - `medium` Whisper
+    - `nomic-ai/nomic-embed-text-v1.5`
+    - `Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf`
+    - `Qwen2.5-3B-Instruct.Q4_K_M.gguf`
+  - on smaller Apple unified-memory systems, the planner now forces full stage-by-stage loading instead of trying to keep a hybrid resident set hot
+  - the repo bootstrap scripts now detect Apple Silicon and stop recommending the old Vulkan Strix-Halo path
 
 ## High Priority Requirements
 
@@ -110,7 +119,7 @@
 
 - Replace automatic transcription fallback with an explicit ASR model switcher or selector so one chosen ASR path runs deterministically instead of silently falling back to Whisper.
 - Add full NVIDIA runtime support after the AMD ROCm path is solid.
-- Add macOS Metal support after NVIDIA.
+- Live-validate the new macOS Metal bring-up path on an actual Apple Silicon machine.
 - Turn Ask into a true chat workflow using the summarization model as the response engine.
 - Add model management UX in Settings:
   - dropdown model selection

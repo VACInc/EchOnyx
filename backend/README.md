@@ -24,6 +24,30 @@ uv run uvicorn app.main:app --reload
 uv run celery -A app.workers.celery_app worker --loglevel=info
 ```
 
+## Apple Silicon / Metal Bring-Up
+
+Docker does not expose Metal to the Linux containers used by this repo, so Apple Silicon runs are host-only for now.
+
+Use a smaller sequential stack on a `16 GB` Mac:
+
+```bash
+export HARDWARE_PROFILE=apple_silicon
+export GPU_BACKEND=metal
+export MODEL_LOADING=sequential
+export WHISPER_MODEL=medium
+export EMBEDDING_MODEL=nomic-ai/nomic-embed-text-v1.5
+export VISION_MODEL=Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf
+export VISION_MMPROJ=Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf
+export VISION_CHAT_FORMAT=qwen2.5-vl
+export SUMMARIZATION_MODEL=Qwen2.5-3B-Instruct.Q4_K_M.gguf
+```
+
+Install `llama-cpp-python` with Metal enabled before you start the backend or worker:
+
+```bash
+CMAKE_ARGS="-DGGML_METAL=on" uv sync
+```
+
 ## Notes
 
 - Completed videos require an explicit forced rerun; reset/reprocess is not implicit anymore.

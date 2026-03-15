@@ -174,7 +174,7 @@ def test_runtime_plan_falls_back_to_host_memory_for_strix_halo():
     assert plan.total_accelerator_memory_gb == 128.0
     assert plan.effective_memory_budget_gb == 96.0
     assert plan.worker_model_loading == ModelLoadingStrategy.PARALLEL
-    assert any("inferred Strix Halo unified memory from host RAM" in note for note in plan.notes)
+    assert any("inferred strix halo unified memory from host RAM".lower() in note.lower() for note in plan.notes)
 
 
 def test_runtime_plan_uses_stage_by_stage_endpoints_on_single_small_gpu():
@@ -203,3 +203,32 @@ def test_runtime_plan_uses_stage_by_stage_endpoints_on_single_small_gpu():
     assert plan.endpoint_model_loading == "sequential"
     assert plan.shutdown_endpoint_after_request is True
     assert any("unload each endpoint after its stage completes" in note for note in plan.notes)
+
+
+def test_runtime_plan_uses_stage_by_stage_loading_on_small_apple_silicon():
+    plan = build_runtime_plan(
+        _settings(
+            hardware_profile=HardwareProfile.APPLE_SILICON,
+            gpu_backend=GPUBackend.METAL,
+            whisper_model="medium",
+            embedding_model="nomic-ai/nomic-embed-text-v1.5",
+            vision_model="Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+            summarization_model="Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+            vision_endpoint_url="",
+            summarization_endpoint_url="",
+        ),
+        _gpu_info(
+            nvidia_gpus=[],
+            amd_gpus=[],
+            unified_memory_gb=16.0,
+            system_memory_gb=16.0,
+            total_vram_gb=16.0,
+            available_vram_gb=10.0,
+        ),
+    )
+
+    assert plan.placement_mode == "apple_unified_memory"
+    assert plan.worker_model_loading == ModelLoadingStrategy.SEQUENTIAL
+    assert plan.worker_execution_mode == "stage_by_stage"
+    assert plan.keep_resident_models == ()
+    assert plan.endpoint_model_loading == "none"
