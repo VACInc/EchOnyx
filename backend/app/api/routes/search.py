@@ -86,6 +86,14 @@ class RAGQuestion(BaseModel):
     question: str
     video_ids: list[str] | None = None  # Optional: limit to specific videos
     tags: list[str] | None = None  # Optional: limit to videos with tags
+    history: list["ChatMessage"] | None = None  # Optional: prior conversation turns
+
+
+class ChatMessage(BaseModel):
+    """Conversation message used for chat-style ask."""
+
+    role: Literal["user", "assistant"]
+    content: str
 
 
 class RAGAnswer(BaseModel):
@@ -112,6 +120,8 @@ class SearchWarmResponse(BaseModel):
 
 QUESTION_ANSWERING_SYSTEM_PROMPT = """You answer questions about processed video content.
 Use only the supplied context.
+Use prior conversation only to resolve follow-up references such as pronouns.
+If prior conversation conflicts with the supplied context, trust the supplied context.
 If the context is incomplete, say what is missing instead of inventing facts.
 Keep the answer direct and concise."""
 
@@ -176,6 +186,7 @@ async def ask_question(
 
     Example: "What did Bob say about the budget in the Q3 review?"
     """
+    history = _normalize_chat_history(question.history)
     videos = await _load_candidate_videos(
         db,
         video_ids=question.video_ids,
@@ -190,14 +201,14 @@ async def ask_question(
         )
 
     semantic_sources = await _semantic_search(
-        q=question.question,
+        q=_build_retrieval_query(question.question, history),
         videos=videos,
         speaker=None,
         limit=12,
     )
     lexical_sources = _fallback_text_search(
         videos=videos,
-        q=question.question,
+        q=_build_retrieval_query(question.question, history),
         speaker=None,
         limit=12,
     )
@@ -230,17 +241,11 @@ async def ask_question(
     context_text = "\n".join(context_blocks)
 
     answer = await complete_with_summarization_model(
-        messages=[
-            {"role": "system", "content": QUESTION_ANSWERING_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {question.question}\n\n"
-                    "Context:\n"
-                    f"{context_text}"
-                ),
-            },
-        ],
+        messages=_build_chat_messages(
+            question=question.question,
+            context_text=context_text,
+            history=history,
+        ),
         max_tokens=768,
         temperature=0.1,
     )
@@ -349,6 +354,53 @@ def format_timestamp(seconds: float) -> str:
     if hours > 0:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+def _normalize_chat_history(history: Sequence[ChatMessage] | None) -> list[ChatMessage]:
+    if not history:
+        return []
+    normalized: list[ChatMessage] = []
+    for message in history[-8:]:
+        content = strip_reasoning_content(message.content or "").strip()
+        if not content:
+            continue
+        normalized.append(ChatMessage(role=message.role, content=content))
+    return normalized
+
+
+def _build_retrieval_query(question: str, history: Sequence[ChatMessage]) -> str:
+    recent_user_turns = [
+        message.content.strip()
+        for message in history[-4:]
+        if message.role == "user" and message.content.strip()
+    ]
+    recent_user_turns.append(question.strip())
+    return "\n".join(recent_user_turns)
+
+
+def _build_chat_messages(
+    *,
+    question: str,
+    context_text: str,
+    history: Sequence[ChatMessage],
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": QUESTION_ANSWERING_SYSTEM_PROMPT},
+    ]
+    for message in history[-6:]:
+        messages.append({"role": message.role, "content": message.content})
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Answer my next question using only the supplied context.\n\n"
+                "Context:\n"
+                f"{context_text}\n\n"
+                f"Question: {question}"
+            ),
+        }
+    )
+    return messages
 
 
 def get_context(transcript: dict, segment: dict, context_segments: int = 1) -> str:

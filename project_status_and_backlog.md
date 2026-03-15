@@ -106,6 +106,10 @@
     - default Apple host paths should be repo-local `data/` directories instead of `/data/...`
     - the Apple worker should use Celery `--pool=solo`
     - the Metal Whisper transformers path needs the `soundfile` dependency installed
+  - Ask mode now behaves as a real follow-up chat:
+    - `/api/search/ask` accepts optional prior turns
+    - retrieval expands follow-up queries with recent user turns
+    - the Search UI keeps a local conversation thread instead of replacing the last answer
 
 ## High Priority Requirements
 
@@ -124,7 +128,6 @@
 - Replace automatic transcription fallback with an explicit ASR model switcher or selector so one chosen ASR path runs deterministically instead of silently falling back to Whisper.
 - Add full NVIDIA runtime support after the AMD ROCm path is solid.
 - Live-validate the new macOS Metal bring-up path on an actual Apple Silicon machine.
-- Turn Ask into a true chat workflow using the summarization model as the response engine.
 - Add model management UX in Settings:
   - dropdown model selection
   - Hugging Face existence verification before add or save

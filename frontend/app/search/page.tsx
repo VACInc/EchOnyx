@@ -3,14 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { Search, MessageSquare, Video } from "lucide-react";
+import { Search, MessageSquare, RotateCcw, Video } from "lucide-react";
 import Link from "next/link";
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+  sources?: Array<{
+    video_id: string;
+    video_title: string;
+    timestamp_formatted: string | null;
+  }>;
+};
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"search" | "ask">("search");
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const warmedRef = useRef({ search: false, ask: false });
 
   const searchMutation = useMutation({
@@ -19,8 +30,15 @@ export default function SearchPage() {
   });
 
   const askMutation = useMutation({
-    mutationFn: ({ q, filterTags }: { q: string; filterTags: string[] }) =>
-      api.askQuestion(q, undefined, filterTags),
+    mutationFn: ({
+      q,
+      filterTags,
+      history,
+    }: {
+      q: string;
+      filterTags: string[];
+      history: Array<{ role: "user" | "assistant"; content: string }>;
+    }) => api.askQuestion(q, undefined, filterTags, history),
   });
 
   useEffect(() => {
@@ -87,7 +105,29 @@ export default function SearchPage() {
     if (mode === "search") {
       searchMutation.mutate({ q: query, filterTags: tags });
     } else {
-      askMutation.mutate({ q: query, filterTags: tags });
+      const trimmed = query.trim();
+      const history = chatMessages.map(({ role, content }) => ({ role, content }));
+      askMutation.mutate(
+        { q: trimmed, filterTags: tags, history },
+        {
+          onSuccess: (data) => {
+            setChatMessages((current) => [
+              ...current,
+              { role: "user", content: trimmed },
+              {
+                role: "assistant",
+                content: data.answer,
+                sources: data.sources.map((source) => ({
+                  video_id: source.video_id,
+                  video_title: source.video_title,
+                  timestamp_formatted: source.timestamp_formatted,
+                })),
+              },
+            ]);
+            setQuery("");
+          },
+        },
+      );
     }
   };
 
@@ -139,8 +179,18 @@ export default function SearchPage() {
           }`}
         >
           <MessageSquare className="mr-2 h-4 w-4" />
-          Ask Question
+          Ask
         </button>
+        {mode === "ask" && chatMessages.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setChatMessages([])}
+            className="flex items-center rounded-lg bg-slate-100 px-4 py-2 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
+          >
+            <RotateCcw className="mr-2 h-4 w-4" />
+            New chat
+          </button>
+        )}
       </div>
 
       {/* Search Form */}
@@ -153,7 +203,9 @@ export default function SearchPage() {
               placeholder={
                 mode === "search"
                   ? "Search transcripts..."
-                  : "Ask a question about your videos..."
+                  : chatMessages.length > 0
+                    ? "Ask a follow-up about your videos..."
+                    : "Ask a question about your videos..."
               }
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -261,32 +313,55 @@ export default function SearchPage() {
         </div>
       )}
 
-      {mode === "ask" && askMutation.data && (
+      {mode === "ask" && (
         <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-          <h3 className="font-medium text-slate-900 dark:text-slate-100">Answer</h3>
-          <p className="mt-2 text-slate-700 dark:text-slate-200">{askMutation.data.answer}</p>
-
-          {askMutation.data.sources.length > 0 && (
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-slate-500 dark:text-slate-400">Sources</h4>
-              <ul className="mt-2 space-y-2">
-                {askMutation.data.sources.map((source, idx) => (
-                  <li key={idx} className="rounded-xl bg-slate-50 p-2 text-sm dark:bg-slate-800/70">
-                    <Link
-                      href={`/videos/${source.video_id}`}
-                      className="text-blue-600 hover:underline"
+          {chatMessages.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Ask a question, then keep going with follow-ups in the same chat.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {chatMessages.map((message, idx) => (
+                <div key={`${message.role}-${idx}`} className="space-y-2">
+                  <div className={message.role === "user" ? "text-right" : ""}>
+                    <div
+                      className={`inline-block max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                        message.role === "user"
+                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      }`}
                     >
-                      {source.video_title}
-                    </Link>
-                    {source.timestamp_formatted && (
-                      <span className="ml-2 text-gray-500">
-                        @ {source.timestamp_formatted}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                      {message.content}
+                    </div>
+                  </div>
+                  {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                        Sources
+                      </p>
+                      <ul className="space-y-2">
+                        {message.sources.map((source, sourceIdx) => (
+                          <li
+                            key={`${source.video_id}-${sourceIdx}`}
+                            className="rounded-xl bg-slate-50 p-2 text-sm dark:bg-slate-800/70"
+                          >
+                            <Link href={`/videos/${source.video_id}`} className="text-blue-600 hover:underline">
+                              {source.video_title}
+                            </Link>
+                            {source.timestamp_formatted && (
+                              <span className="ml-2 text-gray-500">@ {source.timestamp_formatted}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
+          )}
+          {askMutation.isPending && (
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Thinking…</p>
           )}
         </div>
       )}

@@ -162,6 +162,11 @@ interface SearchResult {
   relevance_score: number;
 }
 
+interface AskChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface SearchResponse {
   query: string;
   results: SearchResult[];
@@ -282,7 +287,12 @@ export const api = {
     return fetchApi<SearchResponse>(`/api/search?${params}`);
   },
 
-  async askQuestion(question: string, videoIds?: string[], tags?: string[]) {
+  async askQuestion(
+    question: string,
+    videoIds?: string[],
+    tags?: string[],
+    history?: AskChatMessage[],
+  ) {
     return fetchApi<{
       question: string;
       answer: string;
@@ -290,7 +300,7 @@ export const api = {
       confidence: number;
     }>("/api/search/ask", {
       method: "POST",
-      body: JSON.stringify({ question, video_ids: videoIds, tags }),
+      body: JSON.stringify({ question, video_ids: videoIds, tags, history }),
     });
   },
 

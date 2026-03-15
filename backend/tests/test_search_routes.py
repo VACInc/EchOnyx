@@ -6,6 +6,7 @@ import pytest
 
 from app.api.routes import search as search_module
 from app.api.routes.search import (
+    ChatMessage,
     RAGQuestion,
     SearchWarmRequest,
     ask_question,
@@ -249,6 +250,70 @@ async def test_ask_question_uses_all_requested_video_ids(monkeypatch):
     assert len(response.sources) == 2
     assert captured["video_ids"] == [str(video_one.id), str(video_two.id)]
     assert captured["max_tokens"] == 768
+
+
+@pytest.mark.asyncio
+async def test_ask_question_uses_chat_history_for_retrieval_and_prompt(monkeypatch):
+    video = Video(
+        id=uuid.uuid4(),
+        filename="probe.mp4",
+        original_filename="probe.mp4",
+        file_path="/tmp/probe.mp4",
+        file_size=1,
+        mime_type="video/mp4",
+        title="Probe",
+        transcript={
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 5.0,
+                    "text": "The budget review is due Friday.",
+                }
+            ]
+        },
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_search_content(query: str, video_ids=None, n_results: int = 0, **_kwargs):
+        captured["query"] = query
+        return [
+            {
+                "text": "The budget review is due Friday.",
+                "metadata": {
+                    "video_id": str(video.id),
+                    "type": "transcript",
+                    "timestamp": 0.0,
+                },
+                "score": 0.88,
+            }
+        ]
+
+    async def fake_complete(messages, max_tokens: int = 0, temperature: float = 0.0):
+        captured["messages"] = messages
+        return "It is due Friday."
+
+    monkeypatch.setattr(search_module, "search_content", fake_search_content)
+    monkeypatch.setattr(search_module, "complete_with_summarization_model", fake_complete)
+
+    db = DummySession([SequenceResult(items=[video])])
+    response = await ask_question(
+        RAGQuestion(
+            question="When is it due?",
+            history=[
+                ChatMessage(role="user", content="What budget review are we talking about?"),
+                ChatMessage(role="assistant", content="The budget review."),
+            ],
+        ),
+        db=db,
+    )
+
+    assert response.answer == "It is due Friday."
+    assert captured["query"] == "What budget review are we talking about?\nWhen is it due?"
+    assert captured["messages"][1]["role"] == "user"
+    assert captured["messages"][1]["content"] == "What budget review are we talking about?"
+    assert captured["messages"][2]["role"] == "assistant"
+    assert "Question: When is it due?" in captured["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@
 - Scene/keyframe extraction and visual analysis (slides + screen content)
 - Structured summaries (executive summary, key points, actions, decisions)
 - Semantic search + question answering across all content
+- Ask mode keeps a local follow-up chat thread and reuses prior turns for grounded follow-up questions
 - User labels (tags) and label-scoped search/ask
 - Retry (resume) and Reset (reprocess) pipeline controls
 - Duplicate detection with configurable suppression thresholds
@@ -192,7 +193,7 @@ python -m app.core.audio_calibration \
 Use the Search page to:
 
 - Search transcripts and summaries
-- Ask natural-language questions
+- Ask natural-language questions with follow-up chat in the same thread
 - Apply label filters to narrow the scope
 
 ## Hardware Support

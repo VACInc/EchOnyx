@@ -9,6 +9,7 @@ Backend service for the video summarization system.
 - Vision analysis with ROCm-backed OpenAI-compatible endpoints
 - Summarization with Qwen3
 - Vector search with ChromaDB
+- Chat-style follow-up Q&A on top of retrieval
 - Duplicate detection and suppression metadata during processing
 
 ## Development
@@ -76,6 +77,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - Current live NVIDIA split: summarization stays on CUDA `llama.cpp` and runs on a pinned `3090`; vision uses official `vLLM 0.11.2` on the pinned `RTX PRO 6000` because direct CUDA `llama.cpp` on Blackwell was not stable enough for `Qwen3VL`.
 - Live `ai-server` acceptance now covers single upload, batch upload, summary retrieval, search, ask, and similar on that mixed NVIDIA split.
 - Summary generation and `ask` answers now strip `<think>...</think>` reasoning blocks before persistence or API response.
+- `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
 - The audio-event step now reads extracted WAV files directly before CLAP scoring, so CUDA deployments do not depend on `torchaudio` + `torchcodec` just to build summary-side audio hints.
 - Audio-event classification is fail-soft: if it breaks, summarization continues with empty audio context instead of failing the whole job.
 - For the current model set, plan around `24 GB` free accelerator memory as the rough floor, `32 GB` free as the practical single-accelerator target, about `50.5 GB` of budget for warm worker models plus one endpoint, and about `100 GB` free if you expect the whole stack to stay resident at the default memory fraction.
