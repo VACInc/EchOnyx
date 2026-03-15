@@ -195,6 +195,37 @@ python -m app.core.audio_calibration \
 ### Delete Videos
 - Use the Delete button on a video detail page to remove the video and all associated data (artifacts + embeddings).
 
+### Acceptance Script
+
+Use `scripts/acceptance.sh` for repeatable end-to-end checks.
+
+Examples:
+
+```bash
+# Local Mac mini functional pass
+scripts/acceptance.sh \
+  --base-url http://127.0.0.1:8000 \
+  --primary-fixture /Users/vac/EchOnyx/tmp/mac-smoke/budget.mp4 \
+  --secondary-fixture /Users/vac/EchOnyx/tmp/mac-smoke/probe.mp4 \
+  --search-query "budget review" \
+  --ask-question "When is the budget review due?" \
+  --ask-expects "Friday" \
+  --run-batch
+
+# ai-server mixed NVIDIA pass
+scripts/acceptance.sh \
+  --base-url http://192.168.1.147:8000 \
+  --primary-fixture /Users/vac/EchOnyx/tmp/live-fixtures/probe1.mp4 \
+  --secondary-fixture /Users/vac/EchOnyx/tmp/live-fixtures/probe2.mp4 \
+  --search-query "budget review due Friday" \
+  --ask-question "When is the budget review due?" \
+  --ask-expects "Friday" \
+  --run-batch
+
+# Strix Halo non-disruptive health/models check
+scripts/acceptance.sh --base-url http://192.168.1.178:8000 --read-only
+```
+
 ## Search & Q/A
 
 Use the Search page to:

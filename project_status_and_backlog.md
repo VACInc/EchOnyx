@@ -7,6 +7,7 @@
 - The `vllm` runtime stays in the repo as an opt-in ROCm backend for future work and for later NVIDIA comparison.
 - Live validation on the Strix Halo remains part of the acceptance bar for runtime changes.
 - Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
+- `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks.
 
 ## Validated Findings And Constraints
 

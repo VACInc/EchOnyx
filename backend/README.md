@@ -79,6 +79,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - The CUDA image now uses the `llama-cpp-python` vendored `llama.cpp` by default; only set an external `LLAMA_CPP_REPO` / `LLAMA_CPP_REF` when intentionally testing a specific upstream checkout.
 - Current live NVIDIA split: summarization stays on CUDA `llama.cpp` and runs on a pinned `3090`; vision uses official `vLLM 0.11.2` on the pinned `RTX PRO 6000` because direct CUDA `llama.cpp` on Blackwell was not stable enough for `Qwen3VL`.
 - Live `ai-server` acceptance now covers single upload, batch upload, summary retrieval, search, ask, and similar on that mixed NVIDIA split.
+- `scripts/acceptance.sh` is the operator entry point for repeatable API-level acceptance on live targets and the local Mac path.
 - Summary generation and `ask` answers now strip `<think>...</think>` reasoning blocks before persistence or API response.
 - `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
 - `/api/settings/models/verify` checks a candidate model against the built-in catalog, GGUF registry, or Hugging Face before the UI adds it to a selector.
