@@ -74,14 +74,18 @@ interface SettingsResponse {
     available_accelerator_memory_gb: number;
     effective_memory_budget_gb: number;
     placement_mode: string;
+    worker_execution_mode: string;
     worker_model_loading: string;
+    endpoint_model_loading: string;
     keep_resident_models: string[];
     preferred_worker_devices: string[];
     preferred_endpoint_devices: string[];
+    preferred_model_devices: Record<string, string[]>;
     can_keep_all_worker_models_loaded: boolean;
     can_keep_endpoint_models_loaded: boolean;
     requires_endpoint_idle_teardown: boolean;
     endpoint_idle_timeout_recommendation_s: number;
+    shutdown_endpoint_after_request: boolean;
     estimated_memory_by_model_gb: Record<string, number>;
     notes: string[];
   };
