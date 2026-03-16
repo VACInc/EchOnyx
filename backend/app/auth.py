@@ -14,6 +14,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Request, WebSocket
 from redis import asyncio as redis_async
@@ -155,14 +156,58 @@ def verify_password(password: str, encoded: str) -> bool:
     return hmac.compare_digest(candidate, encoded)
 
 
+def _parse_ip(value: str | None) -> ipaddress._BaseAddress | None:
+    if not value:
+        return None
+    try:
+        return ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+
+
+def _trusted_proxy_networks(settings: Settings) -> tuple[ipaddress._BaseNetwork, ...]:
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw in settings.trusted_proxy_cidrs.split(","):
+        clean = raw.strip()
+        if not clean:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(clean, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+def _request_from_trusted_proxy(request: Request) -> bool:
+    settings = get_settings()
+    if not settings.trust_proxy_headers:
+        return False
+    client_host = request.client.host if request.client else ""
+    client_ip = _parse_ip(client_host)
+    if client_ip is None:
+        return False
+    return any(client_ip in network for network in _trusted_proxy_networks(settings))
+
+
+def _request_scheme(request: Request) -> str:
+    if request.url.scheme == "https":
+        return "https"
+    if _request_from_trusted_proxy(request):
+        forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        if forwarded in {"http", "https"}:
+            return forwarded
+    return request.url.scheme
+
+
 def build_secure_cookie_flag(request: Request) -> bool:
-    return request.url.scheme == "https"
+    return _request_scheme(request) == "https"
 
 
 def get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    if forwarded:
-        return forwarded
+    if _request_from_trusted_proxy(request):
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        if forwarded:
+            return forwarded
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -181,8 +226,44 @@ def _is_private_or_loopback_host(host: str) -> bool:
     return ip.is_private or ip.is_loopback
 
 
+def _is_loopback_host(host: str) -> bool:
+    normalized = (host or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return ip.is_loopback
+
+
 def setup_request_is_allowed(request: Request) -> bool:
-    return _is_private_or_loopback_host(get_client_ip(request))
+    return _is_loopback_host(get_client_ip(request))
+
+
+def auth_transport_is_secure(request: Request) -> bool:
+    settings = get_settings()
+    return (
+        build_secure_cookie_flag(request)
+        or settings.allow_insecure_auth_http
+        or _is_loopback_host(get_client_ip(request))
+    )
+
+
+def auth_origin_is_allowed(request: Request) -> bool:
+    origin = request.headers.get("origin", "").strip()
+    if not origin:
+        return True
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    request_host = (request.url.hostname or "").strip().lower()
+    origin_host = parsed.hostname.strip().lower()
+    if request_host == origin_host:
+        return True
+    return _is_loopback_host(request_host) and _is_loopback_host(origin_host)
 
 
 def is_public_path(path: str) -> bool:

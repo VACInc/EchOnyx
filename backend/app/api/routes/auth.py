@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 
 from app.auth import (
     apply_auth_cookies,
+    auth_origin_is_allowed,
     auth_setup_is_required,
+    auth_transport_is_secure,
     clear_auth_cookies,
     create_session,
     get_client_ip,
@@ -85,8 +87,12 @@ async def setup_auth(payload: AuthPasswordPayload, request: Request):
     settings = get_settings()
     if local_password_auth_is_configured(settings):
         raise HTTPException(status_code=409, detail="Authentication is already configured.")
+    if not auth_origin_is_allowed(request):
+        raise HTTPException(status_code=403, detail="Cross-origin setup is not allowed.")
     if not setup_request_is_allowed(request):
-        raise HTTPException(status_code=403, detail="Initial setup is only allowed from localhost or a private network.")
+        raise HTTPException(status_code=403, detail="Initial setup is only allowed from localhost.")
+    if not auth_transport_is_secure(request):
+        raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
 
     password_hash = hash_password(payload.password)
     write_env_updates(resolve_env_file_path(), {"AUTH_PASSWORD_HASH": password_hash})
@@ -118,6 +124,10 @@ async def login(payload: AuthPasswordPayload, request: Request):
     settings = get_settings()
     if not local_password_auth_is_configured(settings):
         raise HTTPException(status_code=409, detail="Authentication has not been configured yet.")
+    if not auth_origin_is_allowed(request):
+        raise HTTPException(status_code=403, detail="Cross-origin login is not allowed.")
+    if not auth_transport_is_secure(request):
+        raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
     if not verify_password(payload.password, settings.auth_password_hash):
         raise HTTPException(status_code=401, detail="Invalid password.")
 
@@ -165,6 +175,8 @@ async def change_password(payload: ChangePasswordPayload, request: Request):
     settings = get_settings()
     if not local_password_auth_is_configured(settings):
         raise HTTPException(status_code=409, detail="Authentication has not been configured yet.")
+    if not auth_transport_is_secure(request):
+        raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
     if not verify_password(payload.current_password, settings.auth_password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
 
@@ -202,6 +214,10 @@ async def oidc_login(
     settings = get_settings()
     if not oidc_is_enabled(settings):
         raise HTTPException(status_code=404, detail="OIDC is not configured.")
+    if not auth_origin_is_allowed(request):
+        raise HTTPException(status_code=403, detail="Cross-origin login is not allowed.")
+    if not auth_transport_is_secure(request):
+        raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
     return RedirectResponse(await create_login_redirect(request, next_url), status_code=307)
 
 
@@ -214,6 +230,8 @@ async def oidc_callback(
     settings = get_settings()
     if not oidc_is_enabled(settings):
         raise HTTPException(status_code=404, detail="OIDC is not configured.")
+    if not auth_transport_is_secure(request):
+        raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
 
     try:
         identity, redirect_url = await exchange_code_for_identity(request, code=code, state=state)

@@ -30,12 +30,15 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 
 - The backend now expects a single local admin password.
 - First-use setup happens through `POST /api/auth/setup` or the frontend sign-in gate.
+- First-use setup is localhost-only by default. Remote bootstrap should use a preseeded `AUTH_PASSWORD_HASH` or OIDC config.
 - Later access uses `POST /api/auth/login`, `POST /api/auth/logout`, and `POST /api/auth/password`.
 - Session auth is cookie-based; mutating requests require the matching CSRF header.
+- Non-loopback HTTP auth is blocked by default. Use HTTPS, or set `ALLOW_INSECURE_AUTH_HTTP=true` only for temporary dev/test environments.
 - OIDC is also supported for providers like Authentik.
 - Set `OIDC_ENABLED=true` plus `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` to turn it on.
 - Optional `OIDC_ALLOWED_EMAILS` and `OIDC_ALLOWED_GROUPS` restrict which IdP users can create a local session.
 - The backend exposes `GET /api/auth/oidc/login` and `GET /api/auth/oidc/callback`; the frontend sign-in gate uses those automatically when OIDC is enabled.
+- Only enable `TRUST_PROXY_HEADERS=true` when the app is actually behind a trusted reverse proxy and `TRUSTED_PROXY_CIDRS` is set correctly.
 
 ## Apple Silicon / Metal Bring-Up
 

@@ -17,6 +17,8 @@
   - JSON request-size ceilings on non-upload API writes
   - settings-side custom endpoint/model validation
   - audit logging with retention cleanup
+  - forwarded-header trust is now opt-in, localhost bootstrap no longer trusts spoofed `X-Forwarded-For`, cross-origin public auth posts are rejected, and non-loopback HTTP auth is blocked by default
+  - the AMD managed vision/summarization runtimes are no longer published on host ports by default
 - The earlier March 15, 2026 security pass fixed the low-friction network/upload leaks:
   - browser CORS was narrowed from wildcard-open to explicit origins plus local/private-network browser origins
   - job WebSockets now apply the same browser-origin check

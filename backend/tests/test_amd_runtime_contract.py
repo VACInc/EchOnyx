@@ -22,6 +22,8 @@ def test_amd_compose_uses_rocm_llama_server_image_contract():
     assert "MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}" in compose_text
     assert "IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}" in compose_text
     assert "MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}" in compose_text
+    assert '"8081:8080"' not in compose_text
+    assert '"8080:8080"' not in compose_text
 
 
 def test_rocm_llama_server_files_fail_closed_without_rocm():

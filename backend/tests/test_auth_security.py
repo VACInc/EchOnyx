@@ -78,12 +78,15 @@ async def _build_auth_stack(monkeypatch, tmp_path, **env_overrides):
     )
 
 
+def _client(stack, *, client_host: str = "127.0.0.1", base_url: str = "http://127.0.0.1:8000"):
+    transport = httpx.ASGITransport(app=stack.app, client=(client_host, 12345))
+    return httpx.AsyncClient(transport=transport, base_url=base_url)
+
+
 @pytest.mark.asyncio
 async def test_setup_session_and_csrf_protect_writes(monkeypatch, tmp_path):
     stack = await _build_auth_stack(monkeypatch, tmp_path)
-    transport = httpx.ASGITransport(app=stack.app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+    async with _client(stack) as client:
         session = await client.get("/api/auth/session")
         assert session.status_code == 200
         assert session.json() == {
@@ -130,9 +133,7 @@ async def test_login_rate_limit(monkeypatch, tmp_path):
         tmp_path,
         AUTH_PASSWORD_HASH="pbkdf2_sha256$390000$testsalt$5JzY7TZxF3_C1Cae5TEqyiwC-UVlA_sTzYTw4L11d5w=",
     )
-    transport = httpx.ASGITransport(app=stack.app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+    async with _client(stack) as client:
         first = await client.post("/api/auth/login", json={"password": "wrong-password"})
         second = await client.post("/api/auth/login", json={"password": "wrong-password"})
         third = await client.post("/api/auth/login", json={"password": "wrong-password"})
@@ -145,9 +146,7 @@ async def test_login_rate_limit(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_json_request_limit(monkeypatch, tmp_path):
     stack = await _build_auth_stack(monkeypatch, tmp_path, MAX_JSON_REQUEST_BYTES="48")
-    transport = httpx.ASGITransport(app=stack.app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+    async with _client(stack) as client:
         response = await client.post(
             "/api/auth/setup",
             json={"password": "x" * 200},
@@ -159,9 +158,7 @@ async def test_json_request_limit(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_upload_rate_limit(monkeypatch, tmp_path):
     stack = await _build_auth_stack(monkeypatch, tmp_path, UPLOAD_RATE_LIMIT_REQUESTS="2")
-    transport = httpx.ASGITransport(app=stack.app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+    async with _client(stack) as client:
         setup = await client.post("/api/auth/setup", json={"password": "very-secure-password"})
         assert setup.status_code == 200
         headers = {"X-CSRF-Token": client.cookies["echonyx_csrf"]}
@@ -179,9 +176,7 @@ async def test_upload_rate_limit(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_mutations_write_audit_logs(monkeypatch, tmp_path):
     stack = await _build_auth_stack(monkeypatch, tmp_path)
-    transport = httpx.ASGITransport(app=stack.app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8000") as client:
+    async with _client(stack) as client:
         await client.post("/api/auth/setup", json={"password": "very-secure-password"})
         await client.post(
             "/api/protected",
@@ -196,3 +191,48 @@ async def test_mutations_write_audit_logs(monkeypatch, tmp_path):
     assert len(logs) >= 2
     assert logs[0].event == "auth.setup"
     assert any(log.path == "/api/protected" and log.status_code == 200 for log in logs)
+
+
+@pytest.mark.asyncio
+async def test_remote_setup_rejected_even_with_forwarded_loopback(monkeypatch, tmp_path):
+    stack = await _build_auth_stack(monkeypatch, tmp_path)
+
+    async with _client(stack, client_host="192.168.1.50", base_url="http://192.168.1.147:8000") as client:
+        response = await client.post(
+            "/api/auth/setup",
+            json={"password": "very-secure-password"},
+            headers={"X-Forwarded-For": "127.0.0.1"},
+        )
+
+    assert response.status_code == 403
+    assert "localhost" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_cross_origin_setup_rejected(monkeypatch, tmp_path):
+    stack = await _build_auth_stack(monkeypatch, tmp_path)
+
+    async with _client(stack) as client:
+        response = await client.post(
+            "/api/auth/setup",
+            json={"password": "very-secure-password"},
+            headers={"Origin": "http://192.168.1.50:3000"},
+        )
+
+    assert response.status_code == 403
+    assert "cross-origin" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_remote_http_login_requires_https(monkeypatch, tmp_path):
+    stack = await _build_auth_stack(
+        monkeypatch,
+        tmp_path,
+        AUTH_PASSWORD_HASH="pbkdf2_sha256$390000$testsalt$5JzY7TZxF3_C1Cae5TEqyiwC-UVlA_sTzYTw4L11d5w=",
+    )
+
+    async with _client(stack, client_host="192.168.1.50", base_url="http://192.168.1.147:8000") as client:
+        response = await client.post("/api/auth/login", json={"password": "wrong-password"})
+
+    assert response.status_code == 400
+    assert "https" in response.json()["detail"].lower()

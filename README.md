@@ -49,6 +49,7 @@ HF_TOKEN=hf_your_token_here
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
 ```
+The managed AMD vision and summarization runtimes are internal-only now; they are no longer published on host ports by default.
 
 **NVIDIA:**
 ```bash
@@ -89,6 +90,8 @@ Set these in `.env` as needed:
 - `CORS_ALLOW_ORIGIN_REGEX`: optional override for the default local/private-network browser-origin regex
 - `AUTH_REQUIRED`: keep `true` unless you intentionally want an unauthenticated local dev instance
 - `AUTH_PASSWORD_HASH`: optional preseeded local admin password hash
+- `TRUST_PROXY_HEADERS`, `TRUSTED_PROXY_CIDRS`: only enable these when EchOnyx sits behind a trusted reverse proxy that sets `X-Forwarded-*`
+- `ALLOW_INSECURE_AUTH_HTTP`: emergency/dev-only override; leave `false` in any real deployment
 - `OIDC_ENABLED`: enable external OIDC login, including Authentik
 - `OIDC_PROVIDER_NAME`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: base OIDC provider config
 - `OIDC_ALLOWED_EMAILS`, `OIDC_ALLOWED_GROUPS`: optional allowlists for OIDC logins
@@ -210,9 +213,11 @@ python -m app.core.audio_calibration \
 ### Authentication
 - The UI/API now use a single local admin session.
 - First use requires creating the admin password through the sign-in gate or `POST /api/auth/setup`.
+- First-run password setup is now localhost-only by default. For remote first-run installs, preseed `AUTH_PASSWORD_HASH` or configure OIDC first.
 - After setup, access uses password login and Settings can rotate the password.
 - You can also enable OIDC for providers like Authentik. When `OIDC_ENABLED=true`, the sign-in gate adds a provider login button and the backend exchanges the auth code into the same local session cookies used by the rest of the app.
 - If you want OIDC-only login, leave `AUTH_PASSWORD_HASH` unset and configure the OIDC env vars instead.
+- Remote auth should run behind HTTPS. Non-loopback HTTP auth is now blocked by default unless `ALLOW_INSECURE_AUTH_HTTP=true` is set explicitly.
 
 ### Delete Videos
 - Use the Delete button on a video detail page to remove the video and all associated data (artifacts + embeddings).

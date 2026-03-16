@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     auth_session_cookie_name: str = "echonyx_session"
     auth_csrf_cookie_name: str = "echonyx_csrf"
     auth_session_ttl_hours: int = 168
+    trust_proxy_headers: bool = False
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    allow_insecure_auth_http: bool = False
     oidc_enabled: bool = False
     oidc_provider_name: str = "Authentik"
     oidc_issuer_url: str = ""
