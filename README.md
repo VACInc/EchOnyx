@@ -208,6 +208,8 @@ python -m app.core.audio_calibration \
 
 Use `scripts/acceptance.sh` for repeatable end-to-end checks.
 
+It now verifies health, `/api/settings`, `/api/settings/hardware`, model status, upload/batch flow, summary/search/ask/similar, and the action-items CRUD/filter path.
+
 Examples:
 
 ```bash

@@ -78,6 +78,19 @@ api_post_json() {
     "${BASE_URL}${endpoint}"
 }
 
+api_put_json() {
+  local endpoint="$1"
+  local payload="$2"
+  curl -fsS -X PUT \
+    -H 'Content-Type: application/json' \
+    -d "$payload" \
+    "${BASE_URL}${endpoint}"
+}
+
+api_delete() {
+  curl -fsS -X DELETE "${BASE_URL}$1"
+}
+
 upload_video() {
   local fixture="$1"
   local title="$2"
@@ -99,6 +112,15 @@ upload_batch() {
   done
   args+=(-F "name=${name}")
   curl -fsS "${args[@]}" "${BASE_URL}/api/batch"
+}
+
+assert_runtime_endpoints() {
+  log "runtime settings"
+  api_get "/api/settings" | jq -e '.runtime_planner != null and .models != null' >/dev/null \
+    || fail "/api/settings missing runtime planner or models"
+  log "hardware settings"
+  api_get "/api/settings/hardware" | jq -e '.active_profile != null and .active_backend != null and .runtime_plan != null' >/dev/null \
+    || fail "/api/settings/hardware missing expected fields"
 }
 
 poll_video() {
@@ -160,6 +182,13 @@ poll_batch() {
   done
 }
 
+assert_jobs_list() {
+  local video_id="$1"
+  api_get "/api/jobs?video_id=${video_id}&page_size=5" | jq -e '.total >= 1 and (.jobs | length) >= 1' >/dev/null \
+    || fail "jobs listing missing rows for ${video_id}"
+  log "jobs listing ok for ${video_id}"
+}
+
 assert_summary() {
   local video_id="$1"
   local summary_json
@@ -167,6 +196,54 @@ assert_summary() {
   printf '%s' "$summary_json" | jq -e '.summary != null and (.summary.executive_summary | length) > 0' >/dev/null \
     || fail "summary missing for video ${video_id}"
   log "summary ok for ${video_id}"
+}
+
+update_video_tags() {
+  local video_id="$1"
+  local payload="$2"
+  api_put_json "/api/videos/${video_id}/tags" "$payload"
+}
+
+create_action_item() {
+  local payload="$1"
+  api_post_json "/api/action-items" "$payload"
+}
+
+update_action_item_api() {
+  local action_item_id="$1"
+  local payload="$2"
+  api_put_json "/api/action-items/${action_item_id}" "$payload"
+}
+
+delete_action_item_api() {
+  local action_item_id="$1"
+  api_delete "/api/action-items/${action_item_id}"
+}
+
+assert_action_items() {
+  local video_id="$1"
+  local tag="acceptance"
+  local item_id open_json completed_json deleted_json
+
+  update_video_tags "$video_id" "$(jq -cn --arg tag "$tag" '{tags:[$tag]}')" >/dev/null
+
+  item_id="$(create_action_item "$(jq -cn --arg video_id "$video_id" '{video_id:$video_id, text:"Follow up on acceptance flow", source:"manual"}')" | jq -r '.id')"
+  [[ -n "$item_id" && "$item_id" != "null" ]] || fail "action item create failed for ${video_id}"
+
+  open_json="$(api_get "/api/action-items?video_id=${video_id}&status=open&tags=${tag}")"
+  printf '%s' "$open_json" | jq -e --arg item_id "$item_id" '.total >= 1 and (.items[] | select(.id == $item_id and .completed == false))' >/dev/null \
+    || fail "open action item missing for ${video_id}"
+
+  update_action_item_api "$item_id" '{"completed":true}' >/dev/null
+  completed_json="$(api_get "/api/action-items?video_id=${video_id}&status=completed&tags=${tag}")"
+  printf '%s' "$completed_json" | jq -e --arg item_id "$item_id" '.total >= 1 and (.items[] | select(.id == $item_id and .completed == true))' >/dev/null \
+    || fail "completed action item missing for ${video_id}"
+
+  delete_action_item_api "$item_id" >/dev/null
+  deleted_json="$(api_get "/api/action-items?video_id=${video_id}&status=all&tags=${tag}")"
+  printf '%s' "$deleted_json" | jq -e --arg item_id "$item_id" 'all(.items[]?; .id != $item_id)' >/dev/null \
+    || fail "deleted action item still present for ${video_id}"
+  log "action items ok for ${video_id}"
 }
 
 assert_search() {
@@ -285,6 +362,7 @@ require_cmd jq
 
 log "health check ${BASE_URL}"
 api_get "/health" | jq .
+assert_runtime_endpoints
 log "model status"
 api_get "/api/settings/models/status" | jq .
 run_gpu_idle_probe
@@ -301,7 +379,9 @@ primary_upload="$(upload_video "$PRIMARY_FIXTURE" "${TITLE_PREFIX}-primary")"
 primary_video_id="$(printf '%s' "$primary_upload" | jq -r '.id')"
 log "uploaded primary video ${primary_video_id}"
 poll_video "$primary_video_id"
+assert_jobs_list "$primary_video_id"
 assert_summary "$primary_video_id"
+assert_action_items "$primary_video_id"
 
 if [[ -n "$SEARCH_QUERY" ]]; then
   api_post_json "/api/search/warm" '{"mode":"search"}' >/dev/null || true
@@ -343,7 +423,9 @@ if (( RUN_BATCH )); then
   batch_id="$(printf '%s' "$batch_upload" | jq -r '.id')"
   log "uploaded batch ${batch_id}"
   poll_batch "$batch_id"
-  api_get "/api/batch?page_size=5" | jq '.total'
+  api_get "/api/batch?page_size=5" | jq -e '.total >= 1 and (.batches | length) >= 1' >/dev/null \
+    || fail "batch listing missing rows"
+  log "batch listing ok"
 fi
 
 run_gpu_idle_probe

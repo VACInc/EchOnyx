@@ -7,7 +7,7 @@
 - The `vllm` runtime stays in the repo as an opt-in ROCm backend for future work and for later NVIDIA comparison.
 - Live validation on the Strix Halo remains part of the acceptance bar for runtime changes.
 - Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
-- `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks.
+- `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks, including runtime settings/hardware and action-items CRUD/filter coverage.
 - Action items now have a first-class todo system with `/api/action-items`, a dedicated `/todos` page, and a Settings toggle for feature visibility.
 - The March 15, 2026 security pass fixed three no-friction issues:
   - browser CORS was narrowed from wildcard-open to explicit origins plus local/private-network browser origins
