@@ -87,6 +87,12 @@ Set these in `.env` as needed:
 - `MODEL_LOADING`: `sequential` (low memory) or `parallel`
 - `CORS_ALLOWED_ORIGINS`: optional comma-separated explicit browser origins to trust
 - `CORS_ALLOW_ORIGIN_REGEX`: optional override for the default local/private-network browser-origin regex
+- `AUTH_REQUIRED`: keep `true` unless you intentionally want an unauthenticated local dev instance
+- `AUTH_PASSWORD_HASH`: optional preseeded local admin password hash
+- `OIDC_ENABLED`: enable external OIDC login, including Authentik
+- `OIDC_PROVIDER_NAME`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`: base OIDC provider config
+- `OIDC_ALLOWED_EMAILS`, `OIDC_ALLOWED_GROUPS`: optional allowlists for OIDC logins
+- `OIDC_REDIRECT_URI`, `OIDC_FRONTEND_REDIRECT_URL`: optional overrides when the default `:8000` callback and `:3000` frontend redirect are not correct
 - `HF_TOKEN`: optional overall, but required if you want pyannote diarization
 - `VISION_ENDPOINT_URL`, `VISION_ENDPOINT_MODEL`: use an external VL server
 - `SUMMARIZATION_ENDPOINT_URL`, `SUMMARIZATION_ENDPOINT_MODEL`: use an external LLM server
@@ -205,6 +211,8 @@ python -m app.core.audio_calibration \
 - The UI/API now use a single local admin session.
 - First use requires creating the admin password through the sign-in gate or `POST /api/auth/setup`.
 - After setup, access uses password login and Settings can rotate the password.
+- You can also enable OIDC for providers like Authentik. When `OIDC_ENABLED=true`, the sign-in gate adds a provider login button and the backend exchanges the auth code into the same local session cookies used by the rest of the app.
+- If you want OIDC-only login, leave `AUTH_PASSWORD_HASH` unset and configure the OIDC env vars instead.
 
 ### Delete Videos
 - Use the Delete button on a video detail page to remove the video and all associated data (artifacts + embeddings).

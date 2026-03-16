@@ -34,6 +34,24 @@ class AuthSession(Base, TimestampMixin):
     )
 
 
+class OidcLoginState(Base, TimestampMixin):
+    """Temporary state for OIDC authorization-code logins."""
+
+    __tablename__ = "oidc_login_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    code_verifier: Mapped[str] = mapped_column(String(256), nullable=False)
+    redirect_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    client_ip: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
 class AuditLog(Base, TimestampMixin):
     """Security-relevant audit entry."""
 

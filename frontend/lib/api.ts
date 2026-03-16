@@ -229,6 +229,12 @@ interface AuthSessionResponse {
   authenticated: boolean;
   setup_required: boolean;
   actor_label: string | null;
+  password_enabled: boolean;
+  oidc: {
+    enabled: boolean;
+    provider_name: string | null;
+    login_path: string | null;
+  };
 }
 
 function getCsrfToken(): string | null {
@@ -273,6 +279,14 @@ async function fetchApi<T>(
 }
 
 export const api = {
+  getOidcLoginUrl(nextUrl?: string) {
+    const query = new URLSearchParams();
+    if (nextUrl) {
+      query.set("next_url", nextUrl);
+    }
+    return `${API_URL}/api/auth/oidc/login${query.size ? `?${query}` : ""}`;
+  },
+
   async getAuthSession() {
     return fetchApi<AuthSessionResponse>("/api/auth/session");
   },

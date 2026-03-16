@@ -32,6 +32,10 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 - First-use setup happens through `POST /api/auth/setup` or the frontend sign-in gate.
 - Later access uses `POST /api/auth/login`, `POST /api/auth/logout`, and `POST /api/auth/password`.
 - Session auth is cookie-based; mutating requests require the matching CSRF header.
+- OIDC is also supported for providers like Authentik.
+- Set `OIDC_ENABLED=true` plus `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` to turn it on.
+- Optional `OIDC_ALLOWED_EMAILS` and `OIDC_ALLOWED_GROUPS` restrict which IdP users can create a local session.
+- The backend exposes `GET /api/auth/oidc/login` and `GET /api/auth/oidc/callback`; the frontend sign-in gate uses those automatically when OIDC is enabled.
 
 ## Apple Silicon / Metal Bring-Up
 

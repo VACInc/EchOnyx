@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shield, Loader2, Lock } from "lucide-react";
 import { api } from "@/lib/api";
@@ -9,6 +9,12 @@ type AuthSession = {
   authenticated: boolean;
   setup_required: boolean;
   actor_label: string | null;
+  password_enabled: boolean;
+  oidc: {
+    enabled: boolean;
+    provider_name: string | null;
+    login_path: string | null;
+  };
 };
 
 type AuthContextValue = {
@@ -23,10 +29,14 @@ function AuthCard({
   mode,
   onSubmit,
   pending,
+  oidcProviderName,
+  passwordEnabled = true,
 }: {
   mode: "login" | "setup";
   onSubmit: (password: string) => Promise<void>;
   pending: boolean;
+  oidcProviderName?: string | null;
+  passwordEnabled?: boolean;
 }) {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -60,26 +70,30 @@ function AuthCard({
             <p className="text-sm text-slate-400">
               {mode === "setup"
                 ? "Create the local admin password."
-                : "Enter the local admin password."}
+                : passwordEnabled
+                  ? "Enter the local admin password."
+                  : "Use the configured single sign-on provider."}
             </p>
           </div>
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-blue-400"
-              minLength={12}
-              required
-            />
-          </div>
-          {mode === "setup" ? (
+          {passwordEnabled ? (
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-blue-400"
+                minLength={12}
+                required
+              />
+            </div>
+          ) : null}
+          {mode === "setup" && passwordEnabled ? (
             <div>
               <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
                 Confirm password
@@ -95,13 +109,26 @@ function AuthCard({
             </div>
           ) : null}
           {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-          <button
-            type="submit"
-            disabled={pending}
-            className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:bg-blue-500/60"
-          >
-            {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "setup" ? "Create password" : "Sign in"}
-          </button>
+          {passwordEnabled ? (
+            <button
+              type="submit"
+              disabled={pending}
+              className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:bg-blue-500/60"
+            >
+              {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "setup" ? "Create password" : "Sign in"}
+            </button>
+          ) : null}
+          {mode === "login" && oidcProviderName ? (
+            <button
+              type="button"
+              className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-semibold text-slate-100 transition hover:border-blue-400"
+              onClick={() => {
+                window.location.href = api.getOidcLoginUrl(window.location.href);
+              }}
+            >
+              Sign in with {oidcProviderName}
+            </button>
+          ) : null}
         </form>
       </div>
     </div>
@@ -110,12 +137,28 @@ function AuthCard({
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
+  const [redirectError, setRedirectError] = useState<string | null>(null);
   const sessionQuery = useQuery({
     queryKey: ["authSession"],
     queryFn: api.getAuthSession,
     retry: false,
     staleTime: 0,
   });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("auth_error")) {
+      return;
+    }
+    setRedirectError("Single sign-on failed.");
+    params.delete("auth_error");
+    const next = params.toString();
+    const url = `${window.location.pathname}${next ? `?${next}` : ""}${window.location.hash}`;
+    window.history.replaceState({}, "", url);
+  }, []);
 
   const loginMutation = useMutation({
     mutationFn: api.login,
@@ -175,13 +218,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!sessionQuery.data?.authenticated) {
     return (
-      <AuthCard
-        mode="login"
-        pending={loginMutation.isPending}
-        onSubmit={async (password) => {
-          await loginMutation.mutateAsync(password);
-        }}
-      />
+      <div className="relative">
+        <AuthCard
+          mode="login"
+          pending={loginMutation.isPending}
+          oidcProviderName={sessionQuery.data?.oidc.enabled ? sessionQuery.data.oidc.provider_name : null}
+          passwordEnabled={sessionQuery.data?.password_enabled}
+          onSubmit={async (password) => {
+            await loginMutation.mutateAsync(password);
+          }}
+        />
+        {redirectError ? (
+          <div className="pointer-events-none absolute inset-x-0 top-8 flex justify-center px-4">
+            <p className="rounded-full border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+              {redirectError}
+            </p>
+          </div>
+        ) : null}
+      </div>
     );
   }
 

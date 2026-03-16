@@ -11,6 +11,7 @@
 - Action items now have a first-class todo system with `/api/action-items`, a dedicated `/todos` page, and a Settings toggle for feature visibility.
 - The March 16, 2026 security pass now adds:
   - single-admin auth with bootstrap setup, login/logout, and password rotation
+  - base OIDC support for providers like Authentik, including auth-code login, callback, allowlists, and reuse of the existing local session cookies
   - CSRF on mutating routes
   - auth/write/upload rate limits
   - JSON request-size ceilings on non-upload API writes
@@ -155,7 +156,7 @@
 - Run a full end-to-end security review across API, frontend, model/runtime orchestration, remote endpoints, secrets handling, uploads, search/ask flows, and deployment surfaces so the product is defensible as a secure local-first system.
 - Security enhancement ranking after the March 16, 2026 pass:
   - High:
-    - add per-user auth/RBAC if the product needs multi-user or shared-host deployments; the current model is intentionally single-admin
+    - add per-user auth/RBAC if the product needs multi-user or shared-host deployments; the current model is still intentionally single-admin even with OIDC
     - add stricter export/search quotas once real production traffic patterns are known
     - complete the remaining end-to-end security review against the newly secured live targets and deployment docs
   - Medium:

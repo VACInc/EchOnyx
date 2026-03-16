@@ -32,7 +32,7 @@ async def _build_auth_stack(monkeypatch, tmp_path, **env_overrides):
     loaded = {}
     loaded["app.config"] = importlib.reload(sys.modules["app.config"]) if "app.config" in sys.modules else importlib.import_module("app.config")
     loaded["app.models"] = sys.modules["app.models"] if "app.models" in sys.modules else importlib.import_module("app.models")
-    for name in ["app.database", "app.auth", "app.http_security", "app.api.routes.auth"]:
+    for name in ["app.database", "app.auth", "app.oidc", "app.http_security", "app.api.routes.auth"]:
         if name in sys.modules:
             loaded[name] = importlib.reload(sys.modules[name])
         else:
@@ -90,6 +90,12 @@ async def test_setup_session_and_csrf_protect_writes(monkeypatch, tmp_path):
             "authenticated": False,
             "setup_required": True,
             "actor_label": None,
+            "password_enabled": False,
+            "oidc": {
+                "enabled": False,
+                "provider_name": None,
+                "login_path": None,
+            },
         }
 
         blocked = await client.get("/api/protected")
@@ -100,6 +106,7 @@ async def test_setup_session_and_csrf_protect_writes(monkeypatch, tmp_path):
         assert setup.status_code == 200
         assert client.cookies.get("echonyx_session")
         assert client.cookies.get("echonyx_csrf")
+        assert setup.json()["password_enabled"] is True
 
         allowed = await client.get("/api/protected")
         assert allowed.status_code == 200

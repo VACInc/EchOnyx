@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 
 from app.config import Settings, get_settings
 from app.database import async_session_maker
-from app.models.auth import AuditLog, AuthSession
+from app.models.auth import AuditLog, AuthSession, OidcLoginState
 
 PBKDF2_ITERATIONS = 390_000
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
@@ -31,6 +31,8 @@ PUBLIC_PATHS = {
     "/api/auth/session",
     "/api/auth/login",
     "/api/auth/setup",
+    "/api/auth/oidc/login",
+    "/api/auth/oidc/callback",
 }
 IN_MEMORY_RATE_LIMITS: dict[str, tuple[int, float]] = {}
 IN_MEMORY_RATE_LIMIT_LOCK = asyncio.Lock()
@@ -104,7 +106,27 @@ def get_rate_limiter() -> RateLimiter:
 
 def auth_is_configured(settings: Settings) -> bool:
     """Return whether a password hash has been configured."""
-    return (not settings.auth_required) or bool(settings.auth_password_hash.strip())
+    return (not settings.auth_required) or local_password_auth_is_configured(settings) or oidc_is_enabled(settings)
+
+
+def local_password_auth_is_configured(settings: Settings) -> bool:
+    """Return whether local password auth is configured."""
+    return bool(settings.auth_password_hash.strip())
+
+
+def oidc_is_enabled(settings: Settings) -> bool:
+    """Return whether OIDC is configured enough to be offered."""
+    return (
+        settings.auth_required
+        and settings.oidc_enabled
+        and bool(settings.oidc_issuer_url.strip())
+        and bool(settings.oidc_client_id.strip())
+    )
+
+
+def auth_setup_is_required(settings: Settings) -> bool:
+    """Return whether there is no usable auth method yet."""
+    return settings.auth_required and not auth_is_configured(settings)
 
 
 def hash_token(token: str) -> str:
@@ -247,6 +269,7 @@ async def cleanup_security_state() -> None:
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.audit_log_retention_days)
     async with async_session_maker() as db:
         await db.execute(delete(AuthSession).where(AuthSession.expires_at <= datetime.now(timezone.utc)))
+        await db.execute(delete(OidcLoginState).where(OidcLoginState.expires_at <= datetime.now(timezone.utc)))
         await db.execute(delete(AuditLog).where(AuditLog.created_at < cutoff))
         await db.commit()
 

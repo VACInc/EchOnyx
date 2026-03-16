@@ -1,6 +1,6 @@
 """Database models."""
 
-from app.models.auth import AuditLog, AuthSession
+from app.models.auth import AuditLog, AuthSession, OidcLoginState
 from app.models.action_item import ActionItem
 from app.models.base import Base
 from app.models.job import Job, JobStatus, JobStep
@@ -14,5 +14,6 @@ __all__ = [
     "JobStep",
     "ActionItem",
     "AuthSession",
+    "OidcLoginState",
     "AuditLog",
 ]

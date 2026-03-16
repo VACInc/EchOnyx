@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     auth_session_cookie_name: str = "echonyx_session"
     auth_csrf_cookie_name: str = "echonyx_csrf"
     auth_session_ttl_hours: int = 168
+    oidc_enabled: bool = False
+    oidc_provider_name: str = "Authentik"
+    oidc_issuer_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_scopes: str = "openid profile email"
+    oidc_allowed_emails: str = ""
+    oidc_allowed_groups: str = ""
+    oidc_redirect_uri: str = ""
+    oidc_frontend_redirect_url: str = ""
     login_rate_limit_attempts: int = 10
     login_rate_limit_window_seconds: int = 600
     write_rate_limit_requests: int = 120
