@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BASE_URL="http://127.0.0.1:8000"
+PASSWORD="${ECHONYX_PASSWORD:-}"
 PRIMARY_FIXTURE=""
 SECONDARY_FIXTURE=""
 SEARCH_QUERY=""
@@ -14,6 +15,13 @@ TIMEOUT_SECONDS=900
 POLL_INTERVAL_SECONDS=5
 TITLE_PREFIX="acceptance-$(date +%Y%m%d-%H%M%S)"
 BATCH_FIXTURES=()
+COOKIE_JAR="$(mktemp)"
+
+cleanup() {
+  rm -f "$COOKIE_JAR"
+}
+
+trap cleanup EXIT
 
 usage() {
   cat <<'EOF'
@@ -23,6 +31,7 @@ Options:
   --base-url URL              API base URL. Default: http://127.0.0.1:8000
   --primary-fixture PATH      Primary video fixture for single-upload checks.
   --secondary-fixture PATH    Secondary fixture for similarity checks.
+  --password TEXT             Auth password. Defaults to ECHONYX_PASSWORD.
   --batch-fixture PATH        Fixture to include in batch upload. Repeatable.
   --search-query TEXT         Query for /api/search against the primary video.
   --ask-question TEXT         Question for /api/search/ask against the primary video.
@@ -66,14 +75,24 @@ mime_type_for() {
 }
 
 api_get() {
-  curl -fsS "${BASE_URL}$1"
+  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" "${BASE_URL}$1"
+}
+
+csrf_token() {
+  awk '$6 == "echonyx_csrf" { print $7 }' "$COOKIE_JAR" | tail -n1
 }
 
 api_post_json() {
   local endpoint="$1"
   local payload="$2"
+  local csrf
+  local args=()
+  csrf="$(csrf_token)"
+  [[ -n "$csrf" ]] && args+=(-H "X-CSRF-Token: ${csrf}")
   curl -fsS -X POST \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
     -H 'Content-Type: application/json' \
+    "${args[@]}" \
     -d "$payload" \
     "${BASE_URL}${endpoint}"
 }
@@ -81,22 +100,38 @@ api_post_json() {
 api_put_json() {
   local endpoint="$1"
   local payload="$2"
+  local csrf
+  local args=()
+  csrf="$(csrf_token)"
+  [[ -n "$csrf" ]] && args+=(-H "X-CSRF-Token: ${csrf}")
   curl -fsS -X PUT \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
     -H 'Content-Type: application/json' \
+    "${args[@]}" \
     -d "$payload" \
     "${BASE_URL}${endpoint}"
 }
 
 api_delete() {
-  curl -fsS -X DELETE "${BASE_URL}$1"
+  local csrf
+  local args=()
+  csrf="$(csrf_token)"
+  [[ -n "$csrf" ]] && args+=(-H "X-CSRF-Token: ${csrf}")
+  curl -fsS -X DELETE -b "$COOKIE_JAR" -c "$COOKIE_JAR" "${args[@]}" "${BASE_URL}$1"
 }
 
 upload_video() {
   local fixture="$1"
   local title="$2"
   local mime
+  local csrf
+  local args=()
   mime="$(mime_type_for "$fixture")"
+  csrf="$(csrf_token)"
+  [[ -n "$csrf" ]] && args+=(-H "X-CSRF-Token: ${csrf}")
   curl -fsS \
+    -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+    "${args[@]}" \
     -F "file=@${fixture};type=${mime}" \
     -F "title=${title}" \
     "${BASE_URL}/api/videos/upload"
@@ -107,11 +142,42 @@ upload_batch() {
   shift
   local args=()
   local fixture
+  local csrf
+  csrf="$(csrf_token)"
+  [[ -n "$csrf" ]] && args+=(-H "X-CSRF-Token: ${csrf}")
   for fixture in "$@"; do
     args+=(-F "files=@${fixture};type=$(mime_type_for "$fixture")")
   done
   args+=(-F "name=${name}")
-  curl -fsS "${args[@]}" "${BASE_URL}/api/batch"
+  curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" "${args[@]}" "${BASE_URL}/api/batch"
+}
+
+ensure_authenticated() {
+  local session_json authenticated setup_required
+  session_json="$(curl -fsS -b "$COOKIE_JAR" -c "$COOKIE_JAR" "${BASE_URL}/api/auth/session")"
+  authenticated="$(printf '%s' "$session_json" | jq -r '.authenticated')"
+  setup_required="$(printf '%s' "$session_json" | jq -r '.setup_required')"
+
+  if [[ "$setup_required" == "true" ]]; then
+    [[ -n "$PASSWORD" ]] || fail "auth setup required; provide --password or ECHONYX_PASSWORD"
+    log "bootstrapping auth"
+    curl -fsS -X POST \
+      -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -cn --arg password "$PASSWORD" '{password:$password}')" \
+      "${BASE_URL}/api/auth/setup" >/dev/null
+    return 0
+  fi
+
+  if [[ "$authenticated" != "true" ]]; then
+    [[ -n "$PASSWORD" ]] || fail "auth required; provide --password or ECHONYX_PASSWORD"
+    log "signing in"
+    curl -fsS -X POST \
+      -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+      -H 'Content-Type: application/json' \
+      -d "$(jq -cn --arg password "$PASSWORD" '{password:$password}')" \
+      "${BASE_URL}/api/auth/login" >/dev/null
+  fi
 }
 
 assert_runtime_endpoints() {
@@ -307,6 +373,10 @@ while [[ $# -gt 0 ]]; do
       SECONDARY_FIXTURE="$2"
       shift 2
       ;;
+    --password)
+      PASSWORD="$2"
+      shift 2
+      ;;
     --batch-fixture)
       BATCH_FIXTURES+=("$2")
       shift 2
@@ -359,6 +429,7 @@ done
 
 require_cmd curl
 require_cmd jq
+ensure_authenticated
 
 log "health check ${BASE_URL}"
 api_get "/health" | jq .

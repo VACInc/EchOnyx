@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.config import (
@@ -22,6 +22,8 @@ from app.config import (
     get_settings,
 )
 from app.core.model_manager import reset_model_manager
+from app.env_utils import resolve_env_file_path, stringify_env_value, write_env_updates
+from app.security import validate_endpoint_url, validate_model_name
 
 MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
     "asr": [
@@ -57,61 +59,13 @@ MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
 MODEL_COMPONENTS = tuple(MODEL_OPTIONS.keys())
 
 router = APIRouter()
+_resolve_env_file_path = resolve_env_file_path
+_write_env_updates = write_env_updates
+_stringify_env_value = stringify_env_value
 
 
 def _enum_value(value) -> str:
     return getattr(value, "value", value)
-
-
-def _stringify_env_value(value: Any) -> str:
-    enum_value = getattr(value, "value", value)
-    if enum_value is None:
-        return ""
-    if isinstance(enum_value, bool):
-        return "true" if enum_value else "false"
-    return str(enum_value)
-
-
-def _resolve_env_file_path() -> Path:
-    env_file = Settings.model_config.get("env_file", ".env")
-    if isinstance(env_file, (list, tuple)):
-        env_file = env_file[0]
-    return Path(env_file or ".env")
-
-
-def _write_env_updates(path: Path, updates: dict[str, Any]) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    key_to_index: dict[str, int] = {}
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            continue
-        key = line.split("=", 1)[0].strip()
-        key_to_index[key] = index
-
-    for key, value in updates.items():
-        if value is None:
-            if key in key_to_index:
-                lines.pop(key_to_index[key])
-                key_to_index = {}
-                for index, line in enumerate(lines):
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith("#") or "=" not in line:
-                        continue
-                    current_key = line.split("=", 1)[0].strip()
-                    key_to_index[current_key] = index
-            continue
-
-        updated_line = f"{key}={_stringify_env_value(value)}"
-        if key in key_to_index:
-            lines[key_to_index[key]] = updated_line
-        else:
-            lines.append(updated_line)
-
-    payload = "\n".join(lines).rstrip()
-    path.write_text(f"{payload}\n" if payload else "", encoding="utf-8")
-
-
 async def _reload_runtime_state() -> None:
     get_settings.cache_clear()
     await reset_model_manager()
@@ -348,6 +302,39 @@ def _collect_env_updates(update: SettingsUpdate) -> dict[str, Any]:
     return updates
 
 
+def _validate_settings_update(update: SettingsUpdate) -> None:
+    model_fields = {
+        "asr_model": update.asr_model,
+        "diarization_model": update.diarization_model,
+        "vision_model": update.vision_model,
+        "vision_mmproj": update.vision_mmproj,
+        "summarization_model": update.summarization_model,
+        "embedding_model": update.embedding_model,
+        "audio_event_model": update.audio_event_model,
+        "vision_endpoint_model": update.vision_endpoint_model,
+        "summarization_endpoint_model": update.summarization_endpoint_model,
+    }
+    for field_name, value in model_fields.items():
+        if value is None:
+            continue
+        try:
+            validate_model_name(value, allow_gguf=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name}: {exc}") from exc
+
+    endpoint_fields = {
+        "vision_endpoint_url": update.vision_endpoint_url,
+        "summarization_endpoint_url": update.summarization_endpoint_url,
+    }
+    for field_name, value in endpoint_fields.items():
+        if value is None:
+            continue
+        try:
+            validate_endpoint_url(value)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"{field_name}: {exc}") from exc
+
+
 def _runtime_planner_response(settings, runtime_plan: dict) -> RuntimePlannerConfig:
     return RuntimePlannerConfig(
         enabled=settings.runtime_planner_enabled,
@@ -436,6 +423,7 @@ async def update_settings(update: SettingsUpdate) -> SettingsResponse:
     Note: Some settings may require a restart to take effect.
     Settings are persisted to the .env file.
     """
+    _validate_settings_update(update)
     env_updates = _collect_env_updates(update)
     if env_updates:
         _write_env_updates(_resolve_env_file_path(), env_updates)
@@ -508,7 +496,16 @@ async def list_available_models() -> dict:
 @router.post("/models/verify", response_model=ModelVerifyResponse)
 async def verify_model_candidate(request: ModelVerifyRequest) -> ModelVerifyResponse:
     component = request.component.strip()
-    model_name = request.model_name.strip()
+    try:
+        model_name = validate_model_name(request.model_name, allow_gguf=True)
+    except ValueError as exc:
+        return ModelVerifyResponse(
+            component=component,
+            model_name=request.model_name.strip(),
+            exists=False,
+            source="invalid",
+            detail=str(exc),
+        )
     if component not in MODEL_COMPONENTS:
         return ModelVerifyResponse(
             component=component,

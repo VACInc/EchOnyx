@@ -1,5 +1,5 @@
 """API routes."""
 
-from app.api.routes import action_items, batch, jobs, search, settings, summaries, videos
+from app.api.routes import action_items, auth, batch, jobs, search, settings, summaries, videos
 
-__all__ = ["videos", "jobs", "batch", "summaries", "search", "settings", "action_items"]
+__all__ = ["videos", "jobs", "batch", "summaries", "search", "settings", "action_items", "auth"]

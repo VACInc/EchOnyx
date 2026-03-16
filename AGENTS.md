@@ -13,6 +13,7 @@
   - API health: `http://192.168.1.178:8000/health`
   - Runtime config: `/api/settings`, `/api/settings/hardware`, `/api/settings/models/status`
 - Prefer `scripts/acceptance.sh` for repeatable end-to-end acceptance on local/live targets before falling back to ad hoc curl sequences. Keep it current with health/settings/hardware, upload/batch, search/ask/similar, and action-items coverage.
+- If auth is enabled, drive `scripts/acceptance.sh` with `ECHONYX_PASSWORD` or `--password`; do not hardcode secrets into repo files.
 - Do not assume the live deployment matches Docker Compose exactly. Verify the real runtime first; this project may be running directly on the host.
 - When changing queueing or pipeline behavior, explicitly verify:
   - `/api/jobs` and `/api/batch` totals/pagination

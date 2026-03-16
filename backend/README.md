@@ -26,6 +26,13 @@ uv run uvicorn app.main:app --reload
 uv run celery -A app.workers.celery_app worker --loglevel=info
 ```
 
+## Auth
+
+- The backend now expects a single local admin password.
+- First-use setup happens through `POST /api/auth/setup` or the frontend sign-in gate.
+- Later access uses `POST /api/auth/login`, `POST /api/auth/logout`, and `POST /api/auth/password`.
+- Session auth is cookie-based; mutating requests require the matching CSRF header.
+
 ## Apple Silicon / Metal Bring-Up
 
 Docker does not expose Metal to the Linux containers used by this repo, so Apple Silicon runs are host-only for now.
@@ -84,6 +91,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
 - `/api/settings/models/verify` checks a candidate model against the built-in catalog, GGUF registry, or Hugging Face before the UI adds it to a selector.
 - `/api/action-items` now provides first-class todo CRUD with video-label filters so summary action items and manual follow-ups can be managed outside the raw summary payload.
+- The security layer now includes single-admin auth, CSRF on mutating routes, upload/write/login rate limits, JSON body caps, endpoint/model validation, and audit-log retention cleanup.
 - Browser-origin access is no longer wildcard-open by default: CORS and job WebSocket access now trust explicit origins plus local/private-network browser origins unless you override that in env.
 - Single uploads now enforce the configured size cap while streaming and reject media that fails ffprobe validation instead of storing arbitrary blobs on disk.
 - Summary responses now expose only slide image filenames, not absolute server filesystem paths.
@@ -92,3 +100,4 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - Similar-video reranking now leans more heavily on transcript and key-point overlap so generic narrated videos do not outrank truly related ones as easily.
 - Embedding indexing now sanitizes slide/topic metadata to Chroma-safe scalar values before insert so one malformed payload does not fail the job at the final embedding stage.
 - For the current model set, plan around `24 GB` free accelerator memory as the rough floor, `32 GB` free as the practical single-accelerator target, about `50.5 GB` of budget for warm worker models plus one endpoint, and about `100 GB` free if you expect the whole stack to stay resident at the default memory fraction.
+- `scripts/acceptance.sh` now supports secured deployments via `ECHONYX_PASSWORD` or `--password`.

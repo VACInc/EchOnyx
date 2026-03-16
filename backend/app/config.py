@@ -63,6 +63,19 @@ class Settings(BaseSettings):
     api_prefix: str = "/api"
     cors_allowed_origins: str = ""
     cors_allow_origin_regex: str = ""
+    auth_required: bool = True
+    auth_password_hash: str = ""
+    auth_session_cookie_name: str = "echonyx_session"
+    auth_csrf_cookie_name: str = "echonyx_csrf"
+    auth_session_ttl_hours: int = 168
+    login_rate_limit_attempts: int = 10
+    login_rate_limit_window_seconds: int = 600
+    write_rate_limit_requests: int = 120
+    write_rate_limit_window_seconds: int = 60
+    upload_rate_limit_requests: int = 12
+    upload_rate_limit_window_seconds: int = 3600
+    max_json_request_bytes: int = 1_048_576
+    audit_log_retention_days: int = 90
 
     # Hardware (auto-detected if not set)
     hardware_profile: HardwareProfile | None = None

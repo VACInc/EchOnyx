@@ -201,6 +201,11 @@ python -m app.core.audio_calibration \
 - Settings now exposes selectors for ASR, diarization, vision, summarization, embeddings, and audio events.
 - You can verify a built-in registry name or Hugging Face model id, then add it into the selector before saving.
 
+### Authentication
+- The UI/API now use a single local admin session.
+- First use requires creating the admin password through the sign-in gate or `POST /api/auth/setup`.
+- After setup, access uses password login and Settings can rotate the password.
+
 ### Delete Videos
 - Use the Delete button on a video detail page to remove the video and all associated data (artifacts + embeddings).
 
@@ -214,6 +219,7 @@ Examples:
 
 ```bash
 # Local Mac mini functional pass
+ECHONYX_PASSWORD='<admin-password>' \
 scripts/acceptance.sh \
   --base-url http://127.0.0.1:8000 \
   --primary-fixture /Users/vac/EchOnyx/tmp/mac-smoke/budget.mp4 \
@@ -224,6 +230,7 @@ scripts/acceptance.sh \
   --run-batch
 
 # ai-server mixed NVIDIA pass
+ECHONYX_PASSWORD='<admin-password>' \
 scripts/acceptance.sh \
   --base-url http://192.168.1.147:8000 \
   --primary-fixture /Users/vac/EchOnyx/tmp/live-fixtures/probe1.mp4 \
@@ -314,6 +321,10 @@ Models (ASR, diarization, vision, LLM, embeddings)
 - Browser access is no longer wildcard-open by default. CORS now trusts explicit origins plus local/private-network browser origins, and job WebSockets apply the same origin check.
 - Uploads now enforce the size limit while streaming and reject files that do not probe as valid video media.
 - Summary responses now strip absolute slide image filesystem paths down to filenames before returning them to clients.
+- API/UI access now use a single-admin session with bootstrap setup, login/logout, and password rotation.
+- Protected routes require session auth; mutating routes require a matching CSRF token too.
+- Auth attempts, uploads, and mutating API operations are rate-limited and written to audit logs with retention cleanup.
+- JSON write routes now have request-size ceilings, and settings-side custom model/endpoint updates reject unsafe public HTTP endpoints and path-like model names.
 
 ## Development (Minimal)
 

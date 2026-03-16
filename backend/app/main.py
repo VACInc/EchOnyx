@@ -5,9 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import action_items, batch, jobs, search, settings as settings_routes, summaries, videos
+from app.api.routes import action_items, auth, batch, jobs, search, settings as settings_routes, summaries, videos
 from app.api.websocket import router as ws_router
+from app.auth import cleanup_security_state
 from app.config import get_settings
+from app.http_security import security_http_middleware
 from app.security import cors_configuration
 
 
@@ -30,6 +32,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database tables...")
     await init_db()
     logger.info("Database tables initialized")
+    await cleanup_security_state()
 
     # Requeue orphaned jobs that never received a Celery task id
     recovery_task = None
@@ -89,8 +92,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.middleware("http")(security_http_middleware)
 
     # Include routers
+    app.include_router(auth.router, prefix=f"{settings.api_prefix}/auth", tags=["auth"])
     app.include_router(videos.router, prefix=f"{settings.api_prefix}/videos", tags=["videos"])
     app.include_router(action_items.router, prefix=f"{settings.api_prefix}/action-items", tags=["action-items"])
     app.include_router(jobs.router, prefix=f"{settings.api_prefix}/jobs", tags=["jobs"])

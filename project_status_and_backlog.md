@@ -9,7 +9,14 @@
 - Apple Silicon now has an initial Metal host-run bring-up path with small defaults, and the active live validation target is the local `16 GB` Mac mini.
 - `scripts/acceptance.sh` now exists as the repeatable API-level acceptance entry point for local Mac runs, `ai-server`, and read-only Strix Halo checks, including runtime settings/hardware and action-items CRUD/filter coverage.
 - Action items now have a first-class todo system with `/api/action-items`, a dedicated `/todos` page, and a Settings toggle for feature visibility.
-- The March 15, 2026 security pass fixed three no-friction issues:
+- The March 16, 2026 security pass now adds:
+  - single-admin auth with bootstrap setup, login/logout, and password rotation
+  - CSRF on mutating routes
+  - auth/write/upload rate limits
+  - JSON request-size ceilings on non-upload API writes
+  - settings-side custom endpoint/model validation
+  - audit logging with retention cleanup
+- The earlier March 15, 2026 security pass fixed the low-friction network/upload leaks:
   - browser CORS was narrowed from wildcard-open to explicit origins plus local/private-network browser origins
   - job WebSockets now apply the same browser-origin check
   - uploads now enforce size while streaming and reject files that fail media probing
@@ -146,21 +153,18 @@
 
 - Keep AMD/Strix Halo fully functional on ROCm unless CPU execution is benchmarked to be equally fast for the exact stage and model in question.
 - Run a full end-to-end security review across API, frontend, model/runtime orchestration, remote endpoints, secrets handling, uploads, search/ask flows, and deployment surfaces so the product is defensible as a secure local-first system.
-- Security follow-up ranking from the March 15, 2026 review:
-  - Critical:
-    - add real authentication and authorization for mutating endpoints, exports, settings writes, and job/todo management; today the product is still effectively trusted-network only
-    - protect settings mutation and endpoint-url changes with stronger admin-only controls because they can redirect inference traffic or rewrite runtime config
+- Security enhancement ranking after the March 16, 2026 pass:
   - High:
-    - add CSRF protection once authentication exists; the new CORS/origin tightening reduces browser exposure but does not replace proper request auth
-    - add API rate limits and upload quotas to reduce denial-of-service risk on upload, export, ask, and search endpoints
-    - add request-size ceilings for JSON bodies on mutating/search routes, not just media uploads
+    - add per-user auth/RBAC if the product needs multi-user or shared-host deployments; the current model is intentionally single-admin
+    - add stricter export/search quotas once real production traffic patterns are known
+    - complete the remaining end-to-end security review against the newly secured live targets and deployment docs
   - Medium:
-    - restrict or sandbox custom model/endpoint additions so operators cannot accidentally introduce unsafe third-party models or outbound destinations
-    - add audit logging for destructive and configuration-changing actions
-    - review data-retention controls for uploads, exports, transcripts, slides, and embeddings
+    - add stronger reverse-proxy/web-server headers, especially CSP, if the app is fronted by a production ingress
+    - add optional session/device management views if operators need to revoke other active sessions
+    - review artifact-retention controls for uploads, transcripts, slides, embeddings, and exports beyond the new audit-log retention
   - Low:
-    - add optional stricter origin defaults for hostname-based deployments beyond localhost/private-network use
-    - add content-security-policy and related frontend response headers if/when the app is fronted by a production web server
+    - tighten origin defaults further for named-host deployments beyond localhost/private-network use
+    - add optional MFA only if the product moves beyond the current trusted local-admin model
 - Standardize the Strix Halo host baseline around a known-good ROCm/kernel combination and verify it during live acceptance so ROCm regressions are caught outside the app code too.
 - Replace the current fixed model-loading behavior with a dynamic residency planner that:
   - detects GPU count, memory, and topology automatically

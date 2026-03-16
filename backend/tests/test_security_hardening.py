@@ -6,7 +6,13 @@ from uuid import uuid4
 import pytest
 
 from app.api.routes.summaries import get_summary
-from app.security import DEFAULT_LOCAL_ORIGIN_REGEX, cors_configuration, is_origin_allowed
+from app.security import (
+    DEFAULT_LOCAL_ORIGIN_REGEX,
+    cors_configuration,
+    is_origin_allowed,
+    validate_endpoint_url,
+    validate_model_name,
+)
 from app.models.video import Video
 from tests.helpers import SequenceResult
 
@@ -50,6 +56,24 @@ def test_cors_configuration_keeps_explicit_origins():
 
     assert origins == ["https://app.example.com", "http://192.168.1.20:3000"]
     assert regex == DEFAULT_LOCAL_ORIGIN_REGEX
+
+
+def test_validate_endpoint_url_rejects_public_http():
+    with pytest.raises(ValueError):
+        validate_endpoint_url("http://example.com:8000")
+
+
+def test_validate_endpoint_url_accepts_private_http():
+    assert validate_endpoint_url("http://192.168.1.50:8000") == "http://192.168.1.50:8000"
+
+
+def test_validate_model_name_rejects_path_like_values():
+    with pytest.raises(ValueError):
+        validate_model_name("/tmp/model.gguf")
+
+
+def test_validate_model_name_accepts_hf_repo_id():
+    assert validate_model_name("Qwen/Qwen3-Embedding-8B") == "Qwen/Qwen3-Embedding-8B"
 
 
 @pytest.mark.asyncio

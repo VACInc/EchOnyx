@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from app.auth import authenticate_websocket
 from app.config import get_settings
 from app.database import async_session_maker
 from app.models.job import Job
@@ -83,6 +84,14 @@ async def job_progress_websocket(websocket: WebSocket, job_id: str):
         allow_origin_regex=allow_origin_regex,
     ):
         await websocket.close(code=4403, reason="Origin not allowed")
+        return
+
+    auth_state = await authenticate_websocket(websocket)
+    if auth_state.setup_required:
+        await websocket.close(code=4401, reason="Authentication setup required")
+        return
+    if not auth_state.authenticated:
+        await websocket.close(code=4401, reason="Authentication required")
         return
 
     await manager.connect(websocket, job_id)

@@ -225,16 +225,43 @@ interface ModelVerifyResponse {
   detail: string;
 }
 
+interface AuthSessionResponse {
+  authenticated: boolean;
+  setup_required: boolean;
+  actor_label: string | null;
+}
+
+function getCsrfToken(): string | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  const match = document.cookie.match(/(?:^|;\s*)echonyx_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function isMutatingMethod(method?: string): boolean {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes((method || "GET").toUpperCase());
+}
+
 async function fetchApi<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
+  const headers = new Headers(options?.headers ?? {});
+  if (!(options?.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (isMutatingMethod(options?.method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken && !headers.has("X-CSRF-Token")) {
+      headers.set("X-CSRF-Token", csrfToken);
+    }
+  }
+
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    credentials: "include",
+    headers,
   });
 
   if (!res.ok) {
@@ -246,6 +273,41 @@ async function fetchApi<T>(
 }
 
 export const api = {
+  async getAuthSession() {
+    return fetchApi<AuthSessionResponse>("/api/auth/session");
+  },
+
+  async setupAuth(password: string) {
+    return fetchApi<AuthSessionResponse>("/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  async login(password: string) {
+    return fetchApi<AuthSessionResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+  },
+
+  async logout() {
+    return fetchApi<AuthSessionResponse>("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  async changePassword(currentPassword: string, newPassword: string) {
+    return fetchApi<AuthSessionResponse>("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+  },
+
   // Videos
   async getVideos(params: { page?: number; pageSize?: number; search?: string }) {
     const query = new URLSearchParams();
@@ -268,9 +330,16 @@ export const api = {
     formData.append("file", file);
     if (title) formData.append("title", title);
     formData.append("auto_process", "true");
+    const headers = new Headers();
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      headers.set("X-CSRF-Token", csrfToken);
+    }
 
     const res = await fetch(`${API_URL}/api/videos/upload`, {
       method: "POST",
+      credentials: "include",
+      headers,
       body: formData,
     });
 
@@ -373,7 +442,8 @@ export const api = {
 
   async exportSummary(videoId: string, format: "md" | "pdf" | "json") {
     const res = await fetch(
-      `${API_URL}/api/summaries/${videoId}/export?format=${format}`
+      `${API_URL}/api/summaries/${videoId}/export?format=${format}`,
+      { credentials: "include" }
     );
     return res.blob();
   },

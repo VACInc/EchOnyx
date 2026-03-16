@@ -7,12 +7,14 @@ import { usePathname } from "next/navigation";
 import {
   Home,
   ListTodo,
+  LogOut,
   Search,
   Settings,
   Upload,
   Video,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/components/auth-gate";
 import { cn } from "@/lib/utils";
 import { useUploadModal } from "@/components/upload-modal";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -28,6 +30,7 @@ const navigation = [
 export function Sidebar() {
   const pathname = usePathname();
   const { openModal } = useUploadModal();
+  const { logout } = useAuth();
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: api.getSettings,
@@ -92,6 +95,14 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-slate-800/80 p-4 space-y-3">
         <ThemeToggle />
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="flex w-full items-center justify-center rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300 transition hover:border-slate-500 hover:text-white"
+        >
+          <LogOut className="mr-2 h-4 w-4" />
+          Sign out
+        </button>
         <div>
           <p className="text-xs text-slate-400">Fully Local Processing</p>
           <p className="text-xs text-slate-500">No data leaves your machine</p>
