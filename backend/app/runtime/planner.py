@@ -103,6 +103,8 @@ def _estimate_endpoint_model_memory_gb(
         return 4.0
     if "qwen2.5-3b" in lowered:
         return 3.0
+    if "qwen3.5-9b" in lowered or "qwen3_5-9b" in lowered:
+        return 20.0 if runtime_value == "vllm" else 8.0
     if runtime_value == "vllm":
         if "30b" in lowered or "32b" in lowered:
             return 62.0
@@ -226,6 +228,31 @@ def _free_capacity_gb(gpu: dict) -> float:
     return float(gpu.get("free_vram_gb", gpu.get("vram_gb", 0.0)) or 0.0)
 
 
+def _used_capacity_gb(gpu: dict) -> float:
+    return float(gpu.get("used_vram_gb", 0.0) or 0.0)
+
+
+def _utilization_percent(gpu: dict) -> float:
+    return float(gpu.get("utilization_gpu", 0.0) or 0.0)
+
+
+def _occupancy_ratio(gpu: dict) -> float:
+    total = float(gpu.get("vram_gb", 0.0) or 0.0)
+    if total <= 0:
+        return 1.0
+    return min(max(_used_capacity_gb(gpu) / total, 0.0), 1.0)
+
+
+def _device_preference_key(gpu: dict, *, requirement_gb: float = 0.0) -> tuple[float, float, float, float]:
+    can_fit = 0.0 if _free_capacity_gb(gpu) >= max(requirement_gb, 0.0) else 1.0
+    return (
+        can_fit,
+        _occupancy_ratio(gpu),
+        _utilization_percent(gpu),
+        -_free_capacity_gb(gpu),
+    )
+
+
 def _pick_gpu_group(
     nvidia_gpus: list[dict],
     *,
@@ -236,7 +263,10 @@ def _pick_gpu_group(
     if not nvidia_gpus or requirement_gb <= 0:
         return ()
 
-    sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
+    sorted_gpus = sorted(
+        nvidia_gpus,
+        key=lambda gpu: _device_preference_key(gpu, requirement_gb=requirement_gb),
+    )
     best = sorted_gpus[0]
     if _free_capacity_gb(best) >= requirement_gb:
         return (best,)
@@ -375,9 +405,12 @@ def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     shutdown_endpoint_after_request = False
     if placement == "multi_gpu" and nvidia_gpus:
         if len({round(float(gpu.get("vram_gb", 0.0)), 1) for gpu in nvidia_gpus}) > 1:
-            notes.append("Heterogeneous NVIDIA VRAM sizes detected; planner prefers the largest currently free GPU before spreading work.")
+            notes.append("Heterogeneous NVIDIA VRAM sizes detected; planner prefers the emptiest GPU that can fit the required model set before spreading work.")
 
-        sorted_gpus = sorted(nvidia_gpus, key=_free_capacity_gb, reverse=True)
+        sorted_gpus = sorted(
+            nvidia_gpus,
+            key=lambda gpu: _device_preference_key(gpu, requirement_gb=total_hot_set),
+        )
         best_gpu = sorted_gpus[0]
         best_gpu_free = _free_capacity_gb(best_gpu)
         vision_requirement = estimates.get("vision", 0.0)

@@ -98,7 +98,7 @@ def _query_nvidia_gpus() -> list[dict[str, object]]:
         result = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=index,name,memory.free",
+                "--query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu",
                 "--format=csv,noheader,nounits",
             ],
             capture_output=True,
@@ -115,19 +115,52 @@ def _query_nvidia_gpus() -> list[dict[str, object]]:
     gpus: list[dict[str, object]] = []
     for line in result.stdout.strip().splitlines():
         parts = [part.strip() for part in line.split(",")]
-        if len(parts) < 3:
+        if len(parts) < 5:
             continue
         try:
             gpus.append(
                 {
                     "index": int(parts[0]),
                     "name": parts[1],
-                    "free_vram_gb": float(parts[2]) / 1024.0,
+                    "total_vram_gb": float(parts[2]) / 1024.0,
+                    "used_vram_gb": float(parts[3]) / 1024.0,
+                    "free_vram_gb": float(parts[4]) / 1024.0,
+                    "utilization_gpu": float(parts[5]) if len(parts) > 5 else 0.0,
                 }
             )
         except ValueError:
             continue
-    return sorted(gpus, key=lambda item: float(item["free_vram_gb"]), reverse=True)
+    return sorted(gpus, key=lambda item: _device_preference_key(item))
+
+
+def _used_capacity_gb(gpu: dict[str, object]) -> float:
+    return float(gpu.get("used_vram_gb", 0.0) or 0.0)
+
+
+def _utilization_percent(gpu: dict[str, object]) -> float:
+    return float(gpu.get("utilization_gpu", 0.0) or 0.0)
+
+
+def _occupancy_ratio(gpu: dict[str, object]) -> float:
+    total = float(gpu.get("total_vram_gb", 0.0) or 0.0)
+    if total <= 0:
+        return 1.0
+    return min(max(_used_capacity_gb(gpu) / total, 0.0), 1.0)
+
+
+def _device_preference_key(
+    gpu: dict[str, object],
+    *,
+    requirement_gb: float = 0.0,
+) -> tuple[float, float, float, float]:
+    free_vram_gb = float(gpu.get("free_vram_gb", 0.0) or 0.0)
+    can_fit = 0.0 if free_vram_gb >= max(requirement_gb, 0.0) else 1.0
+    return (
+        can_fit,
+        _occupancy_ratio(gpu),
+        _utilization_percent(gpu),
+        -free_vram_gb,
+    )
 
 
 @dataclass(frozen=True)
@@ -411,15 +444,16 @@ def _select_nvidia_visible_devices(
     if not gpus:
         return (), config.shutdown_after_request
 
-    best = gpus[0]
-    best_free = float(best.get("free_vram_gb", 0.0) or 0.0)
     own_memory = max(float(config.model_memory_gb or 0.0), 0.0)
     peer_memory = max(float(config.peer_model_memory_gb or 0.0), 0.0)
     hot_set = max(float(config.hot_set_memory_gb or 0.0), own_memory + peer_memory)
+    sorted_gpus = sorted(gpus, key=lambda gpu: _device_preference_key(gpu, requirement_gb=own_memory))
+    best = sorted_gpus[0]
+    best_free = float(best.get("free_vram_gb", 0.0) or 0.0)
     selected = (str(int(best["index"])),)
     shutdown_after_request = config.shutdown_after_request
 
-    if len(gpus) == 1:
+    if len(sorted_gpus) == 1:
         if hot_set > 0 and best_free < hot_set:
             shutdown_after_request = True
         return selected, shutdown_after_request
@@ -429,7 +463,7 @@ def _select_nvidia_visible_devices(
             return selected, shutdown_after_request
         alternate = next(
             (
-                gpu for gpu in gpus[1:]
+                gpu for gpu in sorted_gpus[1:]
                 if float(gpu.get("free_vram_gb", 0.0) or 0.0) >= own_memory
             ),
             None,

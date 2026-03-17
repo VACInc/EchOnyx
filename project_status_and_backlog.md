@@ -125,6 +125,7 @@
   - both `ask` responses and generated summaries now strip `<think>...</think>` reasoning blocks before returning or persisting model output
   - the runtime plan now exposes explicit worker execution mode, endpoint loading mode, per-model placement, and whether endpoint services should unload after each request
   - managed NVIDIA endpoints now auto-pick GPUs from current `nvidia-smi` free-memory data when explicit pins are unset
+  - that NVIDIA auto-pick path now prefers the emptiest GPU that can fit the requested model instead of drifting onto a busier larger card with only slightly more free VRAM
   - on a single smaller NVIDIA GPU, managed endpoints now switch to stage-by-stage loading instead of trying to keep both large endpoint models resident
   - Apple Silicon now auto-detects as `hardware_profile=apple_silicon` with `gpu_backend=metal`
   - the initial Apple bring-up path uses smaller default models on unified-memory Macs:

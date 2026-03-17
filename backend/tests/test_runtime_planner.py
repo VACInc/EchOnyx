@@ -159,6 +159,49 @@ def test_runtime_plan_falls_back_to_multi_gpu_groups_when_large_gpu_cannot_fit_h
     assert any("Detected NVLink-connected 3090 pairs" in note for note in plan.notes)
 
 
+def test_runtime_plan_prefers_idle_gpu_that_fits_endpoint_over_busier_larger_card():
+    plan = build_runtime_plan(
+        _settings(
+            hardware_profile=HardwareProfile.MULTI_GPU,
+            gpu_backend=GPUBackend.CUDA,
+            rocm_llm_runtime=ROCmLLMRuntime.VLLM,
+            vision_endpoint_url="http://vision",
+            summarization_endpoint_url="http://summary",
+            vision_model="Qwen/Qwen3.5-9B",
+            vision_endpoint_model="Qwen/Qwen3.5-9B",
+            summarization_model="Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+            summarization_endpoint_model="Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+        ),
+        _gpu_info(
+            nvidia_gpus=[
+                {
+                    "index": 0,
+                    "name": "RTX 3090",
+                    "vram_gb": 24.0,
+                    "used_vram_gb": 0.0,
+                    "free_vram_gb": 24.0,
+                    "utilization_gpu": 0.0,
+                },
+                {
+                    "index": 5,
+                    "name": "RTX PRO 6000 Blackwell",
+                    "vram_gb": 97.0,
+                    "used_vram_gb": 70.0,
+                    "free_vram_gb": 27.0,
+                    "utilization_gpu": 0.0,
+                },
+            ],
+            amd_gpus=[],
+            unified_memory_gb=None,
+            total_vram_gb=121.0,
+            available_vram_gb=51.0,
+            nvidia_topology={"connections": {}, "nvlink_groups": []},
+        ),
+    )
+
+    assert plan.preferred_model_devices["vision"] == ("GPU0 RTX 3090 (24.0 GB free)",)
+
+
 def test_runtime_plan_falls_back_to_host_memory_for_strix_halo():
     plan = build_runtime_plan(
         _settings(),

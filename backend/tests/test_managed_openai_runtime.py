@@ -151,7 +151,7 @@ def test_managed_runtime_prefers_secondary_gpu_for_summary_when_hot_set_does_not
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout="5, RTX 6000, 40960\n0, RTX 3090, 24576\n1, RTX 3090, 24576\n",
+            stdout="5, RTX 6000, 49152, 8192, 40960, 0\n0, RTX 3090, 24576, 0, 24576, 0\n1, RTX 3090, 24576, 0, 24576, 0\n",
             stderr="",
         )
 
@@ -171,6 +171,42 @@ def test_managed_runtime_prefers_secondary_gpu_for_summary_when_hot_set_does_not
             model_memory_gb=24.0,
             peer_model_memory_gb=62.0,
             hot_set_memory_gb=86.0,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+
+
+def test_managed_runtime_prefers_idle_gpu_that_fits_over_busier_larger_gpu(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="5, RTX PRO 6000, 97887, 70142, 27109, 0\n0, RTX 3090, 24576, 1, 24126, 0\n1, RTX 3090, 24576, 1, 24126, 0\n",
+            stderr="",
+        )
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="vllm",
+            service_role="vision",
+            auto_nvidia_gpu_selection=True,
+            model_memory_gb=20.0,
+            peer_model_memory_gb=0.0,
+            hot_set_memory_gb=20.0,
         ),
         popen_factory=fake_popen,
         health_check=lambda _config: False,
@@ -276,7 +312,7 @@ def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monk
         return subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout="0, RTX 4090, 24576\n",
+            stdout="0, RTX 4090, 24576, 0, 24576, 0\n",
             stderr="",
         )
 
