@@ -108,7 +108,7 @@
   - live CUDA vision loads were not stable enough under Celery prefork; the NVIDIA worker now uses `--pool=solo` until the local `llama.cpp` path is hardened further
   - local CUDA `llama.cpp` now narrows `CUDA_VISIBLE_DEVICES` to the planner-selected GPUs before first import so device numbering matches the planner on heterogeneous multi-GPU hosts
   - the mixed NVIDIA path now behaves best with summarization pinned to a `3090` and vision pinned to the `RTX PRO 6000`
-  - direct CUDA `llama.cpp` on the `RTX PRO 6000` was stable enough for text summarization with the vendored `llama.cpp`, but not for `Qwen3VL`; the NVIDIA override now routes vision through official `vLLM 0.11.2`
+  - direct CUDA `llama.cpp` on the `RTX PRO 6000` was stable enough for text summarization with the vendored `llama.cpp`, but not for `Qwen3VL`; the NVIDIA override now routes vision through official `vLLM`
   - live NVIDIA vision now launches the correct `vLLM` process on the `RTX PRO 6000` and is healthy after first-start model load
   - the next live CUDA blocker after endpoint startup was `torchaudio` pulling in an incompatible `torchcodec` runtime during the optional CLAP audio-event step inside summarization
   - the audio-event path now reads extracted WAV files directly, and the worker now treats audio-event classification as fail-soft so summary generation can continue without audio hints when that optional stage breaks
@@ -126,6 +126,7 @@
   - the runtime plan now exposes explicit worker execution mode, endpoint loading mode, per-model placement, and whether endpoint services should unload after each request
   - managed NVIDIA endpoints now auto-pick GPUs from current `nvidia-smi` free-memory data when explicit pins are unset
   - that NVIDIA auto-pick path now prefers the emptiest GPU that can fit the requested model instead of drifting onto a busier larger card with only slightly more free VRAM
+  - older `vLLM 0.11.2` vision images were too old to recognize `qwen3_5`; the default NVIDIA vision image now tracks `v0.17.1`
   - on a single smaller NVIDIA GPU, managed endpoints now switch to stage-by-stage loading instead of trying to keep both large endpoint models resident
   - Apple Silicon now auto-detects as `hardware_profile=apple_silicon` with `gpu_backend=metal`
   - the initial Apple bring-up path uses smaller default models on unified-memory Macs:

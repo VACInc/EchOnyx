@@ -25,7 +25,7 @@ x-cuda-service: &cuda-service
 services:
   vision-server:
     <<: *cuda-service
-    image: ${NVIDIA_VISION_VLLM_IMAGE:-vllm/vllm-openai:v0.11.2}
+    image: ${NVIDIA_VISION_VLLM_IMAGE:-vllm/vllm-openai:v0.17.1}
     container_name: vs-vision
     restart: unless-stopped
     env_file:

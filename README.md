@@ -61,7 +61,7 @@ The NVIDIA worker currently runs Celery with `--pool=solo` for stability while l
 On NVIDIA, the audio-event path now reads extracted WAV audio directly instead of depending on `torchaudio` file I/O, so a bad `torchcodec` runtime no longer blocks summarization.
 The CUDA image now builds `llama-cpp-python` against its bundled vendored `llama.cpp` by default; only opt into an external `llama.cpp` checkout if you are intentionally testing an upstream override.
 The NVIDIA endpoint services now self-place from live `nvidia-smi` free-memory data when explicit device pins are unset. On a single smaller GPU, they automatically switch to stage-by-stage endpoint loading instead of trying to keep both vision and summarization hot.
-On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM 0.11.2`. That split is now live-accepted end to end for upload, batch, summary, search, ask, and similar.
+On the live `ai-server`, the current mixed NVIDIA path is: summarization on a pinned `3090` via bundled-vendor CUDA `llama.cpp`, and vision on the `RTX PRO 6000` via official `vLLM`. The default NVIDIA vision image now tracks `v0.17.1` so newer Qwen families like `Qwen3.5` are recognized.
 Summaries and `ask` answers now strip `<think>...</think>` reasoning blocks before they are stored or returned.
 
 **Apple Silicon / Metal:**
