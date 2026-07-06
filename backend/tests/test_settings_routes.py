@@ -71,6 +71,7 @@ async def test_get_current_settings_exposes_asr_and_audio_event_models(monkeypat
         duplicate_probable_threshold=0.85,
         action_items_enabled=True,
         max_video_length_hours=4,
+        max_upload_size_gb=10,
         keyframe_extraction_interval=5,
         frame_persistence_seconds=3.0,
         frame_change_threshold=12.0,

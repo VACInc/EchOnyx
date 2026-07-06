@@ -177,6 +177,7 @@ class ProcessingConfig(BaseModel):
     """Processing configuration."""
 
     max_video_length_hours: int
+    max_upload_size_gb: int
     keyframe_extraction_interval: int
     frame_persistence_seconds: float
     frame_change_threshold: float
@@ -538,6 +539,7 @@ async def get_current_settings() -> SettingsResponse:
         action_items=ActionItemsConfig(enabled=settings.action_items_enabled),
         processing=ProcessingConfig(
             max_video_length_hours=settings.max_video_length_hours,
+            max_upload_size_gb=settings.max_upload_size_gb,
             keyframe_extraction_interval=settings.keyframe_extraction_interval,
             frame_persistence_seconds=settings.frame_persistence_seconds,
             frame_change_threshold=settings.frame_change_threshold,

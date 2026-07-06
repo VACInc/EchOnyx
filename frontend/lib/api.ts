@@ -157,6 +157,7 @@ interface SettingsResponse {
   };
   processing: {
     max_video_length_hours: number;
+    max_upload_size_gb: number;
     keyframe_extraction_interval: number;
     frame_persistence_seconds: number;
     frame_change_threshold: number;
