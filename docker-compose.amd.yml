@@ -21,8 +21,8 @@ x-rocm-openai-runtime: &rocm-openai-runtime
     - /dev/kfd:/dev/kfd
     - /dev/dri:/dev/dri
   group_add:
-    - "44"   # video group
-    - "993"  # render group
+    - "${VIDEO_GROUP_ID:-44}"   # video group
+    - "${RENDER_GROUP_ID:-993}"  # render group
   environment:
     - HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION:-11.5.1}
     - HF_HOME=/cache/huggingface
@@ -46,7 +46,7 @@ services:
       - IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
       - MODEL_PATH=${VISION_MODEL_PATH:-/models/Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
-      - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-32B-Instruct-F16.gguf}
+      - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf}
       - VLLM_MODEL_ID=${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
       - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
@@ -59,8 +59,8 @@ services:
     environment:
       - MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}
       - IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}
-      - MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/qwen3-30b-a3b-q4_k_m.gguf}
-      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/Qwen3-30B-A3B-Q4_K_M.gguf}
+      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
       - VLLM_MODEL_ID=${SUMMARIZATION_VLLM_MODEL_ID:-Qwen/Qwen3-30B-A3B-Instruct-2507-FP8}
       - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
       - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
@@ -84,8 +84,8 @@ services:
     volumes:
       - /opt/rocm:/opt/rocm:ro
     group_add:
-      - "44"   # video group
-      - "993"  # render group
+      - "${VIDEO_GROUP_ID:-44}"   # video group
+      - "${RENDER_GROUP_ID:-993}"  # render group
     environment:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
@@ -99,7 +99,7 @@ services:
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
     depends_on:
       db:
         condition: service_healthy
@@ -128,8 +128,8 @@ services:
     volumes:
       - /opt/rocm:/opt/rocm:ro
     group_add:
-      - "44"   # video group
-      - "993"  # render group
+      - "${VIDEO_GROUP_ID:-44}"   # video group
+      - "${RENDER_GROUP_ID:-993}"  # render group
     environment:
       - GPU_BACKEND=${GPU_BACKEND:-rocm}
       - HARDWARE_PROFILE=strix_halo
@@ -143,7 +143,7 @@ services:
       - VISION_ENDPOINT_URL=http://vision-server:8080/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8080/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
     depends_on:
       db:
         condition: service_healthy

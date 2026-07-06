@@ -17,13 +17,20 @@ def test_amd_compose_uses_rocm_llama_server_image_contract():
         "VLLM_MODEL_ID=${SUMMARIZATION_VLLM_MODEL_ID:-Qwen/Qwen3-30B-A3B-Instruct-2507-FP8}"
         in compose_text
     )
+    assert '"${VIDEO_GROUP_ID:-44}"' in compose_text
+    assert '"${RENDER_GROUP_ID:-993}"' in compose_text
     assert "vllm_cache:/cache" in compose_text
     assert "--pool=solo" in compose_text
     assert "MODEL_RUNTIME=${ROCM_LLM_RUNTIME:-llama_server}" in compose_text
     assert "IDLE_TIMEOUT_SECONDS=${ROCM_LLM_IDLE_TIMEOUT_S:-120}" in compose_text
     assert "MIOPEN_DEBUG_GCN_ASM_KERNELS=${MIOPEN_DEBUG_GCN_ASM_KERNELS:-0}" in compose_text
+    assert "MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf}" in compose_text
+    assert "MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
+    assert "MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
+    assert "SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
     assert '"8081:8080"' not in compose_text
     assert '"8080:8080"' not in compose_text
+    assert "/models/qwen3-30b-a3b-q4_k_m.gguf" not in compose_text
 
 
 def test_rocm_llama_server_files_fail_closed_without_rocm():

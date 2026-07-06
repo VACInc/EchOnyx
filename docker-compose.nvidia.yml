@@ -80,8 +80,8 @@ services:
       - PORT=8000
       - MODEL_RUNTIME=command
       - MODEL_COMMAND=python -m app.runtime.llama_cpp_server
-      - MODEL_PATH=/data/models/${SUMMARIZATION_MODEL_PATH:-qwen3-30b-a3b-q4_k_m.gguf}
-      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/Qwen3-30B-A3B-Q4_K_M.gguf}
+      - MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
       - MODEL_CONTEXT_SIZE=${SUMMARIZATION_CONTEXT_SIZE:-32768}
       - MODEL_GPU_LAYERS=${SUMMARIZATION_GPU_LAYERS:-999}
       - SERVICE_ROLE=summarization
@@ -95,6 +95,7 @@ services:
     volumes:
       - ./data:/data
       - model_cache:/data/models
+      - model_cache:/models:ro
 
   backend:
     <<: *cuda-service
@@ -105,7 +106,7 @@ services:
       - VISION_ENDPOINT_URL=http://vision-server:8000/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8000/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
     depends_on:
       vision-server:
         condition: service_started
@@ -122,7 +123,7 @@ services:
       - VISION_ENDPOINT_URL=http://vision-server:8000/v1
       - VISION_ENDPOINT_MODEL=${VISION_ENDPOINT_MODEL:-Qwen3VL-32B-Instruct-Q4_K_M.gguf}
       - SUMMARIZATION_ENDPOINT_URL=http://summarization-server:8000/v1
-      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-qwen3-30b-a3b-q4_k_m.gguf}
+      - SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}
     depends_on:
       vision-server:
         condition: service_started

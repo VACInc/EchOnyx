@@ -14,6 +14,48 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+on_error() {
+    local line_no=$1
+    echo -e "\n${RED}Setup failed near line ${line_no}.${NC}"
+    echo "Fix the error above, then re-run: ./scripts/setup.sh"
+    echo "If containers were already started, inspect them with: docker compose ps"
+}
+
+trap 'on_error "$LINENO"' ERR
+
+print_requirement_help() {
+    for tool in "$@"; do
+        case "$tool" in
+            python3)
+                echo "  - python3: install Python 3 from https://www.python.org/downloads/ or your OS package manager."
+                ;;
+            ffmpeg)
+                echo "  - ffmpeg: on macOS, install Homebrew from https://brew.sh/ if needed, then run: brew install ffmpeg"
+                ;;
+            docker)
+                echo "  - docker: install Docker Engine or Docker Desktop from https://docs.docker.com/get-docker/"
+                ;;
+            docker-compose)
+                echo "  - docker compose: install Docker Compose v2 with Docker Desktop/Engine, then verify: docker compose version"
+                ;;
+            bc)
+                echo "  - bc: install the calculator package with your OS package manager, for example: sudo apt-get install bc"
+                ;;
+            *)
+                echo "  - $tool: install it with your OS package manager, then re-run this script."
+                ;;
+        esac
+    done
+}
+
+compose_command() {
+    if [ -z "$COMPOSE_FILE" ]; then
+        echo "docker compose"
+    else
+        echo "docker compose -f $COMPOSE_FILE"
+    fi
+}
+
 # Check for required tools
 check_requirements() {
     echo -e "\n${YELLOW}Checking requirements...${NC}"
@@ -26,11 +68,13 @@ check_requirements() {
     else
         command -v docker >/dev/null 2>&1 || missing+=("docker")
         command -v docker-compose >/dev/null 2>&1 || docker compose version >/dev/null 2>&1 || missing+=("docker-compose")
+        command -v bc >/dev/null 2>&1 || missing+=("bc")
     fi
 
     if [ ${#missing[@]} -ne 0 ]; then
         echo -e "${RED}Missing required tools: ${missing[*]}${NC}"
-        echo "Please install them and run this script again."
+        echo "Install the missing tools, then re-run: ./scripts/setup.sh"
+        print_requirement_help "${missing[@]}"
         exit 1
     fi
 
@@ -177,18 +221,6 @@ create_directories() {
     echo -e "${GREEN}Directories created${NC}"
 }
 
-# Download models
-download_models() {
-    echo -e "\n${YELLOW}Would you like to download models now? (y/n)${NC}"
-    read -r response
-
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        ./scripts/download-models.sh
-    else
-        echo "You can download models later with: ./scripts/download-models.sh"
-    fi
-}
-
 # Print startup instructions
 print_instructions() {
     echo ""
@@ -199,7 +231,9 @@ print_instructions() {
     echo "To start the application:"
     echo ""
     if [ "$START_MODE" = "docker" ]; then
-        echo "  docker compose $COMPOSE_FILE up -d"
+        local compose_cmd
+        compose_cmd=$(compose_command)
+        echo "  $compose_cmd up -d"
     else
         echo "  Metal on Apple Silicon runs on the host, not Docker."
         echo "  Follow backend/README.md for the host startup commands."
@@ -208,16 +242,25 @@ print_instructions() {
     echo ""
     echo "Then open http://localhost:3000 in your browser."
     echo ""
+    echo "Model downloads:"
+    echo "  - Open Settings, then use Model Downloads for guided downloads with size and disk checks."
+    echo "  - Missing models also download automatically on first processing when MODEL_AUTO_DOWNLOAD=true."
+    echo ""
+    echo "Self-check after startup:"
+    echo "  curl -fsS http://localhost:8000/health"
+    echo "  curl -fsS http://localhost:8000/ready"
+    echo "  The /ready endpoint reports database, Redis, and Chroma status."
+    echo ""
     echo "To view logs:"
     if [ "$START_MODE" = "docker" ]; then
-        echo "  docker compose logs -f"
+        echo "  $compose_cmd logs -f"
     else
         echo "  tail -f /tmp/echonyx-backend.log /tmp/echonyx-worker.log"
     fi
     echo ""
     echo "To stop:"
     if [ "$START_MODE" = "docker" ]; then
-        echo "  docker compose down"
+        echo "  $compose_cmd down"
     else
         echo "  pkill -f 'uvicorn app.main:app' && pkill -f 'celery -A app.workers.celery_app worker'"
     fi
@@ -232,7 +275,6 @@ main() {
     detect_hardware
     create_env
     create_directories
-    # download_models  # Optional, can be slow
     print_instructions
 }
 

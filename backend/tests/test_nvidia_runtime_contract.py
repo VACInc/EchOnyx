@@ -18,6 +18,11 @@ def test_nvidia_compose_uses_vllm_for_vision_and_cuda_ordering():
     assert "urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)" in compose_text
     assert "MODEL_RUNTIME=command" in compose_text
     assert "MODEL_COMMAND=python -m app.runtime.llama_cpp_server" in compose_text
+    assert "MODEL_PATH=${SUMMARIZATION_MODEL_PATH:-/models/Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
+    assert "MODEL_NAME=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
+    assert "SUMMARIZATION_ENDPOINT_MODEL=${SUMMARIZATION_ENDPOINT_MODEL:-Qwen3-30B-A3B-Q4_K_M.gguf}" in compose_text
+    assert "model_cache:/models:ro" in compose_text
+    assert "qwen3-30b-a3b-q4_k_m.gguf" not in compose_text
 
 
 def test_cuda_dockerfile_uses_bundled_llama_vendor_by_default():

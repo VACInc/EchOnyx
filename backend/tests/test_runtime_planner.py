@@ -20,8 +20,8 @@ def _settings(**overrides):
         vision_model="Qwen3VL-32B-Instruct-Q4_K_M.gguf",
         vision_endpoint_model="Qwen3VL-32B-Instruct-Q4_K_M.gguf",
         vision_endpoint_url="http://vision",
-        summarization_model="qwen3-30b-a3b-q4_k_m.gguf",
-        summarization_endpoint_model="qwen3-30b-a3b-q4_k_m.gguf",
+        summarization_model="Qwen3-30B-A3B-Q4_K_M.gguf",
+        summarization_endpoint_model="Qwen3-30B-A3B-Q4_K_M.gguf",
         summarization_endpoint_url="http://summary",
     )
     base.update(overrides)
