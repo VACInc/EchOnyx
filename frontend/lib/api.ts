@@ -17,6 +17,13 @@ function getApiUrl(): string {
 
 const API_URL = getApiUrl();
 
+interface VideoDuplicateInfo {
+  classification: string | null;
+  score: number | null;
+  suppressed: boolean | null;
+  duplicate_of: { id: string; title: string | null } | null;
+}
+
 interface VideoResponse {
   id: string;
   filename: string;
@@ -26,8 +33,59 @@ interface VideoResponse {
   duration_formatted: string;
   title: string | null;
   tags?: string[] | null;
+  duplicate_info?: VideoDuplicateInfo | null;
   status: string;
   created_at: string;
+}
+
+interface VideoLabelsResponse {
+  labels: Array<{ name: string; count: number }>;
+}
+
+interface BatchResponse {
+  id: string;
+  name: string | null;
+  status: string;
+  total_videos: number;
+  completed_videos: number;
+  failed_videos: number;
+  progress: number;
+  created_at: string;
+}
+
+interface BatchListResponse {
+  batches: BatchResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+interface ModelRecommendationEntry {
+  model_name: string;
+  expected_size_gb: number | null;
+  cached: boolean;
+  additional_download_gb: number;
+  reason: string;
+}
+
+interface ModelRecommendationsResponse {
+  hardware_profile: string;
+  effective_memory_budget_gb: number;
+  free_disk_gb: number;
+  total_additional_download_gb: number;
+  recommendations: Record<string, ModelRecommendationEntry>;
+}
+
+interface ModelDownloadResponse {
+  model_name: string;
+  status: string;
+  note?: string | null;
+}
+
+export interface UploadProgressEvent {
+  loadedBytes: number;
+  totalBytes: number;
+  percent: number;
 }
 
 interface VideoListResponse {
@@ -237,6 +295,51 @@ interface AuthSessionResponse {
   };
 }
 
+function uploadWithProgress<T>(
+  endpoint: string,
+  formData: FormData,
+  onProgress?: (event: UploadProgressEvent) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_URL}${endpoint}`);
+    xhr.withCredentials = true;
+    const csrfToken = getCsrfToken();
+    if (csrfToken) {
+      xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    }
+    xhr.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable) {
+        onProgress({
+          loadedBytes: event.loaded,
+          totalBytes: event.total,
+          percent: (event.loaded / event.total) * 100,
+        });
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as T);
+        } catch {
+          reject(new Error("Unexpected response from server"));
+        }
+        return;
+      }
+      let detail = "Upload failed";
+      try {
+        detail = JSON.parse(xhr.responseText)?.detail || detail;
+      } catch {
+        // keep default detail
+      }
+      reject(new Error(detail));
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.send(formData);
+  });
+}
+
 function getCsrfToken(): string | null {
   if (typeof document === "undefined") {
     return null;
@@ -339,30 +442,51 @@ export const api = {
     return fetchApi<VideoResponse>(`/api/videos/${id}`);
   },
 
-  async uploadVideo(file: File, title?: string) {
+  async uploadVideo(
+    file: File,
+    title?: string,
+    onProgress?: (event: UploadProgressEvent) => void,
+  ) {
     const formData = new FormData();
     formData.append("file", file);
     if (title) formData.append("title", title);
     formData.append("auto_process", "true");
-    const headers = new Headers();
-    const csrfToken = getCsrfToken();
-    if (csrfToken) {
-      headers.set("X-CSRF-Token", csrfToken);
-    }
+    return uploadWithProgress<VideoResponse>("/api/videos/upload", formData, onProgress);
+  },
 
-    const res = await fetch(`${API_URL}/api/videos/upload`, {
-      method: "POST",
-      credentials: "include",
-      headers,
-      body: formData,
+  async getVideoLabels() {
+    return fetchApi<VideoLabelsResponse>("/api/videos/labels");
+  },
+
+  // Batches
+  async createBatch(
+    files: File[],
+    name?: string,
+    onProgress?: (event: UploadProgressEvent) => void,
+  ) {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    if (name) formData.append("name", name);
+    return uploadWithProgress<BatchResponse>("/api/batch", formData, onProgress);
+  },
+
+  async getBatches(params: { page?: number; pageSize?: number } = {}) {
+    const query = new URLSearchParams();
+    if (params.page) query.set("page", params.page.toString());
+    if (params.pageSize) query.set("page_size", params.pageSize.toString());
+    return fetchApi<BatchListResponse>(`/api/batch?${query}`);
+  },
+
+  async getBatch(id: string) {
+    return fetchApi<BatchResponse>(`/api/batch/${id}`);
+  },
+
+  async cancelBatch(id: string) {
+    return fetchApi<{ message: string }>(`/api/batch/${id}`, {
+      method: "DELETE",
     });
-
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ detail: "Upload failed" }));
-      throw new Error(error.detail || "Upload failed");
-    }
-
-    return res.json() as Promise<VideoResponse>;
   },
 
   async deleteVideo(id: string) {
@@ -489,6 +613,11 @@ export const api = {
     });
   },
 
+  async getSimilarVideos(videoId: string, limit = 5) {
+    const params = new URLSearchParams({ limit: limit.toString() });
+    return fetchApi<SearchResponse>(`/api/search/similar/${videoId}?${params}`);
+  },
+
   async warmSearchRuntime(mode: "search" | "ask") {
     return fetchApi<{
       mode: "search" | "ask";
@@ -520,6 +649,21 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ component, model_name: modelName }),
     });
+  },
+
+  async getModelRecommendations() {
+    return fetchApi<ModelRecommendationsResponse>("/api/settings/models/recommendations");
+  },
+
+  async downloadModel(component: string, modelName: string) {
+    return fetchApi<ModelDownloadResponse>("/api/settings/models/download", {
+      method: "POST",
+      body: JSON.stringify({ component, model_name: modelName }),
+    });
+  },
+
+  slideImageUrl(videoId: string, filename: string) {
+    return `${API_URL}/api/summaries/${videoId}/slides/${encodeURIComponent(filename)}`;
   },
 
   async getHardwareInfo() {
@@ -623,6 +767,18 @@ export const api = {
       completed_at: string | null;
       created_at: string;
     }>(`/api/jobs/${id}`);
+  },
+
+  async cancelJob(id: string) {
+    return fetchApi<{ message: string }>(`/api/jobs/${id}/cancel`, {
+      method: "POST",
+    });
+  },
+
+  async retryJob(id: string) {
+    return fetchApi<{ message: string }>(`/api/jobs/${id}/retry`, {
+      method: "POST",
+    });
   },
 
   async cancelOrphanedJobs() {
