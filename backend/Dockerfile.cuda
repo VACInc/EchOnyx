@@ -44,14 +44,14 @@ ARG CUDA_ARCHITECTURES=all-major
 ARG LLAMA_BUILD_CUDA=1
 ARG LLAMA_CPP_USE_BUNDLED_VENDOR=1
 ARG LLAMA_CPP_PYTHON_REPO
-ARG LLAMA_CPP_PYTHON_REF
+ARG LLAMA_CPP_PYTHON_REF=v0.3.33
 ARG LLAMA_CPP_REPO
 ARG LLAMA_CPP_REF
 ARG INSTALL_NEMO=1
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 
-RUN uv pip compile pyproject.toml -o requirements.txt
+RUN uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements.txt -o requirements.txt
 RUN sed -i '/llama-cpp-python/d' requirements.txt
 
 RUN uv pip install -r requirements.txt
@@ -70,9 +70,9 @@ RUN set -e; \
     fi; \
     use_bundled_vendor="${LLAMA_CPP_USE_BUNDLED_VENDOR:-1}"; \
     repo="${LLAMA_CPP_PYTHON_REPO:-https://github.com/abetlen/llama-cpp-python.git}"; \
-    ref="${LLAMA_CPP_PYTHON_REF:-main}"; \
-    llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggerganov/llama.cpp.git}"; \
-    llama_ref="${LLAMA_CPP_REF:-master}"; \
+    ref="${LLAMA_CPP_PYTHON_REF:-v0.3.33}"; \
+    llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggml-org/llama.cpp.git}"; \
+    llama_ref="${LLAMA_CPP_REF:-b9888}"; \
     git clone --depth 1 --branch "$ref" "$repo" /tmp/llama-cpp-python; \
     if [ "$use_bundled_vendor" != "1" ] || [ -n "${LLAMA_CPP_REPO:-}" ] || [ -n "${LLAMA_CPP_REF:-}" ]; then \
       rm -rf /tmp/llama-cpp-python/vendor/llama.cpp; \

@@ -29,16 +29,16 @@ ARG ROCM_NIGHTLY
 ARG LLAMA_BUILD_VULKAN
 ARG LLAMA_BUILD_HIPBLAS
 ARG LLAMA_CPP_PYTHON_REPO
-ARG LLAMA_CPP_PYTHON_REF
+ARG LLAMA_CPP_PYTHON_REF=v0.3.33
 ARG LLAMA_CPP_REPO
-ARG LLAMA_CPP_REF
+ARG LLAMA_CPP_REF=b9888
 ARG INSTALL_NEMO
 
 # Copy dependency files and README
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 
-# Resolve dependencies from pyproject for better layer caching
-RUN uv pip compile pyproject.toml -o requirements.txt
+# Export dependencies from the committed lock for repeatable builds
+RUN uv export --frozen --no-dev --no-emit-project --no-hashes --format requirements.txt -o requirements.txt
 
 # We'll install llama-cpp-python separately to ensure a llama.cpp build that supports Qwen3VL
 RUN sed -i '/llama-cpp-python/d' requirements.txt
@@ -72,9 +72,9 @@ RUN set -e; \
       export FORCE_CMAKE=1; \
     fi; \
     repo="${LLAMA_CPP_PYTHON_REPO:-https://github.com/abetlen/llama-cpp-python.git}"; \
-    ref="${LLAMA_CPP_PYTHON_REF:-main}"; \
-    llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggerganov/llama.cpp.git}"; \
-    llama_ref="${LLAMA_CPP_REF:-master}"; \
+    ref="${LLAMA_CPP_PYTHON_REF:-v0.3.33}"; \
+    llama_repo="${LLAMA_CPP_REPO:-https://github.com/ggml-org/llama.cpp.git}"; \
+    llama_ref="${LLAMA_CPP_REF:-b9888}"; \
     git clone --depth 1 --branch "$ref" "$repo" /tmp/llama-cpp-python; \
     rm -rf /tmp/llama-cpp-python/vendor/llama.cpp; \
     git clone --depth 1 "$llama_repo" /tmp/llama-cpp-python/vendor/llama.cpp; \

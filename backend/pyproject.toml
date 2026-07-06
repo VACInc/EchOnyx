@@ -33,7 +33,7 @@ dependencies = [
     "soundfile>=0.12.1",
 
     # LLM inference
-    "llama-cpp-python @ git+https://github.com/abetlen/llama-cpp-python.git",
+    "llama-cpp-python @ git+https://github.com/abetlen/llama-cpp-python.git@v0.3.33",
 
     # Embeddings
     "sentence-transformers>=3.0.0",
@@ -69,10 +69,10 @@ dev = [
 
 # GPU-specific backends (install separately based on hardware)
 cuda = [
-    "llama-cpp-python[cuda] @ git+https://github.com/abetlen/llama-cpp-python.git",
+    "llama-cpp-python[cuda] @ git+https://github.com/abetlen/llama-cpp-python.git@v0.3.33",
 ]
 vulkan = [
-    "llama-cpp-python @ git+https://github.com/abetlen/llama-cpp-python.git",  # Build with VULKAN flag
+    "llama-cpp-python @ git+https://github.com/abetlen/llama-cpp-python.git@v0.3.33",  # Build with VULKAN flag
 ]
 
 [build-system]
