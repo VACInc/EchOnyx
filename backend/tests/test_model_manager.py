@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import types
@@ -8,6 +9,7 @@ from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy
 from app.core import model_manager as model_manager_module
 from app.core.model_manager import (
     ModelManager,
+    _cuda_local_device_index,
     _normalize_whisper_model_name,
     _offload_model_to_cpu,
     _resolve_llama_gpu_layers,
@@ -68,6 +70,29 @@ def test_torch_device_returns_specific_cuda_index_when_requested(monkeypatch):
         runtime_label="embedding",
         device_index=5,
     ) == "cuda:5"
+
+
+def test_cuda_local_device_index_translates_visible_host_index(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+
+    assert _cuda_local_device_index(4, runtime_label="transcription") == 1
+
+
+def test_cuda_local_device_index_uses_host_index_when_visibility_is_unset(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    assert _cuda_local_device_index(4, runtime_label="transcription") == 4
+
+
+def test_cuda_local_device_index_warns_and_falls_back_to_first_visible(monkeypatch, caplog):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+
+    with caplog.at_level(logging.WARNING, logger="app.core.model_manager"):
+        device_index = _cuda_local_device_index(7, runtime_label="transcription")
+
+    assert device_index == 0
+    assert "Planner-selected GPU 7 for transcription is not visible" in caplog.text
+    assert "falling back to CUDA-local device 0" in caplog.text
 
 
 def test_torch_device_returns_mps_when_available(monkeypatch):
@@ -195,6 +220,61 @@ async def test_load_whisper_uses_faster_whisper_alias_on_cuda(monkeypatch, tmp_p
     await manager._load_whisper()
 
     assert seen["model_name"] == "large-v3"
+
+
+@pytest.mark.asyncio
+async def test_load_whisper_passes_cuda_local_device_index_to_faster_whisper(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CUDA,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        model_loading=ModelLoadingStrategy.PARALLEL,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.PARALLEL,
+        preferred_worker_device_indices=(4,),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+
+    seen: dict[str, object] = {}
+
+    def fake_whisper_model(
+        model_size_or_path,
+        device,
+        compute_type,
+        download_root,
+        device_index=None,
+    ):
+        seen.update(
+            {
+                "model_size_or_path": model_size_or_path,
+                "device": device,
+                "compute_type": compute_type,
+                "download_root": download_root,
+                "device_index": device_index,
+            }
+        )
+        return {"type": "faster_whisper"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "faster_whisper",
+        types.SimpleNamespace(WhisperModel=fake_whisper_model),
+    )
+
+    manager = ModelManager()
+    await manager._load_whisper()
+
+    assert seen["model_size_or_path"] == "large-v3"
+    assert seen["device"] == "cuda"
+    assert seen["device_index"] == 1
 
 
 @pytest.mark.asyncio
@@ -430,7 +510,7 @@ async def test_load_embedding_enables_trust_remote_code_for_nomic(monkeypatch, t
     assert seen["kwargs"]["trust_remote_code"] is True
 
 
-def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, tmp_path):
+def test_model_manager_translates_planner_gpu_indices_for_cuda_placement(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         whisper_model="large-v3",
         gpu_backend=GPUBackend.CUDA,
@@ -442,14 +522,14 @@ def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, 
     runtime_plan = types.SimpleNamespace(
         keep_resident_models=(),
         worker_model_loading=ModelLoadingStrategy.PARALLEL,
-        preferred_worker_device_indices=(5,),
-        preferred_endpoint_device_indices=(0, 3),
+        preferred_worker_device_indices=(4,),
+        preferred_endpoint_device_indices=(1, 6),
     )
     gpu_info = {
         "nvidia_gpus": [
-            {"index": 0, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
-            {"index": 3, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
-            {"index": 5, "name": "RTX PRO 6000", "vram_gb": 96.0, "free_vram_gb": 96.0},
+            {"index": 1, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 24.0},
+            {"index": 4, "name": "RTX PRO 6000", "vram_gb": 96.0, "free_vram_gb": 96.0},
+            {"index": 6, "name": "RTX 6000 Ada", "vram_gb": 72.0, "free_vram_gb": 72.0},
         ],
         "amd_gpus": [],
     }
@@ -457,7 +537,7 @@ def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, 
     monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
     monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: gpu_info)
     monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,3")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
     monkeypatch.setitem(
         sys.modules,
         "torch",
@@ -474,12 +554,12 @@ def test_model_manager_uses_planner_gpu_indices_for_cuda_placement(monkeypatch, 
 
     manager = ModelManager()
 
-    assert manager.worker_gpu_indices == (5,)
-    assert manager.endpoint_gpu_indices == (0, 3)
-    assert manager._torch_runtime_device(runtime_label="embedding", strict=False) == "cuda:5"
+    assert manager.worker_gpu_indices == (4,)
+    assert manager.endpoint_gpu_indices == (1, 6)
+    assert manager._torch_runtime_device(runtime_label="embedding", strict=False) == "cuda:1"
     assert manager._llama_cuda_kwargs({"main_gpu", "split_mode", "tensor_split"}, endpoint=True) == {
         "main_gpu": 0,
-        "tensor_split": [0.5, 0.5],
+        "tensor_split": [0.25, 0.0, 0.75],
         "split_mode": 1,
     }
 

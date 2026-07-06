@@ -91,6 +91,41 @@ def _is_accelerated_torch_device_name(device: str) -> bool:
     return device == "mps" or device == "cuda" or device.startswith("cuda:")
 
 
+def _cuda_local_device_index(host_index: int | None, *, runtime_label: str = "model") -> int | None:
+    """Translate a planner host GPU index to this process's CUDA-local ordinal."""
+    if host_index is None:
+        return None
+
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible:
+        return host_index
+
+    visible_tokens = [part.strip() for part in visible.split(",") if part.strip()]
+    try:
+        visible_indices = [int(token) for token in visible_tokens]
+    except ValueError:
+        logger.warning(
+            "CUDA_VISIBLE_DEVICES=%s is not a simple integer list; planner-selected GPU %s "
+            "for %s cannot be translated, falling back to CUDA-local device 0.",
+            visible,
+            host_index,
+            runtime_label,
+        )
+        return 0
+
+    if host_index in visible_indices:
+        return visible_indices.index(host_index)
+
+    logger.warning(
+        "Planner-selected GPU %s for %s is not visible in CUDA_VISIBLE_DEVICES=%s; "
+        "falling back to CUDA-local device 0.",
+        host_index,
+        runtime_label,
+        visible,
+    )
+    return 0
+
+
 def _torch_device(
     backend: GPUBackend,
     *,
@@ -369,12 +404,31 @@ class ModelManager:
         endpoint: bool = False,
     ) -> str:
         indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
-        device_index = indices[0] if indices else None
+        device_index = self._cuda_local_device_index(
+            indices[0] if indices else None,
+            runtime_label=runtime_label,
+        )
         return _torch_device(
             self.settings.gpu_backend,
             strict=strict,
             runtime_label=runtime_label,
             device_index=device_index,
+        )
+
+    def _cuda_local_device_index(
+        self,
+        host_index: int | None,
+        *,
+        runtime_label: str,
+    ) -> int | None:
+        if self.settings.gpu_backend != GPUBackend.CUDA:
+            return host_index
+        return _cuda_local_device_index(host_index, runtime_label=runtime_label)
+
+    def _worker_cuda_local_device_index(self, *, runtime_label: str) -> int | None:
+        return self._cuda_local_device_index(
+            self.worker_gpu_indices[0] if self.worker_gpu_indices else None,
+            runtime_label=runtime_label,
         )
 
     @property
@@ -422,27 +476,11 @@ class ModelManager:
 
         explicit_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
         if explicit_visible:
-            parsed_indices: list[int] = []
-            try:
-                parsed_indices = [int(part.strip()) for part in explicit_visible.split(",") if part.strip()]
-            except ValueError:
-                logger.warning(
-                    "CUDA_VISIBLE_DEVICES=%s is not a simple integer list; llama.cpp will use host GPU indices.",
-                    explicit_visible,
-                )
-                return host_indices, host_indices
-
-            local_indices: list[int] = []
-            for index in host_indices:
-                if index not in parsed_indices:
-                    logger.warning(
-                        "Planner-selected GPU %s is not visible in CUDA_VISIBLE_DEVICES=%s; llama.cpp will use host GPU indices.",
-                        index,
-                        explicit_visible,
-                    )
-                    return host_indices, host_indices
-                local_indices.append(parsed_indices.index(index))
-            return host_indices, tuple(local_indices)
+            local_indices = tuple(
+                _cuda_local_device_index(index, runtime_label="llama.cpp")
+                for index in host_indices
+            )
+            return host_indices, tuple(index for index in local_indices if index is not None)
 
         if "llama_cpp" in sys.modules:
             logger.warning(
@@ -628,7 +666,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Canary transcription",
-                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
+                device_index=self._worker_cuda_local_device_index(runtime_label="Canary transcription"),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
@@ -661,7 +699,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Granite transcription",
-                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
+                device_index=self._worker_cuda_local_device_index(runtime_label="Granite transcription"),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
@@ -722,7 +760,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 self.settings.model_cache_dir,
                 strict_accelerator=self.requires_strict_accelerator,
-                device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
+                device_index=self._worker_cuda_local_device_index(runtime_label="transcription"),
             )
             logger.info("Loaded Whisper transformers model: %s", resolved_name)
             return model
@@ -731,7 +769,7 @@ class ModelManager:
             resolved_name,
             self.settings.gpu_backend,
             self.settings.model_cache_dir,
-            device_index=(self.worker_gpu_indices[0] if self.worker_gpu_indices else None),
+            device_index=self._worker_cuda_local_device_index(runtime_label="transcription"),
         )
         logger.info("Loaded Whisper model: %s", resolved_name)
         return model
