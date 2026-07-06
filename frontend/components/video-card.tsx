@@ -7,6 +7,8 @@ import { Video, Clock, CheckCircle, Loader2, AlertCircle, RotateCcw } from "luci
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 
 interface VideoCardProps {
   video: {
@@ -78,6 +80,8 @@ export function VideoCard({ video, job }: VideoCardProps) {
   const [isRetrying, setIsRetrying] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const status = statusConfig[video.status as keyof typeof statusConfig] || statusConfig.uploaded;
   const StatusIcon = status.icon;
   const currentStep = job?.current_step;
@@ -104,7 +108,12 @@ export function VideoCard({ video, job }: VideoCardProps) {
       await api.retryVideo(video.id);
       queryClient.invalidateQueries({ queryKey: ["videos"] });
     } catch (error) {
-      console.error("Failed to retry video:", error);
+      const message = error instanceof Error ? error.message : "Failed to retry video";
+      toast({
+        title: "Retry failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsRetrying(false);
     }
@@ -115,9 +124,13 @@ export function VideoCard({ video, job }: VideoCardProps) {
     e.stopPropagation();
     const isCompletedReset = video.status === "completed";
     if (isCompletedReset) {
-      const confirmed = window.confirm(
-        "This video already completed. Rerun it anyway?",
-      );
+      const confirmed = await confirm({
+        title: "Rerun completed video?",
+        description: "This video already completed. Rerun it anyway?",
+        confirmLabel: "Rerun",
+        cancelLabel: "Keep current result",
+        destructive: true,
+      });
       if (!confirmed) {
         return;
       }
@@ -127,7 +140,12 @@ export function VideoCard({ video, job }: VideoCardProps) {
       await api.resetVideo(video.id, { force: isCompletedReset });
       queryClient.invalidateQueries({ queryKey: ["videos"] });
     } catch (error) {
-      console.error("Failed to reset video:", error);
+      const message = error instanceof Error ? error.message : "Failed to reset video";
+      toast({
+        title: "Reset failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsResetting(false);
     }

@@ -17,6 +17,8 @@ import {
 import Link from "next/link";
 import { useMemo } from "react";
 import { useUploadModal } from "@/components/upload-modal";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 
 const statusStyles: Record<string, { label: string; className: string }> = {
   loaded: {
@@ -105,6 +107,8 @@ const statusIcon = (status: string) => {
 
 export default function Dashboard() {
   const { openModal } = useUploadModal();
+  const confirm = useConfirm();
+  const toast = useToast();
   const queryClient = useQueryClient();
 
   const { data: videos, isLoading } = useQuery({
@@ -153,15 +157,19 @@ export default function Dashboard() {
       await queryClient.invalidateQueries({ queryKey: ["jobs", "processing"] });
       await queryClient.invalidateQueries({ queryKey: ["jobs", "queued"] });
       const count = data?.cancelled ?? 0;
-      window.alert(
-        count > 0
-          ? `Cancelled ${count} orphaned job(s).`
-          : "No orphaned jobs found."
-      );
+      toast({
+        title: count > 0 ? "Orphaned jobs cancelled" : "No orphaned jobs found",
+        description: count > 0 ? `Cancelled ${count} orphaned job(s).` : "Queued and processing jobs are already aligned.",
+        variant: count > 0 ? "success" : "info",
+      });
     },
     onError: (error) => {
       const message = error instanceof Error ? error.message : "Failed to cancel orphaned jobs";
-      window.alert(message);
+      toast({
+        title: "Cleanup failed",
+        description: message,
+        variant: "error",
+      });
     },
   });
 
@@ -241,11 +249,14 @@ export default function Dashboard() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     if (cancelOrphanedMutation.isPending) return;
-                    const confirmed = window.confirm(
-                      "Cancel orphaned queued/processing jobs (no matching video)?"
-                    );
+                    const confirmed = await confirm({
+                      title: "Cancel orphaned jobs?",
+                      description: "Cancel queued or processing jobs that no longer have a matching video.",
+                      confirmLabel: "Clear orphaned",
+                      cancelLabel: "Keep jobs",
+                    });
                     if (confirmed) {
                       cancelOrphanedMutation.mutate();
                     }

@@ -18,6 +18,8 @@ import {
 import Link from "next/link";
 import { use, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useConfirm } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 
 const STEP_ORDER = [
   "audio_extraction",
@@ -65,6 +67,8 @@ export default function VideoDetailPage({
   const [todoInput, setTodoInput] = useState("");
   const queryClient = useQueryClient();
   const router = useRouter();
+  const confirm = useConfirm();
+  const toast = useToast();
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -141,9 +145,13 @@ export default function VideoDetailPage({
 
   const handleDelete = async () => {
     if (!video) return;
-    const confirmed = window.confirm(
-      "Delete this video and all associated data? This cannot be undone."
-    );
+    const confirmed = await confirm({
+      title: "Delete this video?",
+      description: "Delete this video and all associated data. This cannot be undone.",
+      confirmLabel: "Delete",
+      cancelLabel: "Keep video",
+      destructive: true,
+    });
     if (!confirmed) return;
     setIsDeleting(true);
     try {
@@ -151,7 +159,12 @@ export default function VideoDetailPage({
       queryClient.invalidateQueries({ queryKey: ["videos"] });
       router.push("/videos");
     } catch (error) {
-      console.error("Failed to delete video:", error);
+      const message = error instanceof Error ? error.message : "Failed to delete video";
+      toast({
+        title: "Delete failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsDeleting(false);
     }
