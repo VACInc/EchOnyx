@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.database import async_session_maker
 from app.http_security import security_http_middleware
 from app.security import cors_configuration
+from app.workers.heartbeat import WORKER_HEARTBEAT_KEY
 
 READINESS_TIMEOUT_SECONDS = 2.0
 
@@ -66,6 +67,35 @@ async def _check_redis_ready(settings) -> dict[str, str]:
             await client.close()
 
 
+async def _check_worker_ready(settings) -> dict[str, str]:
+    if not settings.redis_url:
+        return _ready_error("Redis URL is not configured")
+
+    client = redis_async.from_url(
+        settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=READINESS_TIMEOUT_SECONDS,
+        socket_timeout=READINESS_TIMEOUT_SECONDS,
+    )
+    try:
+        heartbeat_exists = await asyncio.wait_for(
+            client.exists(WORKER_HEARTBEAT_KEY),
+            timeout=READINESS_TIMEOUT_SECONDS,
+        )
+        if heartbeat_exists:
+            return _ready_ok()
+        return _ready_error("no recent worker heartbeat")
+    except Exception as exc:
+        return _ready_error(exc)
+    finally:
+        close = getattr(client, "aclose", None)
+        if close is not None:
+            await close()
+        else:  # pragma: no cover - compatibility with older redis-py
+            await client.close()
+
+
 def _check_chroma_ready(settings) -> dict[str, str]:
     try:
         settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
@@ -78,26 +108,42 @@ def _check_chroma_ready(settings) -> dict[str, str]:
 
 
 async def collect_readiness_checks(settings) -> dict[str, dict[str, str]]:
-    database, redis = await asyncio.gather(
+    database, redis, worker = await asyncio.gather(
         _check_database_ready(),
         _check_redis_ready(settings),
+        _check_worker_ready(settings),
     )
     return {
         "database": database,
         "redis": redis,
         "chroma": _check_chroma_ready(settings),
+        "worker": worker,
     }
 
 
 async def get_readiness_status(settings) -> tuple[dict, int]:
     checks = await collect_readiness_checks(settings)
-    failed = [name for name, check in checks.items() if check.get("status") != "ok"]
+    fatal_checks = {"database", "redis", "chroma"}
+    failed = [
+        name
+        for name, check in checks.items()
+        if name in fatal_checks and check.get("status") != "ok"
+    ]
+    degraded = [
+        name
+        for name, check in checks.items()
+        if name not in fatal_checks and check.get("status") != "ok"
+    ]
     payload = {
-        "status": "not_ready" if failed else "ready",
+        # The API can still serve read-only traffic without a worker; report it
+        # honestly but reserve 503s for dependencies required by API reads.
+        "status": "not_ready" if failed else "degraded" if degraded else "ready",
         "checks": checks,
     }
     if failed:
         payload["failed"] = failed
+    if degraded:
+        payload["degraded"] = degraded
     return payload, 503 if failed else 200
 
 

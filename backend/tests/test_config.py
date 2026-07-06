@@ -137,6 +137,79 @@ def test_detect_gpu_info_parses_nvidia_free_memory_and_topology(monkeypatch):
     assert gpu_info["nvidia_topology"]["nvlink_groups"] == [[0, 6]]
 
 
+def test_detect_gpu_info_parses_rocm_vram_and_gtt_memory(monkeypatch):
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    rocm_stdout = "\n".join([
+        "device,VRAM Total Memory (B),VRAM Total Used Memory (B),GTT Total Memory (B),GTT Total Used Memory (B)",
+        f"card0,{512 * 1024**2},{128 * 1024**2},{64 * 1024**3},{8 * 1024**3}",
+    ])
+
+    def fake_run(cmd, *_args, **_kwargs):
+        if cmd == ["rocm-smi", "--showmeminfo", "vram", "gtt", "--csv"]:
+            return Completed(returncode=0, stdout=rocm_stdout)
+        return Completed(returncode=1)
+
+    def fake_open(path, *_args, **_kwargs):
+        assert path == "/proc/meminfo"
+        return StringIO("MemTotal:       67108864 kB\nMemAvailable:   33554432 kB\n")
+
+    monkeypatch.setattr("app.config.platform.system", lambda: "Linux")
+    monkeypatch.setattr("app.config.subprocess.run", fake_run)
+    monkeypatch.setattr("builtins.open", fake_open)
+
+    gpu_info = detect_gpu_info()
+
+    assert "unified_memory_gb" not in gpu_info
+    assert gpu_info["total_vram_gb"] == pytest.approx(64.5, rel=1e-4)
+    assert gpu_info["available_vram_gb"] == pytest.approx(56.375, rel=1e-4)
+    amd_gpu = gpu_info["amd_gpus"][0]
+    assert amd_gpu["vram_pool_gb"] == pytest.approx(0.5, rel=1e-4)
+    assert amd_gpu["gtt_pool_gb"] == pytest.approx(64.0, rel=1e-4)
+    assert amd_gpu["used_gtt_gb"] == pytest.approx(8.0, rel=1e-4)
+    assert amd_gpu["free_vram_gb"] == pytest.approx(56.375, rel=1e-4)
+
+
+def test_detect_gpu_info_prefers_system_memory_for_unified_amd_apu(monkeypatch):
+    class Completed:
+        def __init__(self, returncode: int, stdout: str = ""):
+            self.returncode = returncode
+            self.stdout = stdout
+
+    rocm_stdout = "\n".join([
+        "device,VRAM Total Memory (B),VRAM Total Used Memory (B),GTT Total Memory (B),GTT Total Used Memory (B)",
+        f"card0,{512 * 1024**2},{128 * 1024**2},{64 * 1024**3},{8 * 1024**3}",
+    ])
+
+    def fake_run(cmd, *_args, **_kwargs):
+        if cmd == ["rocm-smi", "--showmeminfo", "vram", "gtt", "--csv"]:
+            return Completed(returncode=0, stdout=rocm_stdout)
+        return Completed(returncode=1)
+
+    def fake_open(path, *_args, **_kwargs):
+        assert path == "/proc/meminfo"
+        return StringIO("MemTotal:       134217728 kB\nMemAvailable:   100663296 kB\n")
+
+    monkeypatch.setattr("app.config.platform.system", lambda: "Linux")
+    monkeypatch.setattr("app.config.subprocess.run", fake_run)
+    monkeypatch.setattr("builtins.open", fake_open)
+
+    gpu_info = detect_gpu_info()
+
+    assert gpu_info["unified_memory_gb"] == pytest.approx(128.0, rel=1e-4)
+    assert gpu_info["total_vram_gb"] == pytest.approx(128.0, rel=1e-4)
+    assert gpu_info["available_vram_gb"] == pytest.approx(96.0, rel=1e-4)
+    amd_gpu = gpu_info["amd_gpus"][0]
+    assert amd_gpu["vram_gb"] == pytest.approx(128.0, rel=1e-4)
+    assert amd_gpu["free_vram_gb"] == pytest.approx(96.0, rel=1e-4)
+    assert amd_gpu["vram_pool_gb"] == pytest.approx(0.5, rel=1e-4)
+    assert amd_gpu["gtt_pool_gb"] == pytest.approx(64.0, rel=1e-4)
+    assert amd_gpu["unified_memory"] is True
+
+
 def test_detect_gpu_info_uses_longer_nvidia_timeout(monkeypatch):
     class Completed:
         def __init__(self, returncode: int, stdout: str = ""):

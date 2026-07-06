@@ -1,5 +1,6 @@
 """Application configuration with hardware detection."""
 
+import csv
 import os
 import platform
 import re
@@ -333,6 +334,119 @@ def _apply_apple_silicon_defaults(settings: Settings, gpu_info: dict) -> None:
         settings.gpu_memory_fraction = 0.65
 
 
+def _bytes_to_gb(value: int | float) -> float:
+    return float(value) / (1024**3)
+
+
+def _parse_rocm_memory_bytes(value: Any) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+    parsed = float(match.group(0))
+    if parsed < 0:
+        return None
+    return int(parsed)
+
+
+def _rocm_memory_column(header: str | None) -> tuple[str, str] | None:
+    if not header:
+        return None
+    lowered = header.strip().lower()
+    if "vram" in lowered:
+        pool = "vram"
+    elif "gtt" in lowered:
+        pool = "gtt"
+    else:
+        return None
+
+    if "used" in lowered:
+        metric = "used"
+    elif "total" in lowered:
+        metric = "total"
+    else:
+        return None
+    return pool, metric
+
+
+def _parse_rocm_meminfo_csv(output: str) -> list[dict[str, Any]]:
+    gpus: list[dict[str, Any]] = []
+    reader = csv.DictReader(line for line in output.splitlines() if line.strip())
+
+    for index, row in enumerate(reader):
+        pools = {
+            "vram": {"total": 0, "used": 0},
+            "gtt": {"total": 0, "used": 0},
+        }
+        device_label = ""
+        for header, value in row.items():
+            if header and header.strip().lower() in {"device", "gpu"} and value:
+                device_label = str(value).strip()
+
+            column = _rocm_memory_column(header)
+            if column is None:
+                continue
+            pool, metric = column
+            bytes_value = _parse_rocm_memory_bytes(value)
+            if bytes_value is not None:
+                pools[pool][metric] = bytes_value
+
+        vram_total = pools["vram"]["total"]
+        vram_used = pools["vram"]["used"]
+        gtt_total = pools["gtt"]["total"]
+        gtt_used = pools["gtt"]["used"]
+        if not vram_total and not gtt_total:
+            continue
+
+        vram_free = max(vram_total - vram_used, 0)
+        gtt_free = max(gtt_total - gtt_used, 0)
+        combined_total = vram_total + gtt_total
+        combined_used = vram_used + gtt_used
+        combined_free = vram_free + gtt_free
+        gpu = {
+            "index": index,
+            "name": "AMD GPU",
+            "vram_gb": _bytes_to_gb(combined_total),
+            "used_vram_gb": _bytes_to_gb(combined_used),
+            "free_vram_gb": _bytes_to_gb(combined_free),
+            "vram_pool_gb": _bytes_to_gb(vram_total),
+            "used_vram_pool_gb": _bytes_to_gb(vram_used),
+            "free_vram_pool_gb": _bytes_to_gb(vram_free),
+            "gtt_pool_gb": _bytes_to_gb(gtt_total),
+            "used_gtt_gb": _bytes_to_gb(gtt_used),
+            "free_gtt_gb": _bytes_to_gb(gtt_free),
+        }
+        if device_label:
+            gpu["device"] = device_label
+        gpus.append(gpu)
+
+    return gpus
+
+
+def _detect_linux_memory_gb() -> tuple[float, float]:
+    try:
+        with open("/proc/meminfo") as f:
+            meminfo = f.read()
+    except (FileNotFoundError, OSError):
+        return 0.0, 0.0
+
+    total_ram_gb = 0.0
+    available_ram_gb = 0.0
+    try:
+        for line in meminfo.splitlines():
+            if line.startswith("MemTotal:"):
+                total_ram_gb = int(line.split()[1]) / (1024**2)
+            elif line.startswith("MemAvailable:"):
+                available_ram_gb = int(line.split()[1]) / (1024**2)
+    except (IndexError, ValueError):
+        return 0.0, 0.0
+    return total_ram_gb, available_ram_gb
+
+
 def detect_gpu_info() -> dict:
     """Detect GPU information from the system."""
     gpu_info = {
@@ -398,41 +512,32 @@ def detect_gpu_info() -> dict:
     # Check for AMD GPUs (ROCm)
     try:
         result = subprocess.run(
-            ["rocm-smi", "--showmeminfo", "vram", "--csv"],
+            ["rocm-smi", "--showmeminfo", "vram", "gtt", "--csv"],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")
-            for line in lines[1:]:  # Skip header
-                if line:
-                    parts = line.split(",")
-                    if len(parts) >= 2:
-                        # ROCm reports in bytes
-                        vram_bytes = int(parts[1].strip())
-                        gpu_info["amd_gpus"].append({
-                            "name": "AMD GPU",
-                            "vram_gb": vram_bytes / (1024**3),
-                        })
-                        gpu_info["total_vram_gb"] += vram_bytes / (1024**3)
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+            for gpu in _parse_rocm_meminfo_csv(result.stdout):
+                gpu_info["amd_gpus"].append(gpu)
+                gpu_info["total_vram_gb"] += gpu["vram_gb"]
+                gpu_info["available_vram_gb"] += gpu.get("free_vram_gb", gpu["vram_gb"])
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
         pass
 
     # Check for AMD APU with unified memory (Strix Halo)
-    try:
-        with open("/proc/meminfo") as f:
-            meminfo = f.read()
-            for line in meminfo.split("\n"):
-                if line.startswith("MemTotal:"):
-                    total_ram_kb = int(line.split()[1])
-                    total_ram_gb = total_ram_kb / (1024**2)
-                    gpu_info["system_memory_gb"] = total_ram_gb
-                    # If we have lots of RAM and AMD GPU, might be Strix Halo
-                    if total_ram_gb >= 96 and gpu_info["amd_gpus"] and not gpu_info["nvidia_gpus"]:
-                        gpu_info["unified_memory_gb"] = total_ram_gb
-    except FileNotFoundError:
-        pass
+    total_ram_gb, available_ram_gb = _detect_linux_memory_gb()
+    if total_ram_gb:
+        gpu_info["system_memory_gb"] = total_ram_gb
+        # If we have lots of RAM and AMD GPU, might be Strix Halo.
+        if total_ram_gb >= 96 and gpu_info["amd_gpus"] and not gpu_info["nvidia_gpus"]:
+            gpu_info["unified_memory_gb"] = total_ram_gb
+            gpu_info["total_vram_gb"] = total_ram_gb
+            gpu_info["available_vram_gb"] = available_ram_gb or total_ram_gb
+            for gpu in gpu_info["amd_gpus"]:
+                gpu["vram_gb"] = total_ram_gb
+                gpu["free_vram_gb"] = available_ram_gb or total_ram_gb
+                gpu["unified_memory"] = True
 
     return gpu_info
 

@@ -249,7 +249,7 @@ print_instructions() {
     echo "Self-check after startup:"
     echo "  curl -fsS http://localhost:8000/health"
     echo "  curl -fsS http://localhost:8000/ready"
-    echo "  The /ready endpoint reports database, Redis, and Chroma status."
+    echo "  The /ready endpoint reports database, Redis, Chroma, and worker heartbeat status."
     echo ""
     echo "To view logs:"
     if [ "$START_MODE" = "docker" ]; then

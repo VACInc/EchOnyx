@@ -189,6 +189,28 @@ assert_runtime_endpoints() {
     || fail "/api/settings/hardware missing expected fields"
 }
 
+assert_readiness() {
+  local ready_json ready_status
+  log "readiness"
+  ready_json="$(api_get "/ready")"
+  ready_status="$(printf '%s' "$ready_json" | jq -er '.status')" \
+    || fail "/ready missing status"
+  printf '%s' "$ready_json" | jq .
+  log "readiness status=${ready_status}"
+}
+
+assert_video_labels_endpoint() {
+  log "video labels"
+  api_get "/api/videos/labels" | jq -e '.labels | type == "array"' >/dev/null \
+    || fail "/api/videos/labels missing labels array"
+}
+
+assert_model_recommendations() {
+  log "model recommendations"
+  api_get "/api/settings/models/recommendations" | jq -e '.recommendations | type == "object"' >/dev/null \
+    || fail "/api/settings/models/recommendations missing recommendations"
+}
+
 poll_video() {
   local video_id="$1"
   local started_at
@@ -433,9 +455,12 @@ ensure_authenticated
 
 log "health check ${BASE_URL}"
 api_get "/health" | jq .
+assert_readiness
 assert_runtime_endpoints
 log "model status"
 api_get "/api/settings/models/status" | jq .
+assert_video_labels_endpoint
+assert_model_recommendations
 run_gpu_idle_probe
 
 if (( READ_ONLY )); then

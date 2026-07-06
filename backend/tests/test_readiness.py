@@ -14,8 +14,12 @@ async def test_get_readiness_status_reports_ready(monkeypatch, tmp_path):
     async def redis_ok(_settings):
         return {"status": "ok"}
 
+    async def worker_ok(_settings):
+        return {"status": "ok"}
+
     monkeypatch.setattr(main, "_check_database_ready", database_ok)
     monkeypatch.setattr(main, "_check_redis_ready", redis_ok)
+    monkeypatch.setattr(main, "_check_worker_ready", worker_ok)
     monkeypatch.setattr(main, "_check_chroma_ready", lambda _settings: {"status": "ok"})
 
     payload, status_code = await main.get_readiness_status(
@@ -29,6 +33,7 @@ async def test_get_readiness_status_reports_ready(monkeypatch, tmp_path):
             "database": {"status": "ok"},
             "redis": {"status": "ok"},
             "chroma": {"status": "ok"},
+            "worker": {"status": "ok"},
         },
     }
 
@@ -41,8 +46,12 @@ async def test_get_readiness_status_reports_failed_components(monkeypatch, tmp_p
     async def redis_error(_settings):
         return {"status": "error", "detail": "ConnectionError"}
 
+    async def worker_ok(_settings):
+        return {"status": "ok"}
+
     monkeypatch.setattr(main, "_check_database_ready", database_ok)
     monkeypatch.setattr(main, "_check_redis_ready", redis_error)
+    monkeypatch.setattr(main, "_check_worker_ready", worker_ok)
     monkeypatch.setattr(main, "_check_chroma_ready", lambda _settings: {"status": "ok"})
 
     payload, status_code = await main.get_readiness_status(
@@ -55,11 +64,81 @@ async def test_get_readiness_status_reports_failed_components(monkeypatch, tmp_p
     assert payload["checks"]["redis"] == {"status": "error", "detail": "ConnectionError"}
 
 
+@pytest.mark.asyncio
+async def test_get_readiness_status_degrades_when_only_worker_is_missing(monkeypatch, tmp_path):
+    async def database_ok():
+        return {"status": "ok"}
+
+    async def redis_ok(_settings):
+        return {"status": "ok"}
+
+    async def worker_missing(_settings):
+        return {"status": "error", "detail": "no recent worker heartbeat"}
+
+    monkeypatch.setattr(main, "_check_database_ready", database_ok)
+    monkeypatch.setattr(main, "_check_redis_ready", redis_ok)
+    monkeypatch.setattr(main, "_check_worker_ready", worker_missing)
+    monkeypatch.setattr(main, "_check_chroma_ready", lambda _settings: {"status": "ok"})
+
+    payload, status_code = await main.get_readiness_status(
+        SimpleNamespace(chroma_persist_dir=tmp_path, redis_url="redis://localhost:6379/0")
+    )
+
+    assert status_code == 200
+    assert payload["status"] == "degraded"
+    assert payload["degraded"] == ["worker"]
+    assert "failed" not in payload
+    assert payload["checks"]["worker"] == {
+        "status": "error",
+        "detail": "no recent worker heartbeat",
+    }
+
+
 def test_chroma_ready_check_writes_to_persist_dir(tmp_path):
     response = main._check_chroma_ready(SimpleNamespace(chroma_persist_dir=tmp_path / "chroma"))
 
     assert response == {"status": "ok"}
     assert (tmp_path / "chroma").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_worker_ready_check_reads_heartbeat_key(monkeypatch):
+    class FakeRedis:
+        def __init__(self):
+            self.closed = False
+            self.key = ""
+
+        async def exists(self, key):
+            self.key = key
+            return 1
+
+        async def aclose(self):
+            self.closed = True
+
+    client = FakeRedis()
+    monkeypatch.setattr(main.redis_async, "from_url", lambda *_args, **_kwargs: client)
+
+    response = await main._check_worker_ready(SimpleNamespace(redis_url="redis://localhost:6379/0"))
+
+    assert response == {"status": "ok"}
+    assert client.key == "echonyx:worker:heartbeat"
+    assert client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_worker_ready_check_reports_missing_heartbeat(monkeypatch):
+    class FakeRedis:
+        async def exists(self, _key):
+            return 0
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(main.redis_async, "from_url", lambda *_args, **_kwargs: FakeRedis())
+
+    response = await main._check_worker_ready(SimpleNamespace(redis_url="redis://localhost:6379/0"))
+
+    assert response == {"status": "error", "detail": "no recent worker heartbeat"}
 
 
 @pytest.mark.asyncio

@@ -4,9 +4,10 @@ import asyncio
 import logging
 
 from celery import Celery
-from celery.signals import worker_ready
+from celery.signals import worker_ready, worker_shutdown
 
 from app.config import get_settings
+from app.workers.heartbeat import start_worker_heartbeat, stop_worker_heartbeat
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -71,6 +72,8 @@ def _recover_jobs_on_worker_ready(**_kwargs) -> None:
         requeue_orphaned_jobs,
     )
 
+    start_worker_heartbeat(settings.redis_url)
+
     async def _recover() -> None:
         worker_async_session_maker = get_worker_async_session_maker()
         async with worker_async_session_maker() as session:
@@ -95,3 +98,8 @@ def _recover_jobs_on_worker_ready(**_kwargs) -> None:
     finally:
         asyncio.set_event_loop(None)
         loop.close()
+
+
+@worker_shutdown.connect
+def _stop_worker_heartbeat(**_kwargs) -> None:
+    stop_worker_heartbeat()
