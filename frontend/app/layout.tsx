@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { AuthGate } from "@/components/auth-gate";
-import { Sidebar } from "@/components/sidebar";
+import { AppShell } from "@/components/app-shell";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -42,12 +42,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <Providers>
           <AuthGate>
-            <div className="flex h-screen">
-              <Sidebar />
-              <main className="flex-1 overflow-auto bg-gradient-to-b from-slate-50 via-blue-50/40 to-indigo-50 p-6 dark:from-[#070a14] dark:via-[#0f152b]/70 dark:to-[#0b0f1a]">
-                {children}
-              </main>
-            </div>
+            <AppShell>{children}</AppShell>
           </AuthGate>
         </Providers>
       </body>

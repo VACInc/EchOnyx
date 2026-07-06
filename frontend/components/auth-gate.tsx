@@ -1,9 +1,16 @@
 "use client";
 
+import type { FormEvent, ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Shield, Loader2, Lock } from "lucide-react";
+import { Shield, Lock } from "lucide-react";
 import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
 
 type AuthSession = {
   authenticated: boolean;
@@ -41,8 +48,11 @@ function AuthCard({
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const passwordInputId = mode === "setup" ? "setup-password" : "login-password";
+  const confirmPasswordInputId = "setup-confirm-password";
+  const errorId = `${passwordInputId}-error`;
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     if (mode === "setup" && password !== confirmPassword) {
@@ -57,17 +67,17 @@ function AuthCard({
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
-      <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900/95 p-8 shadow-2xl">
+    <div className="dark flex min-h-screen items-center justify-center bg-background px-4 py-8 text-foreground">
+      <Card className="w-full max-w-md border-border/80 bg-card/95 p-6 shadow-lg sm:p-8">
         <div className="mb-6 flex items-center gap-3">
-          <div className="rounded-full bg-blue-500/15 p-3 text-blue-300">
+          <div className="rounded-full bg-info/15 p-3 text-info">
             {mode === "setup" ? <Shield className="h-6 w-6" /> : <Lock className="h-6 w-6" />}
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white">
+            <h1 className="text-xl font-semibold text-card-foreground">
               {mode === "setup" ? "Secure EchOnyx" : "Sign in"}
             </h1>
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-muted-foreground">
               {mode === "setup"
                 ? "Create the local admin password."
                 : passwordEnabled
@@ -77,65 +87,74 @@ function AuthCard({
           </div>
         </div>
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form className="space-y-4" onSubmit={handleSubmit} aria-describedby={error ? errorId : undefined}>
           {passwordEnabled ? (
-            <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                Password
-              </label>
-              <input
+            <Field
+              id={passwordInputId}
+              label="Password"
+              description={mode === "setup" ? "Use at least 12 characters." : undefined}
+            >
+              <Input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-blue-400"
+                autoComplete={mode === "setup" ? "new-password" : "current-password"}
                 minLength={12}
                 required
               />
-            </div>
+            </Field>
           ) : null}
           {mode === "setup" && passwordEnabled ? (
-            <div>
-              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
-                Confirm password
-              </label>
-              <input
+            <Field id={confirmPasswordInputId} label="Confirm password">
+              <Input
                 type="password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
-                className="w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none transition focus:border-blue-400"
+                autoComplete="new-password"
                 minLength={12}
                 required
               />
-            </div>
+            </Field>
           ) : null}
-          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+          <div
+            id={errorId}
+            aria-live="polite"
+            role={error ? "alert" : undefined}
+            className={cn(
+              "min-h-5 text-sm font-medium",
+              error && "rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive-foreground",
+            )}
+          >
+            {error}
+          </div>
           {passwordEnabled ? (
-            <button
+            <Button
               type="submit"
-              disabled={pending}
-              className="inline-flex w-full items-center justify-center rounded-2xl bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:bg-blue-500/60"
+              loading={pending}
+              className="w-full"
             >
-              {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : mode === "setup" ? "Create password" : "Sign in"}
-            </button>
+              {mode === "setup" ? "Create password" : "Sign in"}
+            </Button>
           ) : null}
           {mode === "login" && oidcProviderName ? (
-            <button
+            <Button
               type="button"
-              className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 font-semibold text-slate-100 transition hover:border-blue-400"
+              variant="outline"
+              className="w-full"
               onClick={() => {
                 window.location.href = api.getOidcLoginUrl(window.location.href);
               }}
             >
               Sign in with {oidcProviderName}
-            </button>
+            </Button>
           ) : null}
         </form>
-      </div>
+      </Card>
     </div>
   );
 }
 
-export function AuthGate({ children }: { children: React.ReactNode }) {
+export function AuthGate({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [redirectError, setRedirectError] = useState<string | null>(null);
   const sessionQuery = useQuery({
@@ -198,8 +217,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (sessionQuery.isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-slate-200">
-        <Loader2 className="h-5 w-5 animate-spin" />
+      <div className="dark flex min-h-screen items-center justify-center bg-background text-foreground">
+        <Spinner size="md" />
       </div>
     );
   }
@@ -230,7 +249,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         />
         {redirectError ? (
           <div className="pointer-events-none absolute inset-x-0 top-8 flex justify-center px-4">
-            <p className="rounded-full border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+            <p
+              className="rounded-full border border-destructive/40 bg-destructive/10 px-4 py-2 text-sm text-destructive-foreground"
+              role="alert"
+            >
               {redirectError}
             </p>
           </div>

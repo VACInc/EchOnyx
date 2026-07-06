@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import Link from "next/link";
@@ -18,8 +19,9 @@ import { useAuth } from "@/components/auth-gate";
 import { cn } from "@/lib/utils";
 import { useUploadModal } from "@/components/upload-modal";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Button } from "@/components/ui/button";
 
-const navigation = [
+export const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Videos", href: "/videos", icon: Video },
   { name: "Search", href: "/search", icon: Search },
@@ -27,7 +29,15 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  className,
+  headerAction,
+  onNavigate,
+}: {
+  className?: string;
+  headerAction?: ReactNode;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const { openModal } = useUploadModal();
   const { logout } = useAuth();
@@ -38,10 +48,15 @@ export function Sidebar() {
   const actionItemsEnabled = settings?.action_items.enabled ?? true;
 
   return (
-    <div className="flex h-full w-64 flex-col bg-gradient-to-b from-[#0a0d18] via-[#0e1326] to-[#0b0f1a]">
+    <div
+      className={cn(
+        "flex h-full w-64 shrink-0 flex-col bg-gradient-to-b from-[#0a0d18] via-[#0e1326] to-[#0b0f1a]",
+        className,
+      )}
+    >
       {/* Logo */}
-      <div className="flex h-20 items-center justify-between px-4">
-        <div className="flex h-full w-full items-center">
+      <div className="flex h-20 items-center justify-between gap-2 px-4">
+        <div className="flex h-full min-w-0 flex-1 items-center">
           <Image
             src="/echonyx-horizontal.png"
             alt="EchOnyx"
@@ -50,20 +65,24 @@ export function Sidebar() {
             className="h-full w-full object-contain"
           />
         </div>
+        {headerAction}
       </div>
 
       <div className="px-6">
-        <button
-          onClick={openModal}
-          className="flex w-full items-center justify-center rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-blue-500/20 transition hover:from-blue-400 hover:via-indigo-400 hover:to-purple-400"
+        <Button
+          onClick={() => {
+            openModal();
+            onNavigate?.();
+          }}
+          className="w-full rounded-full shadow-lg shadow-blue-500/20"
         >
           <Upload className="mr-2 h-4 w-4" />
           Upload Video
-        </button>
+        </Button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav className="flex-1 space-y-1 px-3 py-4" aria-label="Primary navigation">
         {navigation.filter((item) => !item.requiresActionItems || actionItemsEnabled).map((item) => {
           const isActive =
             pathname === item.href ||
@@ -73,8 +92,10 @@ export function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
+              onClick={onNavigate}
               className={cn(
-                "group flex items-center rounded-lg px-3 py-2 text-sm font-medium transition",
+                "group flex items-center rounded-lg px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-[#0b0f1a]",
                 isActive
                   ? "bg-slate-800/80 text-white shadow-inner shadow-blue-500/10"
                   : "text-slate-300 hover:bg-slate-900/80 hover:text-white"
@@ -93,16 +114,18 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-slate-800/80 p-4 space-y-3">
+      <div className="space-y-3 border-t border-slate-800/80 p-4">
         <ThemeToggle />
-        <button
+        <Button
           type="button"
           onClick={() => void logout()}
-          className="flex w-full items-center justify-center rounded-full border border-slate-700 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300 transition hover:border-slate-500 hover:text-white"
+          variant="outline"
+          size="sm"
+          className="w-full rounded-full border-slate-700 bg-transparent text-slate-300 hover:border-slate-500 hover:bg-white/5 hover:text-white focus-visible:ring-offset-[#0b0f1a]"
         >
           <LogOut className="mr-2 h-4 w-4" />
           Sign out
-        </button>
+        </Button>
         <div>
           <p className="text-xs text-slate-400">Fully Local Processing</p>
           <p className="text-xs text-slate-500">No data leaves your machine</p>
