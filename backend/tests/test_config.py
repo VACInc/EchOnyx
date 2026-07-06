@@ -280,10 +280,11 @@ def test_get_settings_applies_apple_silicon_small_model_defaults(monkeypatch, tm
     assert settings.vision_mmproj == "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
     assert settings.vision_chat_format == "qwen2.5-vl"
     assert settings.summarization_model == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
-    assert settings.upload_dir == Path("/Users/vac/EchOnyx/data/uploads")
-    assert settings.model_cache_dir == Path("/Users/vac/EchOnyx/data/models")
-    assert settings.chroma_persist_dir == Path("/Users/vac/EchOnyx/data/chroma")
-    assert settings.audio_event_calibration_path == Path("/Users/vac/EchOnyx/data/models/audio_event_calibration.json")
+    project_root = Path(__file__).resolve().parents[2]
+    assert settings.upload_dir == project_root / "data" / "uploads"
+    assert settings.model_cache_dir == project_root / "data" / "models"
+    assert settings.chroma_persist_dir == project_root / "data" / "chroma"
+    assert settings.audio_event_calibration_path == project_root / "data" / "models" / "audio_event_calibration.json"
     assert settings.gpu_memory_fraction == 0.65
     assert os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] == "1"
 

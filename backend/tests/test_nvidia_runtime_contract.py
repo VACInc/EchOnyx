@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_nvidia_compose_uses_vllm_for_vision_and_cuda_ordering():
     compose_text = (ROOT / "docker-compose.nvidia.yml").read_text(encoding="utf-8")
 
-    assert 'image: ${NVIDIA_VISION_VLLM_IMAGE:-vllm/vllm-openai:v0.11.2}' in compose_text
+    assert 'image: ${NVIDIA_VISION_VLLM_IMAGE:-vllm/vllm-openai:v0.17.1}' in compose_text
     assert "exec python3 /opt/echonyx-runtime/managed_openai_runtime.py" in compose_text
     assert "MODEL_RUNTIME=vllm" in compose_text
     assert "AUTO_NVIDIA_GPU_SELECTION=1" in compose_text
