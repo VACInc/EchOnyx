@@ -358,8 +358,9 @@ def test_managed_runtime_narrows_pinned_host_index_under_parent_visibility(monke
 
     runtime.ensure_started()
 
-    # Host GPU 4 is ordinal 1 within the pre-narrowed visible list "1,4,6".
-    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+    # CUDA_VISIBLE_DEVICES does not compose: the child re-enumerates physical
+    # devices, so the pin is exported verbatim as the physical id.
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "4"
     # The child only sees host GPU 4, so engine device args map to ordinal 0.
     device_index = captured["command"].index("--device")
     assert captured["command"][device_index + 1] == "cuda:0"
@@ -468,9 +469,9 @@ def test_managed_runtime_auto_pick_translates_host_index_under_parent_visibility
 
     runtime.ensure_started()
 
-    # Idle host GPU 4 (outside-visibility GPU 0 is filtered out) maps to ordinal 1
-    # within the pre-narrowed visible list "1,4,6".
-    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+    # Idle host GPU 4 (outside-allowlist GPU 0 is filtered out) is exported
+    # verbatim as its physical id.
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "4"
 
 
 def test_managed_runtime_command_child_uses_upstream_port(monkeypatch):

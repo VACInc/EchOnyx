@@ -231,56 +231,48 @@ def _resolve_pinned_child_devices(
     *,
     role: str,
 ) -> tuple[str, tuple[int, ...]]:
-    """Translate host-index GPU pins into the child's ``CUDA_VISIBLE_DEVICES``.
+    """Resolve host-index GPU pins into the child's ``CUDA_VISIBLE_DEVICES``.
 
-    Returns ``(child_cuda_visible_devices, host_device_ids)`` where the first
-    value is what the child process should export and the second is the ordered
-    list of HOST GPU ids the child will actually see (used to translate engine
-    device arguments to child-local ordinals).
+    ``CUDA_VISIBLE_DEVICES`` does not compose across processes: when the child
+    exports its own value, CUDA re-enumerates against the devices the container
+    exposes (the physical/nvidia-smi namespace), not against the parent's own
+    narrowed list. Pins are therefore exported VERBATIM as physical ids —
+    translating them to parent-relative ordinals selects the wrong card
+    (confirmed live: parent ``1,4,6`` + pin ``4`` exported as ``1`` landed on
+    physical GPU 1).
 
-    When the parent visibility is unset the host pins are exported verbatim
-    (unchanged behavior). When the parent is already narrowed, each pin is mapped
-    to its ordinal within the visible list; pins that are neither present in the
-    list nor a valid local ordinal are dropped with a warning, and a pin set that
-    resolves to nothing fails fast rather than letting the engine grab device 0.
+    Returns ``(child_cuda_visible_devices, host_device_ids)``; engine device
+    arguments are translated later to ordinals within that child list. A parent
+    ``CUDA_VISIBLE_DEVICES`` acts as a deployment allowlist: pins outside it are
+    dropped with a warning, and a pin set that resolves to nothing fails fast
+    rather than letting the engine grab device 0.
     """
     role_label = role or "default"
     pin_tokens = _split_device_tokens(pin)
     parent_tokens = _split_device_tokens(parent_visible)
 
-    if not parent_tokens:
-        return ",".join(pin_tokens), _numeric_visible_devices(pin)
-
     child_tokens: list[str] = []
-    host_ids: list[int] = []
     for token in pin_tokens:
-        if token in parent_tokens:
-            child_ordinal = parent_tokens.index(token)
-            host_token = token
-        elif token.isdigit() and 0 <= int(token) < len(parent_tokens):
-            child_ordinal = int(token)
-            host_token = parent_tokens[child_ordinal]
-        else:
+        if parent_tokens and token not in parent_tokens:
             logger.warning(
-                "Ignoring GPU pin %r for role %r: it is not one of the visible CUDA "
-                "devices %s and is not a valid local ordinal into that list.",
+                "Ignoring GPU pin %r for role %r: it is not in the deployment's visible "
+                "CUDA devices allowlist %s (CUDA_VISIBLE_DEVICES).",
                 token,
                 role_label,
                 list(parent_tokens),
             )
             continue
-        child_tokens.append(str(child_ordinal))
-        if host_token.isdigit():
-            host_ids.append(int(host_token))
+        child_tokens.append(token)
 
     if not child_tokens:
         raise RuntimeError(
             f"None of the pinned GPUs {list(pin_tokens)} for role {role_label!r} are "
             f"usable within the visible CUDA devices {list(parent_tokens)}. Set the pin "
-            f"to a host GPU index present in CUDA_VISIBLE_DEVICES, or a local ordinal in "
-            f"[0, {len(parent_tokens)})."
+            f"to a physical GPU index (as reported by nvidia-smi) that is included in "
+            f"CUDA_VISIBLE_DEVICES."
         )
-    return ",".join(child_tokens), tuple(host_ids)
+    child_visible = ",".join(child_tokens)
+    return child_visible, _numeric_visible_devices(child_visible)
 
 
 def _query_nvidia_gpus() -> list[dict[str, object]]:

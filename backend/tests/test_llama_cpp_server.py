@@ -297,8 +297,9 @@ def test_build_server_env_narrows_pinned_host_index_under_parent_visibility(monk
 
     env = llama_cpp_server.build_server_env(config)
 
-    # Host GPU 4 is ordinal 1 within the pre-narrowed visible list "1,4,6".
-    assert env["CUDA_VISIBLE_DEVICES"] == "1"
+    # CUDA_VISIBLE_DEVICES does not compose: exporting a new value re-enumerates
+    # physical devices, so the pin is kept verbatim as the physical id.
+    assert env["CUDA_VISIBLE_DEVICES"] == "4"
     assert env["MAIN_GPU"] == "0"
     assert env["SPLIT_MODE"] == "0"
 
