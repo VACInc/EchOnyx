@@ -7,6 +7,19 @@ import { Sidebar } from "@/components/sidebar";
 
 const inter = Inter({ subsets: ["latin"] });
 
+const themeScript = `
+(() => {
+  const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  try {
+    const stored = window.localStorage.getItem("echonyx-theme");
+    const theme = stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && systemDark));
+  } catch {
+    document.documentElement.classList.toggle("dark", systemDark);
+  }
+})();
+`;
+
 export const metadata: Metadata = {
   title: "EchOnyx",
   description: "Privacy-first video and presentation intelligence",
@@ -22,7 +35,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className={inter.className}>
         <Providers>
           <AuthGate>
