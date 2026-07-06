@@ -547,6 +547,48 @@ async def test_load_summarization_fails_when_auto_download_disabled(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_load_summarization_uses_case_insensitive_cached_file(monkeypatch, tmp_path):
+    existing_model = tmp_path / "qwen3-30b-a3b-q4_k_m.gguf"
+    existing_model.write_text("stub", encoding="utf-8")
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CPU,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        model_auto_download=True,
+        summarization_model="Qwen3-30B-A3B-Q4_K_M.gguf",
+        summarization_gpu_layers=None,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    class FakeLlamaModule(types.ModuleType):
+        def __getattr__(self, name: str):
+            if name == "Llama":
+                def fake_llama(**kwargs):
+                    return {"kwargs": kwargs}
+
+                return fake_llama
+            raise AttributeError(name)
+
+    monkeypatch.setitem(sys.modules, "llama_cpp", FakeLlamaModule("llama_cpp"))
+
+    manager = ModelManager()
+    model = await manager._load_summarization()
+
+    assert model["kwargs"]["model_path"] == str(existing_model)
+
+
+@pytest.mark.asyncio
 async def test_load_embedding_fails_when_auto_download_disabled(monkeypatch, tmp_path):
     settings = types.SimpleNamespace(
         whisper_model="large-v3",

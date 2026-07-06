@@ -549,18 +549,7 @@ async def update_video_tags(
 
     status = job.status if job else "uploaded"
 
-    return VideoResponse(
-        id=str(video.id),
-        filename=video.filename,
-        original_filename=video.original_filename,
-        file_size=video.file_size,
-        duration_seconds=video.duration_seconds,
-        duration_formatted=video.duration_formatted,
-        title=video.title,
-        tags=video.tags,
-        status=status,
-        created_at=video.created_at.isoformat(),
-    )
+    return await _video_response(video, status=status, db=db)
 
 
 @router.post("/{video_id}/reprocess", response_model=VideoResponse)
@@ -588,18 +577,7 @@ async def reprocess_video(
 
     active_job = await _get_active_job(db, video.id)
     if active_job:
-        return VideoResponse(
-            id=str(video.id),
-            filename=video.filename,
-            original_filename=video.original_filename,
-            file_size=video.file_size,
-            duration_seconds=video.duration_seconds,
-            duration_formatted=video.duration_formatted,
-            title=video.title,
-            tags=video.tags,
-            status=active_job.status,
-            created_at=video.created_at.isoformat(),
-        )
+        return await _video_response(video, status=active_job.status, db=db)
 
     completed_job = await _get_latest_completed_job(db, video.id)
     if completed_job and not force:
@@ -622,18 +600,7 @@ async def reprocess_video(
     from app.workers.enqueue import enqueue_video_job
     job = await enqueue_video_job(db, job)
 
-    return VideoResponse(
-        id=str(video.id),
-        filename=video.filename,
-        original_filename=video.original_filename,
-        file_size=video.file_size,
-        duration_seconds=video.duration_seconds,
-        duration_formatted=video.duration_formatted,
-        title=video.title,
-        tags=video.tags,
-        status=job.status,
-        created_at=video.created_at.isoformat(),
-    )
+    return await _video_response(video, status=job.status, db=db)
 
 
 @router.post("/{video_id}/reset", response_model=VideoResponse)
@@ -665,18 +632,7 @@ async def retry_video(
 
     active_job = await _get_active_job(db, video.id)
     if active_job:
-        return VideoResponse(
-            id=str(video.id),
-            filename=video.filename,
-            original_filename=video.original_filename,
-            file_size=video.file_size,
-            duration_seconds=video.duration_seconds,
-            duration_formatted=video.duration_formatted,
-            title=video.title,
-            tags=video.tags,
-            status=active_job.status,
-            created_at=video.created_at.isoformat(),
-        )
+        return await _video_response(video, status=active_job.status, db=db)
 
     job_query = (
         select(Job)
@@ -703,18 +659,7 @@ async def retry_video(
     from app.workers.enqueue import enqueue_video_job
     job = await enqueue_video_job(db, job)
 
-    return VideoResponse(
-        id=str(video.id),
-        filename=video.filename,
-        original_filename=video.original_filename,
-        file_size=video.file_size,
-        duration_seconds=video.duration_seconds,
-        duration_formatted=video.duration_formatted,
-        title=video.title,
-        tags=video.tags,
-        status=job.status,
-        created_at=video.created_at.isoformat(),
-    )
+    return await _video_response(video, status=job.status, db=db)
 
 
 @router.delete("/{video_id}")

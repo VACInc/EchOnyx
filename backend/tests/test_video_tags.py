@@ -62,6 +62,45 @@ async def test_update_video_tags_normalizes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_video_tags_preserves_duplicate_info():
+    video_id = uuid.uuid4()
+    video = Video(
+        id=video_id,
+        filename=f"{video_id}.mp4",
+        original_filename="sample.mp4",
+        file_path="/tmp/sample.mp4",
+        file_size=123,
+        mime_type="video/mp4",
+        tags=None,
+        created_at=datetime.now(timezone.utc),
+        duplicate_info={
+            "classification": "exact_duplicate",
+            "score": 0.99,
+            "suppressed": True,
+            "source_path": "/private/source.mp4",
+        },
+    )
+
+    db = DummySession([
+        DummyResult(video),
+        DummyResult(None),
+    ])
+
+    response = await update_video_tags(
+        str(video_id),
+        VideoTagsUpdate(tags=["Reviewed"]),
+        db,
+    )
+
+    assert response.tags == ["Reviewed"]
+    assert response.duplicate_info is not None
+    assert response.duplicate_info.classification == "exact_duplicate"
+    assert response.duplicate_info.score == 0.99
+    assert response.duplicate_info.suppressed is True
+    assert "source_path" not in response.duplicate_info.model_dump_json()
+
+
+@pytest.mark.asyncio
 async def test_list_video_labels_counts_distinct_video_labels():
     db = DummySession([
         DummyResult([

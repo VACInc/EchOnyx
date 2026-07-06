@@ -4,7 +4,7 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis import asyncio as redis_async
@@ -121,9 +121,9 @@ async def collect_readiness_checks(settings) -> dict[str, dict[str, str]]:
     }
 
 
-async def get_readiness_status(settings) -> tuple[dict, int]:
+async def get_readiness_status(settings, *, strict: bool = False) -> tuple[dict, int]:
     checks = await collect_readiness_checks(settings)
-    fatal_checks = {"database", "redis", "chroma"}
+    fatal_checks = set(checks) if strict else {"database", "redis", "chroma"}
     failed = [
         name
         for name, check in checks.items()
@@ -245,9 +245,9 @@ def create_app() -> FastAPI:
         return {"status": "healthy"}
 
     @app.get("/ready")
-    async def readiness_check():
+    async def readiness_check(strict: bool = Query(False)):
         """Readiness check endpoint."""
-        payload, status_code = await get_readiness_status(settings)
+        payload, status_code = await get_readiness_status(settings, strict=strict)
         return JSONResponse(payload, status_code=status_code)
 
     return app

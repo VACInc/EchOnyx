@@ -6,7 +6,7 @@ from typing import Annotated
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,13 @@ from app.utils.ffmpeg import get_video_info
 
 router = APIRouter()
 settings = get_settings()
+
+
+class BatchRejectedFile(BaseModel):
+    """A file skipped while creating a batch."""
+
+    filename: str
+    reason: str
 
 
 class BatchResponse(BaseModel):
@@ -33,6 +40,7 @@ class BatchResponse(BaseModel):
     failed_videos: int
     progress: float
     created_at: str
+    rejected: list[BatchRejectedFile] = Field(default_factory=list)
 
 
 ALLOWED_VIDEO_TYPES = {
@@ -78,7 +86,7 @@ class BatchListResponse(BaseModel):
     page_size: int
 
 
-def batch_to_response(batch: Batch) -> BatchResponse:
+def batch_to_response(batch: Batch, rejected: list[BatchRejectedFile] | None = None) -> BatchResponse:
     """Convert Batch model to response schema."""
     completed_videos = int(batch.completed_videos or 0)
     failed_videos = int(batch.failed_videos or 0)
@@ -95,6 +103,7 @@ def batch_to_response(batch: Batch) -> BatchResponse:
         failed_videos=failed_videos,
         progress=progress,
         created_at=batch.created_at.isoformat(),
+        rejected=rejected or [],
     )
 
 
@@ -144,15 +153,23 @@ async def create_batch(
     max_size_bytes = settings.max_upload_size_gb * 1024 * 1024 * 1024
     accepted_videos: list[Video] = []
     accepted_jobs: list[Job] = []
+    rejected: list[BatchRejectedFile] = []
     batch_id = uuid.uuid4()
 
     # Process each file
     for file in files:
         if not file.filename:
+            rejected.append(BatchRejectedFile(filename="", reason="No filename provided"))
             continue
 
         content_type = file.content_type or "application/octet-stream"
         if content_type not in ALLOWED_VIDEO_TYPES:
+            rejected.append(
+                BatchRejectedFile(
+                    filename=file.filename,
+                    reason=f"Invalid file type: {content_type}. Allowed: {', '.join(ALLOWED_VIDEO_TYPES)}",
+                )
+            )
             continue
 
         # Generate unique filename
@@ -165,13 +182,15 @@ async def create_batch(
         try:
             file_size = await _save_upload_file(file, file_path, max_size_bytes)
             video_info = await _probe_uploaded_video(file_path)
-        except HTTPException:
+        except HTTPException as exc:
             if file_path.exists():
                 file_path.unlink(missing_ok=True)
+            rejected.append(BatchRejectedFile(filename=file.filename, reason=str(exc.detail)))
             continue
-        except Exception:
+        except Exception as exc:
             if file_path.exists():
                 file_path.unlink(missing_ok=True)
+            rejected.append(BatchRejectedFile(filename=file.filename, reason=f"Failed to save file: {exc}"))
             continue
 
         # Create video record
@@ -227,7 +246,7 @@ async def create_batch(
         await db.commit()
         raise HTTPException(status_code=502, detail=f"Failed to enqueue batch processing: {exc}")
 
-    return batch_to_response(batch)
+    return batch_to_response(batch, rejected=rejected)
 
 
 @router.get("/{batch_id}", response_model=BatchResponse)

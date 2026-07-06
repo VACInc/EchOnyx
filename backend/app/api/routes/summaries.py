@@ -86,14 +86,33 @@ def _reject_unsafe_slide_filename(filename: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid slide filename")
 
 
-def _find_slide_image_path(video: Video, filename: str) -> Path:
+def _slide_frames_dir(video: Video) -> Path:
+    video_path = Path(video.file_path)
+    return video_path.parent / f"work_{video.id}" / "frames"
+
+
+def _resolve_slide_image_path(video: Video, filename: str) -> Path:
+    frames_dir = _slide_frames_dir(video)
+    try:
+        frames_root = frames_dir.resolve(strict=True)
+    except (FileNotFoundError, OSError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Slide image not found")
+
     for slide in video.slides or []:
         raw_path = str(slide.get("image_path", "")).strip()
         if not raw_path:
             continue
         image_path = Path(raw_path)
         if image_path.name == filename:
-            return image_path
+            candidate = image_path if image_path.is_absolute() else frames_dir / image_path
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(frames_root)
+            except (FileNotFoundError, OSError, RuntimeError, ValueError):
+                raise HTTPException(status_code=404, detail="Slide image not found")
+            if not resolved.is_file():
+                raise HTTPException(status_code=404, detail="Slide image not found")
+            return resolved
     raise HTTPException(status_code=404, detail="Slide image not found")
 
 
@@ -169,9 +188,7 @@ async def get_slide_image(
     """Serve a stored slide image for a video."""
     _reject_unsafe_slide_filename(filename)
     video = await _get_video_or_404(video_id, db)
-    image_path = _find_slide_image_path(video, filename)
-    if not image_path.is_file():
-        raise HTTPException(status_code=404, detail="Slide image not found")
+    image_path = _resolve_slide_image_path(video, filename)
 
     media_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
     return FileResponse(image_path, media_type=media_type)

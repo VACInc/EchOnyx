@@ -189,6 +189,120 @@ def missing_model_download_message(model_name: str) -> str:
     )
 
 
+def read_only_model_dir_message(model_name: str, target_dir: Path, *, env_var: str = "MODEL_CACHE_DIR") -> str:
+    expected_file = target_dir / Path(model_name).name
+    return (
+        f"Cannot download model {Path(model_name).name}; target directory {target_dir} is not writable. "
+        f"Expected file: {expected_file}. Set {env_var} to a writable model path or pre-download the file."
+    )
+
+
+def _dedupe_paths(paths: list[Path]) -> tuple[Path, ...]:
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return tuple(deduped)
+
+
+def model_search_dirs(cache_dir: Path | None = None) -> tuple[Path, ...]:
+    """Return model directories to probe for local GGUF files."""
+    dirs: list[Path] = []
+    if cache_dir is not None:
+        dirs.append(Path(cache_dir))
+    env_cache = os.environ.get("MODEL_CACHE_DIR", "").strip()
+    if env_cache:
+        dirs.append(Path(env_cache))
+    dirs.extend([Path("/models"), Path("/data/models")])
+    return _dedupe_paths(dirs)
+
+
+def _is_bare_filename(path: Path) -> bool:
+    return not path.is_absolute() and path.parent == Path(".") and path.name == str(path)
+
+
+def _case_insensitive_file_match(path: Path) -> Path | None:
+    directory = path.parent
+    try:
+        entries = tuple(directory.iterdir())
+    except OSError:
+        return None
+    target = path.name.lower()
+    for entry in entries:
+        try:
+            is_file = entry.is_file()
+        except OSError:
+            continue
+        if is_file and entry.name.lower() == target:
+            return entry
+    return None
+
+
+def resolve_local_model_path(model_name_or_path: str | Path, cache_dir: Path | None = None) -> Path | None:
+    """Resolve an existing local model file with case-insensitive filename fallback."""
+    raw_text = str(model_name_or_path).strip()
+    if not raw_text or raw_text.startswith(("http://", "https://")):
+        return None
+
+    raw_path = Path(raw_text)
+    if _is_bare_filename(raw_path):
+        candidates = [directory / raw_path.name for directory in model_search_dirs(cache_dir)]
+    else:
+        candidates = [raw_path]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    for candidate in candidates:
+        match = _case_insensitive_file_match(candidate)
+        if match is not None:
+            return match
+
+    return None
+
+
+def model_download_target(model_name_or_path: str | Path, cache_dir: Path) -> tuple[str, Path]:
+    """Return the registry filename and directory to use if a local file must be downloaded."""
+    raw_path = Path(str(model_name_or_path).strip())
+    if _is_bare_filename(raw_path):
+        return raw_path.name, Path(cache_dir)
+    return raw_path.name, raw_path.parent
+
+
+def _path_has_write_bit(path: Path) -> bool:
+    try:
+        return bool(path.stat().st_mode & 0o222)
+    except OSError:
+        return False
+
+
+def _nearest_existing_parent(path: Path) -> Path | None:
+    current = path
+    while not current.exists():
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+    return current
+
+
+def _download_dir_writable(path: Path) -> bool:
+    if path.exists():
+        return path.is_dir() and os.access(path, os.W_OK) and _path_has_write_bit(path)
+    parent = _nearest_existing_parent(path.parent)
+    return bool(parent and parent.is_dir() and os.access(parent, os.W_OK) and _path_has_write_bit(parent))
+
+
+def ensure_download_dir_writable(model_name: str, target_dir: Path, *, env_var: str = "MODEL_CACHE_DIR") -> None:
+    if not _download_dir_writable(target_dir):
+        raise RuntimeError(read_only_model_dir_message(model_name, target_dir, env_var=env_var))
+
+
 def _enum_value(value) -> str:
     return getattr(value, "value", value)
 
@@ -317,11 +431,10 @@ def is_model_cached(
         except ValueError:
             return False
     if model_name.endswith(".gguf"):
+        if resolve_local_model_path(model_name, cache_dir) is not None:
+            return True
         registry_name, _ = _registry_lookup(model_name)
-        candidates = [model_name]
-        if registry_name and registry_name != model_name:
-            candidates.append(registry_name)
-        return any((cache_dir / candidate).exists() for candidate in candidates)
+        return bool(registry_name and resolve_local_model_path(registry_name, cache_dir) is not None)
     if (cache_dir / model_name).exists():
         return True
     return any(
@@ -409,8 +522,6 @@ def download_model_from_url(url: str, cache_dir: Path) -> Path:
     filename = _filename_from_url(url)
     model_path = cache_dir / filename
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
     # Probe for size to determine if we already have the file
     total_size = 0
     try:
@@ -425,6 +536,9 @@ def download_model_from_url(url: str, cache_dir: Path) -> Path:
             _update_progress(url, status="completed", completed_at=datetime.now())
             logger.info(f"Model already exists: {model_path}")
             return model_path
+
+    ensure_download_dir_writable(filename, cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     _update_progress(url, status="downloading", total_bytes=total_size, started_at=datetime.now())
 
@@ -456,6 +570,7 @@ def download_model(
     *,
     component: str | None = None,
     backend: str | None = None,
+    env_var: str = "MODEL_CACHE_DIR",
 ) -> Path:
     """
     Download a model from HuggingFace Hub if not already present.
@@ -480,37 +595,42 @@ def download_model(
         backend=backend,
     )
     if snapshot_repo_id is not None:
+        ensure_download_dir_writable(model_name, cache_dir, env_var=env_var)
         return _download_hf_snapshot(model_name, snapshot_repo_id, cache_dir, hf_token)
 
-    model_path = cache_dir / model_name
-
     # Check if already downloaded
-    if model_path.exists():
-        logger.info(f"Model already exists: {model_path}")
+    existing_path = resolve_local_model_path(model_name, cache_dir)
+    if existing_path is not None:
+        logger.info(f"Model already exists: {existing_path}")
         _update_progress(model_name, status="completed", completed_at=datetime.now())
-        return model_path
+        return existing_path
+
+    download_name, target_dir = model_download_target(model_name, cache_dir)
+    model_path = target_dir / download_name
 
     # Get model info from registry (case-insensitive fallback)
-    registry_name, model_info = _registry_lookup(model_name)
-    if registry_name and registry_name != model_name:
-        model_path = cache_dir / registry_name
+    registry_name, model_info = _registry_lookup(download_name)
+    if registry_name and registry_name != download_name:
+        model_path = target_dir / registry_name
 
     if model_info is None:
-        if model_name.endswith(".gguf"):
-            logger.warning(f"Model {model_name} not in registry. Please download manually.")
+        if download_name.endswith(".gguf"):
+            logger.warning(f"Model {download_name} not in registry. Please download manually.")
             _update_progress(model_name, status="failed", error="Model not in registry")
             raise FileNotFoundError(
-                f"Model {model_name} not found in registry. "
-                f"Please download it manually to {cache_dir}"
+                f"Model {download_name} not found in registry. "
+                f"Please download it manually to {target_dir}"
             )
         raise ValueError(f"Unknown model: {model_name}")
 
-    if model_path.exists():
-        logger.info(f"Model already exists: {model_path}")
+    existing_path = resolve_local_model_path(model_path, cache_dir)
+    if existing_path is not None:
+        logger.info(f"Model already exists: {existing_path}")
         _update_progress(model_name, status="completed", completed_at=datetime.now())
-        return model_path
+        return existing_path
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    ensure_download_dir_writable(model_path.name, target_dir, env_var=env_var)
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     # Get file size first for progress tracking
     api = HfApi()
@@ -545,7 +665,7 @@ def download_model(
         downloaded_path = hf_hub_download(
             repo_id=model_info["repo_id"],
             filename=model_info["filename"],
-            local_dir=cache_dir,
+            local_dir=target_dir,
             local_dir_use_symlinks=False,
             token=hf_token,
         )
@@ -596,7 +716,7 @@ def download_model(
                 downloaded_path = hf_hub_download(
                     repo_id=model_info["fallback_repo"],
                     filename=model_info["fallback_filename"],
-                    local_dir=cache_dir,
+                    local_dir=target_dir,
                     local_dir_use_symlinks=False,
                     token=hf_token,
                 )
@@ -631,7 +751,7 @@ def download_model(
         _update_progress(model_name, status="failed", error=error_detail)
         raise FileNotFoundError(
             f"Failed to download model {model_name} ({error_detail}). "
-            f"Please download manually from HuggingFace to {cache_dir}.{token_hint}"
+            f"Please download manually from HuggingFace to {target_dir}.{token_hint}"
         )
 
 
@@ -656,6 +776,7 @@ async def download_model_async(
     *,
     component: str | None = None,
     backend: str | None = None,
+    env_var: str = "MODEL_CACHE_DIR",
 ) -> Path:
     """Async version of model download."""
     import asyncio
@@ -667,6 +788,7 @@ async def download_model_async(
             cache_dir,
             component=component,
             backend=backend,
+            env_var=env_var,
         ),
     )
 

@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, detect_gpu_info, get_settings
-from app.core.model_downloader import is_model_cached, missing_model_download_message
+from app.core.model_downloader import (
+    is_model_cached,
+    missing_model_download_message,
+    model_download_target,
+    resolve_local_model_path,
+)
 from app.runtime.planner import build_runtime_plan
 
 logger = logging.getLogger(__name__)
@@ -388,6 +393,25 @@ class ModelManager:
             return
         raise RuntimeError(missing_model_download_message(model_name))
 
+    async def _ensure_local_gguf_model(self, configured_model: str, component: str, env_var: str) -> Path:
+        model_path = resolve_local_model_path(configured_model, self.settings.model_cache_dir)
+        if model_path is not None:
+            return model_path
+
+        model_name, target_dir = model_download_target(configured_model, self.settings.model_cache_dir)
+        self._require_cached_or_auto_download(model_name, component)
+
+        from app.core.model_downloader import download_model_async
+
+        logger.info("%s model not found locally, downloading...", component.title())
+        return await download_model_async(
+            model_name,
+            target_dir,
+            component=component,
+            backend=self.settings.gpu_backend,
+            env_var=env_var,
+        )
+
     def _llama_cuda_device_selection(self, *, endpoint: bool) -> tuple[tuple[int, ...], tuple[int, ...]]:
         if self.settings.gpu_backend != GPUBackend.CUDA:
             return (), ()
@@ -760,19 +784,11 @@ class ModelManager:
     async def _load_vision(self) -> Any:
         """Load the vision model via llama.cpp."""
         self._llama_cuda_device_selection(endpoint=True)
-        from app.core.model_downloader import download_model_async
-
-        model_path = self.settings.model_cache_dir / self.settings.vision_model
-
-        if not model_path.exists():
-            self._require_cached_or_auto_download(self.settings.vision_model, "vision")
-            logger.info(f"Vision model not found locally, downloading...")
-            model_path = await download_model_async(
-                self.settings.vision_model,
-                self.settings.model_cache_dir,
-                component="vision",
-                backend=self.settings.gpu_backend,
-            )
+        model_path = await self._ensure_local_gguf_model(
+            self.settings.vision_model,
+            "vision",
+            "VISION_MODEL",
+        )
 
         from inspect import signature
         from llama_cpp import Llama
@@ -794,22 +810,26 @@ class ModelManager:
         init_params.update(self._llama_cuda_kwargs(param_names, endpoint=True))
         chat_handler = None
         if self.settings.vision_mmproj:
-            mmproj_path = Path(self.settings.vision_mmproj)
-            if not mmproj_path.is_absolute():
-                mmproj_path = self.settings.model_cache_dir / mmproj_path
-            if not mmproj_path.exists():
-                mmproj_name = Path(self.settings.vision_mmproj).name
+            mmproj_path = resolve_local_model_path(self.settings.vision_mmproj, self.settings.model_cache_dir)
+            if mmproj_path is None:
+                mmproj_name, mmproj_dir = model_download_target(
+                    self.settings.vision_mmproj,
+                    self.settings.model_cache_dir,
+                )
                 self._require_cached_or_auto_download(mmproj_name, "vision")
                 try:
+                    from app.core.model_downloader import download_model_async
+
                     mmproj_path = await download_model_async(
                         mmproj_name,
-                        self.settings.model_cache_dir,
+                        mmproj_dir,
                         component="vision",
                         backend=self.settings.gpu_backend,
+                        env_var="VISION_MMPROJ",
                     )
                 except Exception as exc:
                     logger.warning("Vision mmproj download failed: %s", exc)
-            if not mmproj_path.exists():
+            if mmproj_path is not None and not mmproj_path.exists():
                 logger.warning("Vision mmproj path not found: %s", mmproj_path)
 
         if self.settings.vision_chat_format:
@@ -865,11 +885,18 @@ class ModelManager:
                     model_path.unlink()
                 except Exception as unlink_exc:
                     logger.warning("Failed to remove corrupt vision model: %s", unlink_exc)
-                model_path = await download_model_async(
+                from app.core.model_downloader import download_model_async
+
+                model_name, target_dir = model_download_target(
                     self.settings.vision_model,
                     self.settings.model_cache_dir,
+                )
+                model_path = await download_model_async(
+                    model_name,
+                    target_dir,
                     component="vision",
                     backend=self.settings.gpu_backend,
+                    env_var="VISION_MODEL",
                 )
                 init_params["model_path"] = str(model_path)
                 model = await loop.run_in_executor(None, _load_llama)
@@ -882,19 +909,11 @@ class ModelManager:
     async def _load_summarization(self) -> Any:
         """Load the summarization model via llama.cpp."""
         self._llama_cuda_device_selection(endpoint=True)
-        from app.core.model_downloader import download_model_async
-
-        model_path = self.settings.model_cache_dir / self.settings.summarization_model
-
-        if not model_path.exists():
-            self._require_cached_or_auto_download(self.settings.summarization_model, "summarization")
-            logger.info(f"Summarization model not found locally, downloading...")
-            model_path = await download_model_async(
-                self.settings.summarization_model,
-                self.settings.model_cache_dir,
-                component="summarization",
-                backend=self.settings.gpu_backend,
-            )
+        model_path = await self._ensure_local_gguf_model(
+            self.settings.summarization_model,
+            "summarization",
+            "SUMMARIZATION_MODEL",
+        )
 
         from inspect import signature
         from llama_cpp import Llama

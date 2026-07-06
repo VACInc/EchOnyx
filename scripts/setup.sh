@@ -121,16 +121,23 @@ detect_hardware() {
 
     # Check for AMD GPUs / Strix Halo
     if [ -z "$GPU_BACKEND" ]; then
-        if [ -d "/dev/dri" ]; then
+        DRI_PATH="${ECHONYX_DRI_PATH:-/dev/dri}"
+        MEMINFO_PATH="${ECHONYX_MEMINFO_PATH:-/proc/meminfo}"
+        if [ -d "$DRI_PATH" ]; then
+            TOTAL_RAM=$(grep MemTotal "$MEMINFO_PATH" | awk '{print $2/1024/1024}')
             # Check for ROCm
             if command -v rocm-smi >/dev/null 2>&1; then
                 echo -e "${GREEN}Detected AMD GPU with ROCm${NC}"
                 GPU_BACKEND="rocm"
                 COMPOSE_FILE="docker-compose.yml -f docker-compose.amd.yml"
-                HARDWARE_PROFILE="multi_gpu"
+                if (( $(echo "$TOTAL_RAM >= 96" | bc -l) )); then
+                    echo -e "${GREEN}Detected AMD Strix Halo (high unified memory: ${TOTAL_RAM}GB)${NC}"
+                    HARDWARE_PROFILE="strix_halo"
+                else
+                    HARDWARE_PROFILE="multi_gpu"
+                fi
             else
                 # Check for high RAM (Strix Halo indicator)
-                TOTAL_RAM=$(grep MemTotal /proc/meminfo | awk '{print $2/1024/1024}')
                 if (( $(echo "$TOTAL_RAM >= 96" | bc -l) )); then
                     echo -e "${GREEN}Detected AMD Strix Halo (high unified memory: ${TOTAL_RAM}GB)${NC}"
                     GPU_BACKEND="rocm"
@@ -250,6 +257,7 @@ print_instructions() {
     echo "  curl -fsS http://localhost:8000/health"
     echo "  curl -fsS http://localhost:8000/ready"
     echo "  The /ready endpoint reports database, Redis, Chroma, and worker heartbeat status."
+    echo "  Use curl -fsS 'http://localhost:8000/ready?strict=1' when verifying the worker is ready to process jobs."
     echo ""
     echo "To view logs:"
     if [ "$START_MODE" = "docker" ]; then

@@ -85,7 +85,10 @@ EchOnyx uses a single-admin auth model for 1.0.
 - Reverse-proxy headers are ignored unless `TRUST_PROXY_HEADERS=true` and `TRUSTED_PROXY_CIDRS` are configured.
 - Non-loopback HTTP auth is blocked by default.
 
-Public health and readiness routes stay available for deployment checks.
+Public health and readiness routes stay available for deployment checks. `/ready` returns 503 for
+database, Redis, or Chroma failures; a missing worker heartbeat is reported as degraded with HTTP 200
+by default so read-only API traffic can still be served. Use `/ready?strict=1` for "ready to process"
+checks where any failing component, including the worker, must return 503.
 
 ## Data On Disk
 

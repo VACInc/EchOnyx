@@ -106,7 +106,9 @@ async def test_get_summary_strips_absolute_slide_paths():
 @pytest.mark.asyncio
 async def test_get_slide_image_serves_only_matching_stored_slide(tmp_path):
     video_id = uuid4()
-    slide_path = tmp_path / "frame-001.jpg"
+    frames_dir = tmp_path / f"work_{video_id}" / "frames"
+    frames_dir.mkdir(parents=True)
+    slide_path = frames_dir / "frame-001.jpg"
     slide_path.write_bytes(b"jpeg-data")
     video = Video(
         id=video_id,
@@ -137,6 +139,66 @@ async def test_get_slide_image_serves_only_matching_stored_slide(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_get_slide_image_refuses_stored_absolute_path_outside_frames_root(tmp_path):
+    video_id = uuid4()
+    frames_dir = tmp_path / f"work_{video_id}" / "frames"
+    frames_dir.mkdir(parents=True)
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    poisoned_path = outside_dir / "frame-001.jpg"
+    poisoned_path.write_bytes(b"not-a-slide")
+    video = Video(
+        id=video_id,
+        filename="sample.mp4",
+        original_filename="sample.mp4",
+        file_path=str(tmp_path / "sample.mp4"),
+        file_size=123,
+        mime_type="video/mp4",
+        created_at=datetime.now(timezone.utc),
+        slides=[{"timestamp": 1.0, "image_path": str(poisoned_path)}],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await get_slide_image(
+            str(video_id),
+            "frame-001.jpg",
+            db=DummySession([SequenceResult(scalar=video)]),
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_slide_image_refuses_symlink_escape_from_frames_root(tmp_path):
+    video_id = uuid4()
+    frames_dir = tmp_path / f"work_{video_id}" / "frames"
+    frames_dir.mkdir(parents=True)
+    outside_path = tmp_path / "outside.jpg"
+    outside_path.write_bytes(b"not-a-slide")
+    symlink_path = frames_dir / "frame-001.jpg"
+    symlink_path.symlink_to(outside_path)
+    video = Video(
+        id=video_id,
+        filename="sample.mp4",
+        original_filename="sample.mp4",
+        file_path=str(tmp_path / "sample.mp4"),
+        file_size=123,
+        mime_type="video/mp4",
+        created_at=datetime.now(timezone.utc),
+        slides=[{"timestamp": 1.0, "image_path": str(symlink_path)}],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await get_slide_image(
+            str(video_id),
+            "frame-001.jpg",
+            db=DummySession([SequenceResult(scalar=video)]),
+        )
+
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_get_slide_image_rejects_path_traversal():
     with pytest.raises(HTTPException) as exc:
         await get_slide_image(
@@ -151,7 +213,9 @@ async def test_get_slide_image_rejects_path_traversal():
 @pytest.mark.asyncio
 async def test_get_slide_image_404s_unknown_slide(tmp_path):
     video_id = uuid4()
-    slide_path = tmp_path / "frame-001.jpg"
+    frames_dir = tmp_path / f"work_{video_id}" / "frames"
+    frames_dir.mkdir(parents=True)
+    slide_path = frames_dir / "frame-001.jpg"
     slide_path.write_bytes(b"jpeg-data")
     video = Video(
         id=video_id,

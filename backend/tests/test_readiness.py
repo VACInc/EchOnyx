@@ -93,6 +93,16 @@ async def test_get_readiness_status_degrades_when_only_worker_is_missing(monkeyp
         "detail": "no recent worker heartbeat",
     }
 
+    strict_payload, strict_status_code = await main.get_readiness_status(
+        SimpleNamespace(chroma_persist_dir=tmp_path, redis_url="redis://localhost:6379/0"),
+        strict=True,
+    )
+
+    assert strict_status_code == 503
+    assert strict_payload["status"] == "not_ready"
+    assert strict_payload["failed"] == ["worker"]
+    assert "degraded" not in strict_payload
+
 
 def test_chroma_ready_check_writes_to_persist_dir(tmp_path):
     response = main._check_chroma_ready(SimpleNamespace(chroma_persist_dir=tmp_path / "chroma"))
@@ -143,7 +153,8 @@ async def test_worker_ready_check_reports_missing_heartbeat(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ready_endpoint_uses_readiness_status(monkeypatch):
-    async def ready_status(_settings):
+    async def ready_status(_settings, *, strict=False):
+        assert strict is False
         return {
             "status": "not_ready",
             "failed": ["database"],
@@ -163,3 +174,22 @@ async def test_ready_endpoint_uses_readiness_status(monkeypatch):
 
     assert response.status_code == 503
     assert response.json()["failed"] == ["database"]
+
+
+@pytest.mark.asyncio
+async def test_ready_endpoint_passes_strict_query(monkeypatch):
+    seen = {}
+
+    async def ready_status(_settings, *, strict=False):
+        seen["strict"] = strict
+        return {"status": "not_ready", "checks": {}, "failed": ["worker"]}, 503
+
+    monkeypatch.setattr(main, "get_readiness_status", ready_status)
+    app = main.create_app()
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/ready?strict=1")
+
+    assert response.status_code == 503
+    assert seen["strict"] is True

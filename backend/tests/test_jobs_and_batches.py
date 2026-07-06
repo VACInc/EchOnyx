@@ -223,6 +223,40 @@ async def test_create_batch_streams_uploads_and_enqueues_processing(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_create_batch_reports_rejected_corrupt_file(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.api.routes.batch.settings.upload_dir", tmp_path)
+    monkeypatch.setattr("app.api.routes.batch.settings.max_upload_size_gb", 1)
+
+    good_video = create_sample_video(tmp_path / "good.mp4", color="black", frequency=440)
+    good_upload = StreamingUpload("good.mp4", good_video.read_bytes())
+    corrupt_upload = StreamingUpload("corrupt.mp4", b"not a video")
+
+    queued_batch_ids: list[str] = []
+
+    class DummyTask:
+        def delay(self, batch_id: str):
+            queued_batch_ids.append(batch_id)
+            return types.SimpleNamespace(id="batch-task-1")
+
+    monkeypatch.setattr("app.workers.tasks.process_batch", DummyTask())
+
+    session = QueueSession([])
+
+    response = await create_batch(
+        files=[good_upload, corrupt_upload],
+        name="mixed",
+        priority=0,
+        db=session,
+    )
+
+    assert response.total_videos == 1
+    assert len(response.rejected) == 1
+    assert response.rejected[0].filename == "corrupt.mp4"
+    assert "not valid video media" in response.rejected[0].reason
+    assert len(queued_batch_ids) == 1
+
+
+@pytest.mark.asyncio
 async def test_process_batch_enqueues_each_job(monkeypatch):
     batch = Batch(
         id=uuid.uuid4(),

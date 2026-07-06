@@ -11,7 +11,7 @@ def test_build_server_env_downloads_missing_files(monkeypatch, tmp_path):
     mmproj_path = tmp_path / "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
     downloaded = []
 
-    def fake_download(name: str, cache_dir: Path) -> Path:
+    def fake_download(name: str, cache_dir: Path, **_kwargs) -> Path:
         path = cache_dir / name
         path.write_text("stub")
         downloaded.append(path.name)
@@ -41,6 +41,55 @@ def test_build_server_env_downloads_missing_files(monkeypatch, tmp_path):
     assert env["MODEL_ALIAS"] == "vision-model"
     assert env["CHAT_FORMAT"] == "qwen3-vl"
     assert env["N_GPU_LAYERS"] == "999"
+
+
+def test_build_server_env_resolves_bare_model_name_under_model_cache_dir(monkeypatch, tmp_path):
+    model_path = tmp_path / "Qwen3-30B-A3B-Q4_K_M.gguf"
+    model_path.write_text("stub")
+    monkeypatch.setenv("MODEL_CACHE_DIR", str(tmp_path))
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=Path(model_path.name),
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=32768,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["MODEL"] == str(model_path)
+
+
+def test_build_server_env_uses_case_insensitive_existing_file(monkeypatch, tmp_path):
+    configured_path = tmp_path / "Qwen3-30B-A3B-Q4_K_M.gguf"
+    existing_path = tmp_path / "qwen3-30b-a3b-q4_k_m.gguf"
+    existing_path.write_text("stub")
+    monkeypatch.setenv("MODEL_CACHE_DIR", str(tmp_path))
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=configured_path,
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=32768,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["MODEL"] == str(existing_path)
 
 
 def test_build_server_env_fails_missing_file_when_auto_download_disabled(monkeypatch, tmp_path):
