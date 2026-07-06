@@ -9,6 +9,13 @@
 **/__pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
+
+# frontend build artifacts
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
 
 # local data
 uploads/
@@ -20,3 +27,4 @@ tmp/
 
 # local tooling
 .claude/
+goal.md
