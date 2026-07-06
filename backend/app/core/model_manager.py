@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, detect_gpu_info, get_settings
+from app.core.model_downloader import is_model_cached, missing_model_download_message
 from app.runtime.planner import build_runtime_plan
 
 logger = logging.getLogger(__name__)
@@ -371,6 +372,22 @@ class ModelManager:
             device_index=device_index,
         )
 
+    @property
+    def model_auto_download_enabled(self) -> bool:
+        return bool(getattr(self.settings, "model_auto_download", True))
+
+    def _require_cached_or_auto_download(self, model_name: str, component: str) -> None:
+        if self.model_auto_download_enabled:
+            return
+        if is_model_cached(
+            model_name,
+            self.settings.model_cache_dir,
+            component=component,
+            backend=self.settings.gpu_backend,
+        ):
+            return
+        raise RuntimeError(missing_model_download_message(model_name))
+
     def _llama_cuda_device_selection(self, *, endpoint: bool) -> tuple[tuple[int, ...], tuple[int, ...]]:
         if self.settings.gpu_backend != GPUBackend.CUDA:
             return (), ()
@@ -514,10 +531,12 @@ class ModelManager:
 
     async def _load_audio_event(self) -> Any:
         """Load an audio event classification model."""
+        model_name = self.settings.audio_event_model
+        self._require_cached_or_auto_download(model_name, "audio_event")
+
         from transformers import AutoFeatureExtractor, AutoModelForAudioClassification, AutoProcessor, ClapModel
         import torch
 
-        model_name = self.settings.audio_event_model
         # CLAP on Apple Metal currently crashes inside MPS graph normalization,
         # so keep this optional stage on CPU there and let the main pipeline stay on Metal.
         if self.settings.gpu_backend == GPUBackend.METAL:
@@ -576,6 +595,7 @@ class ModelManager:
             model_name,
             backend=self.settings.gpu_backend,
         )
+        self._require_cached_or_auto_download(resolved_name, "asr")
 
         if _is_canary_model(model_name):
             from nemo.collections.speechlm2.models import SALM
@@ -694,9 +714,11 @@ class ModelManager:
 
     async def _load_diarization(self) -> Any:
         """Load the pyannote diarization model."""
+        model_name = self.settings.diarization_model
+        self._require_cached_or_auto_download(model_name, "diarization")
+
         from pyannote.audio import Pipeline
 
-        model_name = self.settings.diarization_model
         hf_token = self.settings.hf_token
 
         if not hf_token:
@@ -738,18 +760,22 @@ class ModelManager:
     async def _load_vision(self) -> Any:
         """Load the vision model via llama.cpp."""
         self._llama_cuda_device_selection(endpoint=True)
-        from inspect import signature
-        from llama_cpp import Llama
         from app.core.model_downloader import download_model_async
 
         model_path = self.settings.model_cache_dir / self.settings.vision_model
 
         if not model_path.exists():
+            self._require_cached_or_auto_download(self.settings.vision_model, "vision")
             logger.info(f"Vision model not found locally, downloading...")
             model_path = await download_model_async(
                 self.settings.vision_model,
-                self.settings.model_cache_dir
+                self.settings.model_cache_dir,
+                component="vision",
+                backend=self.settings.gpu_backend,
             )
+
+        from inspect import signature
+        from llama_cpp import Llama
 
         n_gpu_layers = _resolve_llama_gpu_layers(
             self.settings.gpu_backend,
@@ -772,11 +798,14 @@ class ModelManager:
             if not mmproj_path.is_absolute():
                 mmproj_path = self.settings.model_cache_dir / mmproj_path
             if not mmproj_path.exists():
+                mmproj_name = Path(self.settings.vision_mmproj).name
+                self._require_cached_or_auto_download(mmproj_name, "vision")
                 try:
-                    mmproj_name = Path(self.settings.vision_mmproj).name
                     mmproj_path = await download_model_async(
                         mmproj_name,
                         self.settings.model_cache_dir,
+                        component="vision",
+                        backend=self.settings.gpu_backend,
                     )
                 except Exception as exc:
                     logger.warning("Vision mmproj download failed: %s", exc)
@@ -823,6 +852,11 @@ class ModelManager:
         except Exception as exc:
             message = str(exc).lower()
             if "failed to load model from file" in message and model_path.exists():
+                if not self.model_auto_download_enabled:
+                    raise RuntimeError(
+                        f"Model {self.settings.vision_model} failed to load from cache. "
+                        "Download it in Settings or set MODEL_AUTO_DOWNLOAD=true."
+                    ) from exc
                 logger.warning(
                     "Vision model load failed, re-downloading %s and retrying.",
                     self.settings.vision_model,
@@ -834,6 +868,8 @@ class ModelManager:
                 model_path = await download_model_async(
                     self.settings.vision_model,
                     self.settings.model_cache_dir,
+                    component="vision",
+                    backend=self.settings.gpu_backend,
                 )
                 init_params["model_path"] = str(model_path)
                 model = await loop.run_in_executor(None, _load_llama)
@@ -846,18 +882,22 @@ class ModelManager:
     async def _load_summarization(self) -> Any:
         """Load the summarization model via llama.cpp."""
         self._llama_cuda_device_selection(endpoint=True)
-        from inspect import signature
-        from llama_cpp import Llama
         from app.core.model_downloader import download_model_async
 
         model_path = self.settings.model_cache_dir / self.settings.summarization_model
 
         if not model_path.exists():
+            self._require_cached_or_auto_download(self.settings.summarization_model, "summarization")
             logger.info(f"Summarization model not found locally, downloading...")
             model_path = await download_model_async(
                 self.settings.summarization_model,
-                self.settings.model_cache_dir
+                self.settings.model_cache_dir,
+                component="summarization",
+                backend=self.settings.gpu_backend,
             )
+
+        from inspect import signature
+        from llama_cpp import Llama
 
         n_gpu_layers = _resolve_llama_gpu_layers(
             self.settings.gpu_backend,
@@ -882,9 +922,11 @@ class ModelManager:
 
     async def _load_embedding(self) -> Any:
         """Load the embedding model."""
+        model_name = self.settings.embedding_model
+        self._require_cached_or_auto_download(model_name, "embedding")
+
         from sentence_transformers import SentenceTransformer
 
-        model_name = self.settings.embedding_model
         device = self._torch_runtime_device(
             strict=self.requires_strict_accelerator,
             runtime_label="embedding",

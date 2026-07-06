@@ -518,6 +518,63 @@ def test_model_manager_sets_llama_cuda_visible_devices_from_planner(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_load_summarization_fails_when_auto_download_disabled(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CPU,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        model_auto_download=False,
+        summarization_model="Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+        summarization_gpu_layers=None,
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    manager = ModelManager()
+
+    with pytest.raises(RuntimeError, match="Model Qwen2.5-3B-Instruct.Q4_K_M.gguf is not downloaded"):
+        await manager._load_summarization()
+
+
+@pytest.mark.asyncio
+async def test_load_embedding_fails_when_auto_download_disabled(monkeypatch, tmp_path):
+    settings = types.SimpleNamespace(
+        whisper_model="large-v3",
+        gpu_backend=GPUBackend.CPU,
+        granite_force_cpu=False,
+        model_cache_dir=tmp_path,
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        model_auto_download=False,
+        embedding_model="Qwen/Qwen3-Embedding-8B",
+    )
+    runtime_plan = types.SimpleNamespace(
+        keep_resident_models=(),
+        worker_model_loading=ModelLoadingStrategy.SEQUENTIAL,
+        preferred_worker_device_indices=(),
+        preferred_endpoint_device_indices=(),
+    )
+    monkeypatch.setattr(model_manager_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(model_manager_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(model_manager_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+
+    manager = ModelManager()
+
+    with pytest.raises(RuntimeError, match="Download it in Settings or set MODEL_AUTO_DOWNLOAD=true"):
+        await manager._load_embedding()
+
+
+@pytest.mark.asyncio
 async def test_load_vision_primes_cuda_visibility_before_llama_import(monkeypatch, tmp_path):
     model_path = tmp_path / "vision.gguf"
     model_path.write_text("stub")

@@ -238,7 +238,17 @@ def test_settings_default_to_managed_llama_server_runtime(monkeypatch, tmp_path)
     assert settings.rocm_llm_idle_timeout_s == 120
     assert settings.runtime_planner_enabled is True
     assert settings.runtime_memory_ceiling_gb is None
+    assert settings.model_auto_download is True
     assert settings.vision_model == "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+
+
+def test_settings_reads_model_auto_download_env(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MODEL_AUTO_DOWNLOAD", "false")
+
+    settings = Settings()
+
+    assert settings.model_auto_download is False
 
 
 def test_get_settings_attaches_qwen3vl_defaults(monkeypatch):

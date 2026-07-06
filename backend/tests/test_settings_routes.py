@@ -1,6 +1,9 @@
+import asyncio
+import json
 import os
 import types
 
+from fastapi import HTTPException
 import pytest
 
 from app.api.routes import settings as settings_module
@@ -174,6 +177,178 @@ async def test_verify_model_candidate_rejects_unknown_gguf_name():
 
     assert response.exists is False
     assert response.source == "unsupported"
+
+
+@pytest.mark.asyncio
+async def test_download_model_candidate_starts_background_download(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        gpu_backend=GPUBackend.CPU,
+        hf_token="",
+    )
+    seen = {}
+
+    async def fake_download(model_name, cache_dir, **kwargs):
+        seen["model_name"] = model_name
+        seen["cache_dir"] = cache_dir
+        seen["kwargs"] = kwargs
+        return cache_dir / model_name
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(settings_module, "get_download_progress", lambda _model_name: None)
+    monkeypatch.setattr(settings_module, "is_model_cached", lambda *args, **kwargs: False)
+    monkeypatch.setattr(settings_module, "reserve_download_progress", lambda *args, **kwargs: True)
+    monkeypatch.setattr(settings_module, "download_model_async", fake_download)
+
+    response = await settings_module.download_model_candidate(
+        settings_module.ModelDownloadRequest(component="asr", model_name="small")
+    )
+    await asyncio.sleep(0)
+
+    payload = json.loads(response.body)
+    assert response.status_code == 202
+    assert payload == {"model_name": "small", "status": "downloading"}
+    assert seen == {
+        "model_name": "small",
+        "cache_dir": tmp_path,
+        "kwargs": {"component": "asr", "backend": "cpu"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_download_model_candidate_rejects_duplicate_download(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        gpu_backend=GPUBackend.CPU,
+        hf_token="token",
+    )
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(
+        settings_module,
+        "get_download_progress",
+        lambda _model_name: {"status": "downloading"},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await settings_module.download_model_candidate(
+            settings_module.ModelDownloadRequest(component="vision", model_name="Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf")
+        )
+
+    assert exc.value.status_code == 409
+    assert "already downloading" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_download_model_candidate_requires_hf_token_for_pyannote(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        gpu_backend=GPUBackend.CPU,
+        hf_token="",
+    )
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+
+    with pytest.raises(HTTPException) as exc:
+        await settings_module.download_model_candidate(
+            settings_module.ModelDownloadRequest(
+                component="diarization",
+                model_name="pyannote/speaker-diarization-community-1",
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert "HF_TOKEN" in exc.value.detail
+    assert "https://huggingface.co/pyannote/speaker-diarization-community-1" in exc.value.detail
+    assert "https://huggingface.co/pyannote/segmentation-3.0" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_download_model_candidate_checks_disk_space(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        gpu_backend=GPUBackend.CPU,
+        hf_token="token",
+    )
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(settings_module, "get_download_progress", lambda _model_name: None)
+    monkeypatch.setattr(settings_module, "is_model_cached", lambda *args, **kwargs: False)
+    monkeypatch.setattr(settings_module, "_free_disk_gb", lambda _cache_dir: 1.0)
+
+    with pytest.raises(HTTPException) as exc:
+        await settings_module.download_model_candidate(
+            settings_module.ModelDownloadRequest(component="vision", model_name="Qwen3VL-32B-Instruct-Q4_K_M.gguf")
+        )
+
+    assert exc.value.status_code == 400
+    assert "required 26.4 GB" in exc.value.detail
+    assert "free 1.0 GB" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_download_model_candidate_notes_unknown_size(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        gpu_backend=GPUBackend.CPU,
+        hf_token="token",
+    )
+    seen = {}
+
+    async def fake_exists(_model_name: str) -> bool:
+        return True
+
+    async def fake_download(model_name, cache_dir, **kwargs):
+        seen["model_name"] = model_name
+        seen["kwargs"] = kwargs
+        return cache_dir / "snapshot"
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(settings_module, "_huggingface_model_exists", fake_exists)
+    monkeypatch.setattr(settings_module, "get_download_progress", lambda _model_name: None)
+    monkeypatch.setattr(settings_module, "is_model_cached", lambda *args, **kwargs: False)
+    monkeypatch.setattr(settings_module, "_free_disk_gb", lambda _cache_dir: 100.0)
+    monkeypatch.setattr(settings_module, "reserve_download_progress", lambda *args, **kwargs: True)
+    monkeypatch.setattr(settings_module, "download_model_async", fake_download)
+
+    response = await settings_module.download_model_candidate(
+        settings_module.ModelDownloadRequest(
+            component="embedding",
+            model_name="sentence-transformers/all-MiniLM-L6-v2",
+        )
+    )
+    await asyncio.sleep(0)
+
+    payload = json.loads(response.body)
+    assert response.status_code == 202
+    assert payload["status"] == "downloading"
+    assert "Expected download size is unknown" in payload["note"]
+    assert seen["model_name"] == "sentence-transformers/all-MiniLM-L6-v2"
+
+
+@pytest.mark.asyncio
+async def test_model_recommendations_use_small_set_for_low_budget(monkeypatch, tmp_path):
+    fake_settings = types.SimpleNamespace(
+        hardware_profile=HardwareProfile.CPU_ONLY,
+        gpu_backend=GPUBackend.CPU,
+        model_cache_dir=tmp_path,
+    )
+    runtime_plan = types.SimpleNamespace(effective_memory_budget_gb=8.0)
+
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(settings_module, "detect_gpu_info", lambda: {"nvidia_gpus": [], "amd_gpus": []})
+    monkeypatch.setattr(settings_module, "build_runtime_plan", lambda *_args, **_kwargs: runtime_plan)
+    monkeypatch.setattr(settings_module, "_free_disk_gb", lambda _cache_dir: 42.0)
+    monkeypatch.setattr(settings_module, "is_model_cached", lambda *args, **kwargs: False)
+
+    response = await settings_module.get_model_recommendations()
+
+    assert response["hardware_profile"] == "cpu_only"
+    assert response["effective_memory_budget_gb"] == 8.0
+    assert response["free_disk_gb"] == 42.0
+    assert response["recommendations"]["asr"]["model_name"] == "small"
+    assert response["recommendations"]["embedding"]["model_name"] == "nomic-ai/nomic-embed-text-v1.5"
+    assert response["recommendations"]["vision"]["model_name"] == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
+    assert response["recommendations"]["summarization"]["model_name"] == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
+    assert response["total_additional_download_gb"] == pytest.approx(12.6)
+    assert "sub-16 GB" in response["recommendations"]["vision"]["reason"]
 
 
 @pytest.mark.asyncio

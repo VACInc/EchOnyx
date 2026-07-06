@@ -4,13 +4,12 @@ import logging
 import os
 import threading
 from urllib.parse import unquote, urlparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import httpx
-from huggingface_hub import hf_hub_download, list_repo_files
+from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,22 @@ class DownloadProgress:
 _download_progress: dict[str, DownloadProgress] = {}
 _progress_lock = threading.Lock()
 
+PYANNOTE_LICENSE_URLS = (
+    "https://huggingface.co/pyannote/speaker-diarization-community-1",
+    "https://huggingface.co/pyannote/speaker-diarization-3.1",
+    "https://huggingface.co/pyannote/segmentation-3.0",
+)
+
+WHISPER_ALIAS_REPOS = {
+    "tiny": ("Systran/faster-whisper-tiny", "openai/whisper-tiny"),
+    "base": ("Systran/faster-whisper-base", "openai/whisper-base"),
+    "small": ("Systran/faster-whisper-small", "openai/whisper-small"),
+    "medium": ("Systran/faster-whisper-medium", "openai/whisper-medium"),
+    "large": ("Systran/faster-whisper-large-v3", "openai/whisper-large"),
+    "large-v3": ("Systran/faster-whisper-large-v3", "openai/whisper-large-v3"),
+    "large-v3-turbo": ("Systran/faster-whisper-large-v3-turbo", "openai/whisper-large-v3-turbo"),
+}
+
 
 def get_all_download_progress() -> dict[str, dict]:
     """Get progress for all model downloads."""
@@ -66,6 +81,21 @@ def get_download_progress(model_name: str) -> dict | None:
         if model_name in _download_progress:
             return _download_progress[model_name].to_dict()
     return None
+
+
+def reserve_download_progress(model_name: str, total_bytes: int = 0) -> bool:
+    """Reserve a progress slot before an async download task starts."""
+    with _progress_lock:
+        existing = _download_progress.get(model_name)
+        if existing and existing.status == "downloading":
+            return False
+        _download_progress[model_name] = DownloadProgress(
+            model_name=model_name,
+            status="downloading",
+            total_bytes=total_bytes,
+            started_at=datetime.now(),
+        )
+        return True
 
 
 def _update_progress(model_name: str, **kwargs):
@@ -85,26 +115,32 @@ MODEL_REGISTRY = {
         "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
         "fallback_repo": "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
         "fallback_filename": "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
+        "size_gb": 24.0,
     },
     "Qwen3VL-32B-Instruct-Q4_K_M.gguf": {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "Qwen3VL-32B-Instruct-Q4_K_M.gguf",
+        "size_gb": 24.0,
     },
     "mmproj-Qwen3VL-32B-Instruct-F16.gguf": {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "mmproj-Qwen3VL-32B-Instruct-F16.gguf",
+        "size_gb": 1.5,
     },
     "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf": {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf",
+        "size_gb": 1.0,
     },
     "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf": {
         "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
         "filename": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+        "size_gb": 4.0,
     },
     "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf": {
         "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
         "filename": "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf",
+        "size_gb": 1.0,
     },
     # Summarization models - Qwen3 30B A3B (MoE)
     "Qwen3-30B-A3B-Q4_K_M.gguf": {
@@ -112,19 +148,23 @@ MODEL_REGISTRY = {
         "filename": "Qwen3-30B-A3B-Q4_K_M.gguf",
         "fallback_repo": "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
         "fallback_filename": "Qwen_Qwen3-30B-A3B-Q4_K_M.gguf",
+        "size_gb": 24.0,
     },
     "Qwen2.5-3B-Instruct.Q4_K_M.gguf": {
         "repo_id": "mradermacher/Qwen2.5-3B-Instruct-GGUF",
         "filename": "Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+        "size_gb": 3.0,
     },
     # Alternative smaller models for testing/lower memory
     "qwen2.5-7b-instruct-q4_k_m.gguf": {
         "repo_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
         "filename": "qwen2.5-7b-instruct-q4_k_m.gguf",
+        "size_gb": 5.0,
     },
     "qwen2.5-14b-instruct-q4_k_m.gguf": {
         "repo_id": "Qwen/Qwen2.5-14B-Instruct-GGUF",
         "filename": "qwen2.5-14b-instruct-q4_k_m.gguf",
+        "size_gb": 9.0,
     },
 }
 
@@ -132,6 +172,216 @@ MODEL_REGISTRY = {
 def get_hf_token() -> str | None:
     """Get HuggingFace token from environment."""
     return os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+
+
+def pyannote_token_guidance() -> str:
+    urls = ", ".join(PYANNOTE_LICENSE_URLS)
+    return (
+        "HF_TOKEN is required to download pyannote models. "
+        f"Set HF_TOKEN and accept the model licenses at: {urls}"
+    )
+
+
+def missing_model_download_message(model_name: str) -> str:
+    return (
+        f"Model {model_name} is not downloaded. "
+        "Download it in Settings or set MODEL_AUTO_DOWNLOAD=true."
+    )
+
+
+def _enum_value(value) -> str:
+    return getattr(value, "value", value)
+
+
+def _registry_lookup(model_name: str) -> tuple[str, dict] | tuple[None, None]:
+    model_info = MODEL_REGISTRY.get(model_name)
+    if model_info is not None:
+        return model_name, model_info
+    model_name_lower = model_name.lower()
+    for registry_name, registry_info in MODEL_REGISTRY.items():
+        if registry_name.lower() == model_name_lower:
+            return registry_name, registry_info
+    return None, None
+
+
+def get_model_expected_size_gb(model_name: str) -> float | None:
+    """Return expected download size for registry-backed models when known."""
+    _, model_info = _registry_lookup(model_name)
+    if model_info is None:
+        return None
+    size_gb = model_info.get("size_gb")
+    return float(size_gb) if size_gb is not None else None
+
+
+def _hf_cache_dir() -> Path:
+    cache = (
+        os.environ.get("HF_HUB_CACHE")
+        or os.environ.get("HUGGINGFACE_HUB_CACHE")
+        or os.environ.get("TRANSFORMERS_CACHE")
+    )
+    if cache:
+        return Path(cache)
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home:
+        return Path(hf_home) / "hub"
+    return Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _hf_repo_cache_roots(cache_dir: Path) -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for root in (cache_dir, _hf_cache_dir()):
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _repo_cache_name(repo_id: str) -> str:
+    return f"models--{repo_id.replace('/', '--')}"
+
+
+def _cached_snapshot_path(repo_id: str, cache_dir: Path) -> Path | None:
+    for root in _hf_repo_cache_roots(cache_dir):
+        snapshots = root / _repo_cache_name(repo_id) / "snapshots"
+        if not snapshots.exists():
+            continue
+        try:
+            snapshot_dirs = [path for path in snapshots.iterdir() if path.is_dir()]
+        except OSError:
+            continue
+        if snapshot_dirs:
+            return max(snapshot_dirs, key=lambda path: path.stat().st_mtime)
+    return None
+
+
+def _hf_repo_cached(repo_id: str, cache_dir: Path) -> bool:
+    return _cached_snapshot_path(repo_id, cache_dir) is not None
+
+
+def _whisper_alias_repo_ids(model_name: str, backend: str | None = None) -> tuple[str, ...]:
+    normalized = model_name.strip().lower()
+    if normalized.startswith("whisper-"):
+        normalized = normalized.removeprefix("whisper-")
+    if normalized.startswith("openai/whisper-"):
+        normalized = normalized.removeprefix("openai/whisper-")
+    repos = WHISPER_ALIAS_REPOS.get(normalized)
+    if not repos:
+        return ()
+    backend_value = _enum_value(backend)
+    if backend_value in {"cuda", "cpu", None, ""}:
+        return repos
+    return (repos[1], repos[0])
+
+
+def _resolve_snapshot_repo_id(
+    model_name: str,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> str | None:
+    if model_name.endswith(".gguf") or model_name.startswith(("http://", "https://")):
+        return None
+    if "/" in model_name:
+        return model_name
+    if component == "asr" or _whisper_alias_repo_ids(model_name, backend):
+        repos = _whisper_alias_repo_ids(model_name, backend)
+        return repos[0] if repos else None
+    return None
+
+
+def _snapshot_repo_ids_for_cache_check(
+    model_name: str,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> tuple[str, ...]:
+    if model_name.endswith(".gguf") or model_name.startswith(("http://", "https://")):
+        return ()
+    if "/" in model_name:
+        return (model_name,)
+    if component == "asr" or _whisper_alias_repo_ids(model_name, backend):
+        return _whisper_alias_repo_ids(model_name, backend)
+    return ()
+
+
+def is_model_cached(
+    model_name: str,
+    cache_dir: Path,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> bool:
+    """Best-effort local cache check for GGUF files and Hugging Face snapshots."""
+    if model_name.startswith(("http://", "https://")):
+        try:
+            return (cache_dir / _filename_from_url(model_name)).exists()
+        except ValueError:
+            return False
+    if model_name.endswith(".gguf"):
+        registry_name, _ = _registry_lookup(model_name)
+        candidates = [model_name]
+        if registry_name and registry_name != model_name:
+            candidates.append(registry_name)
+        return any((cache_dir / candidate).exists() for candidate in candidates)
+    if (cache_dir / model_name).exists():
+        return True
+    return any(
+        _hf_repo_cached(repo_id, cache_dir)
+        for repo_id in _snapshot_repo_ids_for_cache_check(
+            model_name,
+            component=component,
+            backend=backend,
+        )
+    )
+
+
+def _repo_total_size_bytes(repo_id: str, token: str | None) -> int:
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    try:
+        repo_info = api.repo_info(repo_id, token=token)
+    except Exception:
+        return 0
+    return int(sum((getattr(file, "size", 0) or 0) for file in repo_info.siblings))
+
+
+def _download_hf_snapshot(
+    model_name: str,
+    repo_id: str,
+    cache_dir: Path,
+    token: str | None,
+) -> Path:
+    if repo_id.startswith("pyannote/") and not token:
+        _update_progress(model_name, status="failed", error=pyannote_token_guidance())
+        raise ValueError(pyannote_token_guidance())
+
+    cached_path = _cached_snapshot_path(repo_id, cache_dir)
+    if cached_path is not None:
+        _update_progress(model_name, status="completed", completed_at=datetime.now())
+        logger.info("Model already cached: %s", repo_id)
+        return cached_path
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    total_size = _repo_total_size_bytes(repo_id, token)
+    _update_progress(
+        model_name,
+        status="downloading",
+        total_bytes=total_size,
+        started_at=datetime.now(),
+    )
+    downloaded_path = snapshot_download(
+        repo_id=repo_id,
+        cache_dir=str(cache_dir),
+        token=token,
+    )
+    _update_progress(
+        model_name,
+        status="completed",
+        downloaded_bytes=total_size,
+        completed_at=datetime.now(),
+    )
+    logger.info("Successfully downloaded Hugging Face snapshot: %s", repo_id)
+    return Path(downloaded_path)
 
 
 def _normalize_hf_url(url: str) -> str:
@@ -200,7 +450,13 @@ def download_model_from_url(url: str, cache_dir: Path) -> Path:
     return model_path
 
 
-def download_model(model_name: str, cache_dir: Path) -> Path:
+def download_model(
+    model_name: str,
+    cache_dir: Path,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> Path:
     """
     Download a model from HuggingFace Hub if not already present.
 
@@ -217,6 +473,15 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
     if model_name.startswith(("http://", "https://")):
         return download_model_from_url(model_name, cache_dir)
 
+    hf_token = get_hf_token()
+    snapshot_repo_id = _resolve_snapshot_repo_id(
+        model_name,
+        component=component,
+        backend=backend,
+    )
+    if snapshot_repo_id is not None:
+        return _download_hf_snapshot(model_name, snapshot_repo_id, cache_dir, hf_token)
+
     model_path = cache_dir / model_name
 
     # Check if already downloaded
@@ -226,13 +491,9 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
         return model_path
 
     # Get model info from registry (case-insensitive fallback)
-    model_info = MODEL_REGISTRY.get(model_name)
-    if model_info is None:
-        model_name_lower = model_name.lower()
-        for registry_name, registry_info in MODEL_REGISTRY.items():
-            if registry_name.lower() == model_name_lower:
-                model_info = registry_info
-                break
+    registry_name, model_info = _registry_lookup(model_name)
+    if registry_name and registry_name != model_name:
+        model_path = cache_dir / registry_name
 
     if model_info is None:
         if model_name.endswith(".gguf"):
@@ -244,7 +505,11 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
             )
         raise ValueError(f"Unknown model: {model_name}")
 
-    hf_token = get_hf_token()
+    if model_path.exists():
+        logger.info(f"Model already exists: {model_path}")
+        _update_progress(model_name, status="completed", completed_at=datetime.now())
+        return model_path
+
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Get file size first for progress tracking
@@ -291,7 +556,8 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
 
         # Rename to expected name if different
         downloaded = Path(downloaded_path)
-        if downloaded.name != model_name:
+        expected_name = model_path.name
+        if downloaded.name != expected_name:
             downloaded.rename(model_path)
 
         _update_progress(
@@ -339,7 +605,8 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
                 speed = total_size / elapsed if elapsed > 0 else 0
 
                 downloaded = Path(downloaded_path)
-                if downloaded.name != model_name:
+                expected_name = model_path.name
+                if downloaded.name != expected_name:
                     downloaded.rename(model_path)
 
                 _update_progress(
@@ -368,20 +635,40 @@ def download_model(model_name: str, cache_dir: Path) -> Path:
         )
 
 
-def ensure_model_available(model_name: str, cache_dir: Path) -> Path:
+def ensure_model_available(
+    model_name: str,
+    cache_dir: Path,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> Path:
     """
     Ensure a model is available, downloading if necessary.
 
     This is a synchronous wrapper for use in model loading.
     """
-    return download_model(model_name, cache_dir)
+    return download_model(model_name, cache_dir, component=component, backend=backend)
 
 
-async def download_model_async(model_name: str, cache_dir: Path) -> Path:
+async def download_model_async(
+    model_name: str,
+    cache_dir: Path,
+    *,
+    component: str | None = None,
+    backend: str | None = None,
+) -> Path:
     """Async version of model download."""
     import asyncio
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, download_model, model_name, cache_dir)
+    return await loop.run_in_executor(
+        None,
+        lambda: download_model(
+            model_name,
+            cache_dir,
+            component=component,
+            backend=backend,
+        ),
+    )
 
 
 def list_available_models() -> dict[str, dict]:

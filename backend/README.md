@@ -97,6 +97,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - Summary generation and `ask` answers now strip `<think>...</think>` reasoning blocks before persistence or API response.
 - `/api/search/ask` now accepts optional conversation history so follow-up questions can reuse prior turns while staying grounded in retrieved context.
 - `/api/settings/models/verify` checks a candidate model against the built-in catalog, GGUF registry, or Hugging Face before the UI adds it to a selector.
+- `/api/settings/models/recommendations` and `/api/settings/models/download` support guided model setup; set `MODEL_AUTO_DOWNLOAD=false` to make workers fail clearly until models are downloaded from Settings.
 - `/api/action-items` now provides first-class todo CRUD with video-label filters so summary action items and manual follow-ups can be managed outside the raw summary payload.
 - The security layer now includes single-admin auth, CSRF on mutating routes, upload/write/login rate limits, JSON body caps, endpoint/model validation, and audit-log retention cleanup.
 - Browser-origin access is no longer wildcard-open by default: CORS and job WebSocket access now trust explicit origins plus local/private-network browser origins unless you override that in env.

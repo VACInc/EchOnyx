@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.model_downloader import download_model
+from app.core.model_downloader import download_model, missing_model_download_message
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,14 @@ class LlamaCppServerConfig:
 def _ensure_local_file(path: Path) -> Path:
     if path.exists():
         return path
+    if not _auto_download_enabled():
+        raise RuntimeError(missing_model_download_message(path.name))
     return download_model(path.name, path.parent)
+
+
+def _auto_download_enabled() -> bool:
+    value = os.environ.get("MODEL_AUTO_DOWNLOAD", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def _parse_int(value: str) -> int | None:

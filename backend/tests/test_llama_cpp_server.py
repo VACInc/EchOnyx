@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from app.runtime import llama_cpp_server
 
 
@@ -39,6 +41,28 @@ def test_build_server_env_downloads_missing_files(monkeypatch, tmp_path):
     assert env["MODEL_ALIAS"] == "vision-model"
     assert env["CHAT_FORMAT"] == "qwen3-vl"
     assert env["N_GPU_LAYERS"] == "999"
+
+
+def test_build_server_env_fails_missing_file_when_auto_download_disabled(monkeypatch, tmp_path):
+    model_path = tmp_path / "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+    monkeypatch.setenv("MODEL_AUTO_DOWNLOAD", "false")
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="vision-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="qwen3-vl",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    with pytest.raises(RuntimeError, match="Download it in Settings or set MODEL_AUTO_DOWNLOAD=true"):
+        llama_cpp_server.build_server_env(config)
 
 
 def test_build_server_env_infers_single_cuda_visible_device(monkeypatch, tmp_path):

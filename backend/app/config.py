@@ -146,6 +146,7 @@ class Settings(BaseSettings):
 
     # Model loading
     model_loading: ModelLoadingStrategy = ModelLoadingStrategy.SEQUENTIAL
+    model_auto_download: bool = True
     model_cache_dir: Path = Field(default=Path("/data/models"))
 
     # Processing

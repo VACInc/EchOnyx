@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.config import (
@@ -17,13 +21,30 @@ from app.config import (
     ModelLoadingStrategy,
     ROCmLLMRuntime,
     Settings,
+    detect_gpu_info,
     get_asr_family,
     get_hardware_info,
     get_settings,
 )
+from app.core.model_downloader import (
+    download_model_async,
+    get_all_download_progress,
+    get_download_progress,
+    get_model_expected_size_gb,
+    is_model_cached,
+    pyannote_token_guidance,
+    reserve_download_progress,
+)
 from app.core.model_manager import reset_model_manager
 from app.env_utils import resolve_env_file_path, stringify_env_value, write_env_updates
+from app.runtime.planner import build_runtime_plan
 from app.security import validate_endpoint_url, validate_model_name
+
+logger = logging.getLogger(__name__)
+
+BYTES_PER_GB = 1024 ** 3
+DOWNLOAD_HEADROOM_FRACTION = 0.10
+DOWNLOAD_MIN_HEADROOM_GB = 1.0
 
 MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
     "asr": [
@@ -251,6 +272,17 @@ class ModelVerifyResponse(BaseModel):
     detail: str
 
 
+class ModelDownloadRequest(BaseModel):
+    component: str
+    model_name: str
+
+
+class ModelDownloadResponse(BaseModel):
+    model_name: str
+    status: str
+    note: str | None = None
+
+
 ENV_FIELD_MAP: dict[str, str] = {
     "hardware_profile": "HARDWARE_PROFILE",
     "gpu_backend": "GPU_BACKEND",
@@ -360,6 +392,112 @@ def _runtime_planner_response(settings, runtime_plan: dict) -> RuntimePlannerCon
         estimated_memory_by_model_gb=runtime_plan["estimated_memory_by_model_gb"],
         notes=runtime_plan["notes"],
     )
+
+
+def _catalog_expected_size_gb(component: str, model_name: str) -> float | None:
+    catalog_match = _find_catalog_model(component, model_name)
+    if catalog_match and catalog_match.get("size_gb") is not None:
+        return float(catalog_match["size_gb"])
+    return None
+
+
+def _expected_download_size_gb(component: str, model_name: str) -> float | None:
+    catalog_size = _catalog_expected_size_gb(component, model_name)
+    if catalog_size is not None:
+        return catalog_size
+    return get_model_expected_size_gb(model_name)
+
+
+def _free_disk_gb(cache_dir: Path) -> float:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    usage = shutil.disk_usage(cache_dir)
+    return usage.free / BYTES_PER_GB
+
+
+def _required_disk_gb(expected_size_gb: float) -> float:
+    headroom_gb = max(expected_size_gb * DOWNLOAD_HEADROOM_FRACTION, DOWNLOAD_MIN_HEADROOM_GB)
+    return expected_size_gb + headroom_gb
+
+
+def _ensure_download_disk_space(cache_dir: Path, model_name: str, expected_size_gb: float) -> float:
+    free_gb = _free_disk_gb(cache_dir)
+    required_gb = _required_disk_gb(expected_size_gb)
+    if free_gb < required_gb:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient disk space for {model_name}: required {required_gb:.1f} GB "
+                f"including download headroom, free {free_gb:.1f} GB in {cache_dir}."
+            ),
+        )
+    return free_gb
+
+
+def _is_hf_token_gated_model(component: str, model_name: str) -> bool:
+    return component == "diarization" and model_name.startswith("pyannote/")
+
+
+def _settings_hf_token(settings: Settings) -> str:
+    return (
+        getattr(settings, "hf_token", "")
+        or os.environ.get("HF_TOKEN", "")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN", "")
+    ).strip()
+
+
+def _task_log_download_result(task) -> None:
+    try:
+        task.result()
+    except Exception as exc:
+        logger.warning("Background model download failed: %s", exc)
+
+
+def _plan_value(runtime_plan, key: str, default: Any = None) -> Any:
+    if isinstance(runtime_plan, dict):
+        return runtime_plan.get(key, default)
+    return getattr(runtime_plan, key, default)
+
+
+def _recommendation_set(settings: Settings, runtime_plan) -> tuple[str, dict[str, str]]:
+    profile = _enum_value(settings.hardware_profile)
+    budget_gb = float(_plan_value(runtime_plan, "effective_memory_budget_gb", 0.0) or 0.0)
+
+    base = {
+        "asr": "large-v3",
+        "diarization": "pyannote/speaker-diarization-community-1",
+        "vision": "Qwen3VL-32B-Instruct-Q4_K_M.gguf",
+        "summarization": "Qwen3-30B-A3B-Q4_K_M.gguf",
+        "embedding": "Qwen/Qwen3-Embedding-8B",
+        "audio_event": "laion/clap-htsat-fused",
+    }
+    small_overrides = {
+        "asr": "small",
+        "vision": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+        "summarization": "Qwen2.5-3B-Instruct.Q4_K_M.gguf",
+        "embedding": "nomic-ai/nomic-embed-text-v1.5",
+    }
+    apple_overrides = {
+        **small_overrides,
+    }
+
+    if profile == HardwareProfile.APPLE_SILICON.value:
+        return "apple_silicon", {**base, **apple_overrides}
+    if profile == HardwareProfile.CPU_ONLY.value or budget_gb < 16:
+        return "small", {**base, **small_overrides}
+    return "large", base
+
+
+def _recommendation_reason(component: str, tier: str, runtime_plan) -> str:
+    budget_gb = float(_plan_value(runtime_plan, "effective_memory_budget_gb", 0.0) or 0.0)
+    if tier == "apple_silicon":
+        if component in {"asr", "vision", "summarization", "embedding"}:
+            return "Apple Silicon default keeps first-run memory and download size modest."
+        return "Keeps the supported default for this component on Apple Silicon."
+    if tier == "small":
+        if component in {"asr", "vision", "summarization", "embedding"}:
+            return f"Selected for CPU or sub-16 GB accelerator budget ({budget_gb:.1f} GB detected)."
+        return "Keeps the supported default while the core model set stays small."
+    return f"Selected for the active hardware budget ({budget_gb:.1f} GB detected)."
 
 
 @router.get("", response_model=SettingsResponse)
@@ -561,11 +699,117 @@ async def verify_model_candidate(request: ModelVerifyRequest) -> ModelVerifyResp
     )
 
 
+@router.post("/models/download", response_model=ModelDownloadResponse)
+async def download_model_candidate(request: ModelDownloadRequest) -> JSONResponse:
+    """Start an explicit, user-requested model download."""
+    verification = await verify_model_candidate(
+        ModelVerifyRequest(component=request.component, model_name=request.model_name)
+    )
+    if not verification.exists:
+        raise HTTPException(status_code=400, detail=verification.detail)
+
+    settings = get_settings()
+    component = verification.component
+    model_name = verification.model_name
+    backend = _enum_value(settings.gpu_backend)
+
+    if _is_hf_token_gated_model(component, model_name) and not _settings_hf_token(settings):
+        raise HTTPException(status_code=400, detail=pyannote_token_guidance())
+
+    progress = get_download_progress(model_name)
+    if progress and progress.get("status") == "downloading":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Model {model_name} is already downloading.",
+        )
+
+    if is_model_cached(
+        model_name,
+        settings.model_cache_dir,
+        component=component,
+        backend=backend,
+    ):
+        return JSONResponse(
+            status_code=200,
+            content={"model_name": model_name, "status": "cached"},
+        )
+
+    expected_size_gb = _expected_download_size_gb(component, model_name)
+    note = None
+    total_bytes = 0
+    if expected_size_gb is None:
+        _free_disk_gb(settings.model_cache_dir)
+        note = "Expected download size is unknown; disk space could not be preflighted."
+    else:
+        _ensure_download_disk_space(settings.model_cache_dir, model_name, expected_size_gb)
+        total_bytes = int(expected_size_gb * BYTES_PER_GB)
+
+    if not reserve_download_progress(model_name, total_bytes=total_bytes):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Model {model_name} is already downloading.",
+        )
+
+    task = asyncio.create_task(
+        download_model_async(
+            model_name,
+            settings.model_cache_dir,
+            component=component,
+            backend=backend,
+        )
+    )
+    task.add_done_callback(_task_log_download_result)
+
+    content = {"model_name": model_name, "status": "downloading"}
+    if note:
+        content["note"] = note
+    return JSONResponse(status_code=202, content=content)
+
+
+@router.get("/models/recommendations")
+async def get_model_recommendations() -> dict:
+    """Return hardware-aware model recommendations for the active profile."""
+    settings = get_settings()
+    gpu_info = detect_gpu_info()
+    runtime_plan = build_runtime_plan(settings, gpu_info)
+    tier, choices = _recommendation_set(settings, runtime_plan)
+    cache_dir = settings.model_cache_dir
+    backend = _enum_value(settings.gpu_backend)
+    free_disk_gb = _free_disk_gb(cache_dir)
+
+    recommendations: dict[str, dict[str, Any]] = {}
+    total_additional_gb = 0.0
+    for component in MODEL_COMPONENTS:
+        model_name = choices[component]
+        expected_size_gb = _expected_download_size_gb(component, model_name)
+        cached = is_model_cached(
+            model_name,
+            cache_dir,
+            component=component,
+            backend=backend,
+        )
+        additional_gb = 0.0 if cached or expected_size_gb is None else expected_size_gb
+        total_additional_gb += additional_gb
+        recommendations[component] = {
+            "model_name": model_name,
+            "expected_size_gb": expected_size_gb,
+            "cached": cached,
+            "additional_download_gb": round(additional_gb, 2),
+            "reason": _recommendation_reason(component, tier, runtime_plan),
+        }
+
+    return {
+        "hardware_profile": _enum_value(settings.hardware_profile),
+        "effective_memory_budget_gb": _plan_value(runtime_plan, "effective_memory_budget_gb", 0.0),
+        "free_disk_gb": round(free_disk_gb, 2),
+        "total_additional_download_gb": round(total_additional_gb, 2),
+        "recommendations": recommendations,
+    }
+
+
 @router.get("/models/status")
 async def get_model_download_status() -> dict:
     """Get status of all model downloads (in progress or completed)."""
-    from app.core.model_downloader import MODEL_REGISTRY, get_all_download_progress
-
     settings = get_settings()
     cache_dir = settings.model_cache_dir
     loaded_models = _loaded_models_from_state(cache_dir)
@@ -579,6 +823,7 @@ async def get_model_download_status() -> dict:
         "vision": settings.vision_model,
         "summarization": settings.summarization_model,
         "embedding": settings.embedding_model,
+        "audio_event": settings.audio_event_model,
     }
     for model_type, model_name in required_models.items():
         if model_type == "vision" and settings.vision_endpoint_url.strip():
@@ -612,7 +857,10 @@ async def get_model_download_status() -> dict:
             elif model_name in download_progress:
                 models_status[model_type] = _normalize_progress_status(download_progress[model_name])
             else:
-                size_gb = MODEL_REGISTRY.get(model_name, {}).get("size_gb", 0)
+                size_gb = _expected_download_size_gb(
+                    "asr" if model_type == "whisper" else model_type,
+                    model_name,
+                ) or 0
                 models_status[model_type] = {
                     "model_name": model_name,
                     "status": "uncached",
@@ -621,7 +869,12 @@ async def get_model_download_status() -> dict:
         else:
             if model_name in download_progress:
                 models_status[model_type] = _normalize_progress_status(download_progress[model_name])
-            elif _hf_model_cached(model_name):
+            elif is_model_cached(
+                model_name,
+                cache_dir,
+                component="asr" if model_type == "whisper" else model_type,
+                backend=_enum_value(settings.gpu_backend),
+            ):
                 models_status[model_type] = {
                     "model_name": model_name,
                     "status": "cached",
@@ -665,20 +918,6 @@ async def _endpoint_status(url: str, api_key: str | None) -> str:
     return "offline"
 
 
-def _hf_cache_dir() -> Path:
-    cache = (
-        os.environ.get("HF_HUB_CACHE")
-        or os.environ.get("HUGGINGFACE_HUB_CACHE")
-        or os.environ.get("TRANSFORMERS_CACHE")
-    )
-    if cache:
-        return Path(cache)
-    hf_home = os.environ.get("HF_HOME")
-    if hf_home:
-        return Path(hf_home) / "hub"
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-
 def _find_catalog_model(component: str, model_name: str) -> dict[str, Any] | None:
     normalized = model_name.strip().lower()
     for item in MODEL_OPTIONS.get(component, []):
@@ -709,20 +948,6 @@ async def _huggingface_model_exists(model_name: str) -> bool:
     import asyncio
 
     return await asyncio.to_thread(check)
-
-
-def _hf_model_cached(model_name: str) -> bool:
-    if "/" not in model_name:
-        return False
-    cache_dir = _hf_cache_dir()
-    repo_dir = cache_dir / f"models--{model_name.replace('/', '--')}"
-    snapshots = repo_dir / "snapshots"
-    if snapshots.exists():
-        try:
-            return any(path.is_dir() for path in snapshots.iterdir())
-        except OSError:
-            return False
-    return False
 
 
 def _loaded_models_from_state(cache_dir: Path) -> set[str]:
