@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import signal
@@ -17,6 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_HEALTH_BODY = {
     "status": "ok",
@@ -213,6 +216,71 @@ def _explicit_visible_device_keys(service_role: str) -> tuple[str, ...]:
     if role == "summarization":
         return ("MODEL_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES")
     return ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES")
+
+
+_PIN_ENV_KEYS = (
+    "MODEL_VISIBLE_DEVICES",
+    "NVIDIA_VISION_VISIBLE_DEVICES",
+    "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES",
+)
+
+
+def _resolve_pinned_child_devices(
+    pin: str,
+    parent_visible: str,
+    *,
+    role: str,
+) -> tuple[str, tuple[int, ...]]:
+    """Translate host-index GPU pins into the child's ``CUDA_VISIBLE_DEVICES``.
+
+    Returns ``(child_cuda_visible_devices, host_device_ids)`` where the first
+    value is what the child process should export and the second is the ordered
+    list of HOST GPU ids the child will actually see (used to translate engine
+    device arguments to child-local ordinals).
+
+    When the parent visibility is unset the host pins are exported verbatim
+    (unchanged behavior). When the parent is already narrowed, each pin is mapped
+    to its ordinal within the visible list; pins that are neither present in the
+    list nor a valid local ordinal are dropped with a warning, and a pin set that
+    resolves to nothing fails fast rather than letting the engine grab device 0.
+    """
+    role_label = role or "default"
+    pin_tokens = _split_device_tokens(pin)
+    parent_tokens = _split_device_tokens(parent_visible)
+
+    if not parent_tokens:
+        return ",".join(pin_tokens), _numeric_visible_devices(pin)
+
+    child_tokens: list[str] = []
+    host_ids: list[int] = []
+    for token in pin_tokens:
+        if token in parent_tokens:
+            child_ordinal = parent_tokens.index(token)
+            host_token = token
+        elif token.isdigit() and 0 <= int(token) < len(parent_tokens):
+            child_ordinal = int(token)
+            host_token = parent_tokens[child_ordinal]
+        else:
+            logger.warning(
+                "Ignoring GPU pin %r for role %r: it is not one of the visible CUDA "
+                "devices %s and is not a valid local ordinal into that list.",
+                token,
+                role_label,
+                list(parent_tokens),
+            )
+            continue
+        child_tokens.append(str(child_ordinal))
+        if host_token.isdigit():
+            host_ids.append(int(host_token))
+
+    if not child_tokens:
+        raise RuntimeError(
+            f"None of the pinned GPUs {list(pin_tokens)} for role {role_label!r} are "
+            f"usable within the visible CUDA devices {list(parent_tokens)}. Set the pin "
+            f"to a host GPU index present in CUDA_VISIBLE_DEVICES, or a local ordinal in "
+            f"[0, {len(parent_tokens)})."
+        )
+    return ",".join(child_tokens), tuple(host_ids)
 
 
 def _query_nvidia_gpus() -> list[dict[str, object]]:
@@ -416,6 +484,7 @@ class ManagedRuntime:
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._process_group_id: int | None = None
+        self._child_host_visible: str | None = None
         self._last_request_ts = 0.0
         self._last_start_ts = 0.0
         self._active_requests = 0
@@ -453,7 +522,7 @@ class ManagedRuntime:
                 return self._health_check(self.config)
 
             env = self._build_child_env_locked()
-            command = build_runtime_command(self.config, cuda_visible_devices=env.get("CUDA_VISIBLE_DEVICES"))
+            command = build_runtime_command(self.config, cuda_visible_devices=self._child_host_visible)
             self._process = self._popen_factory(command, env=env, start_new_session=True)
             self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts
@@ -485,32 +554,60 @@ class ManagedRuntime:
             env["PORT"] = str(self.config.upstream_port)
             env["LISTEN_HOST"] = "127.0.0.1"
 
-        explicit = env.get("CUDA_VISIBLE_DEVICES", "").strip()
-        if not explicit:
-            for key in _explicit_visible_device_keys(self.config.service_role):
-                value = env.get(key, "").strip()
-                if value:
-                    explicit = value
-                    break
+        parent_visible = env.get("CUDA_VISIBLE_DEVICES", "").strip()
+        self._shutdown_after_request = self.config.shutdown_after_request
 
-        if explicit:
-            env["CUDA_VISIBLE_DEVICES"] = explicit
-            self._shutdown_after_request = self.config.shutdown_after_request
-            return env
+        pin = ""
+        for key in _explicit_visible_device_keys(self.config.service_role):
+            value = env.get(key, "").strip()
+            if value:
+                pin = value
+                break
 
-        if not self.config.auto_nvidia_gpu_selection:
-            self._shutdown_after_request = self.config.shutdown_after_request
-            return env
+        # An explicit role pin (expressed as HOST indices) narrows visibility,
+        # translated against any parent narrowing already in effect.
+        if pin:
+            child_visible, host_ids = _resolve_pinned_child_devices(
+                pin, parent_visible, role=self.config.service_role
+            )
+            return self._finalize_child_env_locked(env, child_visible, host_ids)
 
-        gpus = _query_nvidia_gpus()
-        if not gpus:
-            self._shutdown_after_request = self.config.shutdown_after_request
-            return env
+        # Auto-pick from live nvidia-smi data. nvidia-smi reports HOST indices even
+        # under a narrowed CUDA_VISIBLE_DEVICES, so restrict candidates to the
+        # visible set and translate the chosen index the same way pins are.
+        if self.config.auto_nvidia_gpu_selection:
+            gpus = _query_nvidia_gpus()
+            if parent_visible:
+                visible_set = _split_device_tokens(parent_visible)
+                gpus = [gpu for gpu in gpus if str(int(gpu["index"])) in visible_set]
+            if gpus:
+                visible_devices, shutdown_after_request = _select_nvidia_visible_devices(
+                    self.config, gpus
+                )
+                self._shutdown_after_request = shutdown_after_request
+                if visible_devices:
+                    child_visible, host_ids = _resolve_pinned_child_devices(
+                        ",".join(visible_devices), parent_visible, role=self.config.service_role
+                    )
+                    return self._finalize_child_env_locked(env, child_visible, host_ids)
 
-        visible_devices, shutdown_after_request = _select_nvidia_visible_devices(self.config, gpus)
-        if visible_devices:
-            env["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
-        self._shutdown_after_request = shutdown_after_request
+        # No pin and no auto-selection: honor any pre-narrowed parent visibility as-is.
+        self._child_host_visible = parent_visible or None
+        return env
+
+    def _finalize_child_env_locked(
+        self,
+        env: dict[str, str],
+        child_visible: str,
+        host_ids: tuple[int, ...],
+    ) -> dict[str, str]:
+        env["CUDA_VISIBLE_DEVICES"] = child_visible
+        # This gateway is the sole authority on device selection; drop the raw
+        # host-index pins so a chained child (e.g. llama_cpp_server) does not
+        # re-translate the already-narrowed visibility a second time.
+        for key in _PIN_ENV_KEYS:
+            env.pop(key, None)
+        self._child_host_visible = ",".join(str(index) for index in host_ids) or child_visible
         return env
 
     def _terminate_locked(self) -> None:

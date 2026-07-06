@@ -1,6 +1,8 @@
 import subprocess
 import urllib.error
 
+import pytest
+
 from app.runtime.managed_openai_runtime import (
     ManagedRuntime,
     RuntimeConfig,
@@ -326,6 +328,149 @@ def test_managed_runtime_translates_vllm_device_for_second_visible_gpu(monkeypat
     assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1,4"
     device_index = captured["command"].index("--device")
     assert captured["command"][device_index + 1] == "cuda:1"
+
+
+def test_managed_runtime_narrows_pinned_host_index_under_parent_visibility(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["command"] = command
+        captured["env"] = env
+        return process
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "4")
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="vllm",
+            service_role="vision",
+            model_path="/models/unused.gguf",
+            vllm_model_id="Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
+            vllm_extra_args=["--device", "cuda:4"],
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    # Host GPU 4 is ordinal 1 within the pre-narrowed visible list "1,4,6".
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
+    # The child only sees host GPU 4, so engine device args map to ordinal 0.
+    device_index = captured["command"].index("--device")
+    assert captured["command"][device_index + 1] == "cuda:0"
+
+
+def test_managed_runtime_exports_host_pin_verbatim_when_parent_unset(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["command"] = command
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._discover_llama_server_bin",
+        lambda: "/opt/amd-llama/bin/llama-server",
+    )
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="llama_server",
+            service_role="summarization",
+            llama_extra_args=["--main-gpu", "4"],
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "4"
+    main_gpu_index = captured["command"].index("--main-gpu")
+    assert captured["command"][main_gpu_index + 1] == "0"
+
+
+def test_managed_runtime_fails_fast_when_pin_not_resolvable(monkeypatch):
+    process = FakeProcess()
+
+    def fake_popen(command, env, start_new_session):  # pragma: no cover - must not run
+        return process
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "7")
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="vllm",
+            service_role="vision",
+            model_path="/models/unused.gguf",
+            vllm_model_id="Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    with pytest.raises(RuntimeError, match="visible CUDA devices"):
+        runtime.ensure_started()
+
+
+def test_managed_runtime_auto_pick_translates_host_index_under_parent_visibility(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=(
+                "0, RTX 3090, 24576, 0, 24576, 0\n"
+                "1, RTX 3090, 24576, 20000, 4576, 90\n"
+                "4, RTX 3090, 24576, 100, 24476, 0\n"
+                "6, RTX 3090, 24576, 18000, 6576, 80\n"
+            ),
+            stderr="",
+        )
+
+    def fake_popen(command, env, start_new_session):
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4,6")
+    monkeypatch.delenv("NVIDIA_VISION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="vllm",
+            service_role="vision",
+            model_path="/models/unused.gguf",
+            vllm_model_id="Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
+            auto_nvidia_gpu_selection=True,
+            model_memory_gb=20.0,
+            hot_set_memory_gb=20.0,
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    # Idle host GPU 4 (outside-visibility GPU 0 is filtered out) maps to ordinal 1
+    # within the pre-narrowed visible list "1,4,6".
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1"
 
 
 def test_managed_runtime_command_child_uses_upstream_port(monkeypatch):

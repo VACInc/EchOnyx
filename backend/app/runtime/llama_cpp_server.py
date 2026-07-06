@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import shlex
 import subprocess
@@ -15,6 +16,15 @@ from app.core.model_downloader import (
     missing_model_download_message,
     model_download_target,
     resolve_local_model_path,
+)
+
+
+logger = logging.getLogger(__name__)
+
+_PIN_ENV_KEYS = (
+    "MODEL_VISIBLE_DEVICES",
+    "NVIDIA_VISION_VISIBLE_DEVICES",
+    "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES",
 )
 
 
@@ -99,22 +109,81 @@ def _parse_device_indices(value: str) -> tuple[int, ...]:
         return ()
 
 
-def _apply_explicit_cuda_visibility(env: dict[str, str]) -> None:
-    if env.get("CUDA_VISIBLE_DEVICES", "").strip():
-        return
-    for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
+def _resolve_pinned_visible_devices(pin: str, parent_visible: str) -> tuple[str, tuple[int, ...]]:
+    """Translate host-index GPU pins into this process's ``CUDA_VISIBLE_DEVICES``.
+
+    Returns ``(cuda_visible_devices, host_device_ids)``. With the parent unset the
+    host pins are exported verbatim; when the parent is already narrowed each pin
+    is mapped to its ordinal within the visible list. Pins that are neither present
+    nor a valid local ordinal are dropped with a warning, and a pin set resolving to
+    nothing fails fast instead of letting llama.cpp fall back to device 0.
+    """
+    pin_tokens = _split_device_tokens(pin)
+    parent_tokens = _split_device_tokens(parent_visible)
+
+    if not parent_tokens:
+        return ",".join(pin_tokens), _parse_device_indices(pin)
+
+    child_tokens: list[str] = []
+    host_ids: list[int] = []
+    for token in pin_tokens:
+        if token in parent_tokens:
+            child_ordinal = parent_tokens.index(token)
+            host_token = token
+        elif token.isdigit() and 0 <= int(token) < len(parent_tokens):
+            child_ordinal = int(token)
+            host_token = parent_tokens[child_ordinal]
+        else:
+            logger.warning(
+                "Ignoring GPU pin %r: it is not one of the visible CUDA devices %s and "
+                "is not a valid local ordinal into that list.",
+                token,
+                list(parent_tokens),
+            )
+            continue
+        child_tokens.append(str(child_ordinal))
+        if host_token.isdigit():
+            host_ids.append(int(host_token))
+
+    if not child_tokens:
+        raise RuntimeError(
+            f"None of the pinned GPUs {list(pin_tokens)} are usable within the visible "
+            f"CUDA devices {list(parent_tokens)}. Set the pin to a host GPU index present "
+            f"in CUDA_VISIBLE_DEVICES, or a local ordinal in [0, {len(parent_tokens)})."
+        )
+    return ",".join(child_tokens), tuple(host_ids)
+
+
+def _resolve_visible_devices(env: dict[str, str]) -> tuple[int, ...]:
+    """Narrow ``CUDA_VISIBLE_DEVICES`` from role pins and report host device ids.
+
+    The returned tuple is the ordered list of HOST GPU ids this process will see,
+    used to translate ``main_gpu`` to a child-local ordinal.
+    """
+    parent_visible = env.get("CUDA_VISIBLE_DEVICES", "").strip()
+
+    pin = ""
+    for key in _PIN_ENV_KEYS:
         value = env.get(key, "").strip()
         if value:
-            env["CUDA_VISIBLE_DEVICES"] = value
-            return
+            pin = value
+            break
+
+    if pin:
+        child_visible, host_ids = _resolve_pinned_visible_devices(pin, parent_visible)
+        env["CUDA_VISIBLE_DEVICES"] = child_visible
+        return host_ids
+
+    if parent_visible:
+        return _parse_device_indices(parent_visible)
+    return ()
 
 
-def _translate_visible_main_gpu(main_gpu: int, env: dict[str, str]) -> int:
-    visible_devices = _parse_device_indices(env.get("CUDA_VISIBLE_DEVICES", ""))
-    if not visible_devices:
+def _translate_visible_main_gpu(main_gpu: int, host_device_ids: tuple[int, ...]) -> int:
+    if not host_device_ids:
         return main_gpu
-    if main_gpu in visible_devices:
-        return visible_devices.index(main_gpu)
+    if main_gpu in host_device_ids:
+        return host_device_ids.index(main_gpu)
     return main_gpu
 
 
@@ -135,10 +204,10 @@ def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
     env["N_CTX"] = str(config.context_size)
     env["N_GPU_LAYERS"] = str(config.gpu_layers)
 
-    _apply_explicit_cuda_visibility(env)
+    host_device_ids = _resolve_visible_devices(env)
     inferred_main_gpu, inferred_split_mode = _infer_single_gpu_target(env)
     main_gpu = (
-        _translate_visible_main_gpu(config.main_gpu, env)
+        _translate_visible_main_gpu(config.main_gpu, host_device_ids)
         if config.main_gpu is not None
         else inferred_main_gpu
     )
