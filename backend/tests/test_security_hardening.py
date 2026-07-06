@@ -28,7 +28,7 @@ class DummySession:
 
 def test_is_origin_allowed_accepts_private_network_hosts():
     assert is_origin_allowed(
-        "http://192.168.1.147:3000",
+        "http://192.168.0.20:3000",
         allowed_origins=[],
         allow_origin_regex=DEFAULT_LOCAL_ORIGIN_REGEX,
     )
@@ -91,7 +91,7 @@ async def test_get_summary_strips_absolute_slide_paths():
         slides=[
             {
                 "timestamp": 1.0,
-                "image_path": "/Users/vac/EchOnyx/data/uploads/work_123/frames/frame-001.jpg",
+                "image_path": "/srv/echonyx/data/uploads/work_123/frames/frame-001.jpg",
                 "ocr_text": "Budget",
                 "description": "Budget slide",
             }

@@ -197,7 +197,7 @@ async def test_mutations_write_audit_logs(monkeypatch, tmp_path):
 async def test_remote_setup_rejected_even_with_forwarded_loopback(monkeypatch, tmp_path):
     stack = await _build_auth_stack(monkeypatch, tmp_path)
 
-    async with _client(stack, client_host="192.168.1.50", base_url="http://192.168.1.147:8000") as client:
+    async with _client(stack, client_host="192.168.0.10", base_url="http://192.168.0.20:8000") as client:
         response = await client.post(
             "/api/auth/setup",
             json={"password": "very-secure-password"},
@@ -216,7 +216,7 @@ async def test_cross_origin_setup_rejected(monkeypatch, tmp_path):
         response = await client.post(
             "/api/auth/setup",
             json={"password": "very-secure-password"},
-            headers={"Origin": "http://192.168.1.50:3000"},
+            headers={"Origin": "http://192.168.0.10:3000"},
         )
 
     assert response.status_code == 403
@@ -231,7 +231,7 @@ async def test_remote_http_login_requires_https(monkeypatch, tmp_path):
         AUTH_PASSWORD_HASH="pbkdf2_sha256$390000$testsalt$5JzY7TZxF3_C1Cae5TEqyiwC-UVlA_sTzYTw4L11d5w=",
     )
 
-    async with _client(stack, client_host="192.168.1.50", base_url="http://192.168.1.147:8000") as client:
+    async with _client(stack, client_host="192.168.0.10", base_url="http://192.168.0.20:8000") as client:
         response = await client.post("/api/auth/login", json={"password": "wrong-password"})
 
     assert response.status_code == 400

@@ -9,8 +9,8 @@
 - Do not print, echo, inspect, or otherwise reveal secret values. If the user provides a wrapper command for remote access, use it as-is and do not extract or log the token behind it.
 - Treat the live Strix Halo machine as part of the review surface for this repo. Validate both code and runtime behavior.
 - Preferred live checks:
-  - Frontend: `http://192.168.1.178:3000/`
-  - API health: `http://192.168.1.178:8000/health`
+  - Frontend: `http://YOUR_STRIX_HOST:3000/`
+  - API health: `http://YOUR_STRIX_HOST:8000/health`
   - Runtime config: `/api/settings`, `/api/settings/hardware`, `/api/settings/models/status`
 - Prefer `scripts/acceptance.sh` for repeatable end-to-end acceptance on local/live targets before falling back to ad hoc curl sequences. Keep it current with health/settings/hardware, upload/batch, search/ask/similar, and action-items coverage.
 - If auth is enabled, drive `scripts/acceptance.sh` with `ECHONYX_PASSWORD` or `--password`; do not hardcode secrets into repo files.
