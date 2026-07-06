@@ -135,7 +135,7 @@ def _should_audit(request: Request) -> bool:
 
 async def security_http_middleware(request: Request, call_next: Callable) -> Response:
     path = request.url.path
-    if not (path == "/health" or path.startswith("/api")):
+    if not (path in {"/health", "/ready"} or path.startswith("/api")):
         response = await call_next(request)
         apply_security_headers(response)
         return response

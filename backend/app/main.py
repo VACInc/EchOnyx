@@ -1,16 +1,104 @@
 """FastAPI application entry point."""
 
+import asyncio
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from redis import asyncio as redis_async
+from sqlalchemy import text
 
 from app.api.routes import action_items, auth, batch, jobs, search, settings as settings_routes, summaries, videos
 from app.api.websocket import router as ws_router
 from app.auth import cleanup_security_state
 from app.config import get_settings
+from app.database import async_session_maker
 from app.http_security import security_http_middleware
 from app.security import cors_configuration
+
+READINESS_TIMEOUT_SECONDS = 2.0
+
+
+def _ready_ok() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+def _ready_error(exc: Exception | str) -> dict[str, str]:
+    detail = exc if isinstance(exc, str) else exc.__class__.__name__
+    return {"status": "error", "detail": str(detail)}
+
+
+async def _check_database_ready() -> dict[str, str]:
+    try:
+        async with async_session_maker() as session:
+            await asyncio.wait_for(
+                session.execute(text("SELECT 1")),
+                timeout=READINESS_TIMEOUT_SECONDS,
+            )
+        return _ready_ok()
+    except Exception as exc:
+        return _ready_error(exc)
+
+
+async def _check_redis_ready(settings) -> dict[str, str]:
+    if not settings.redis_url:
+        return _ready_error("Redis URL is not configured")
+
+    client = redis_async.from_url(
+        settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=READINESS_TIMEOUT_SECONDS,
+        socket_timeout=READINESS_TIMEOUT_SECONDS,
+    )
+    try:
+        await asyncio.wait_for(client.ping(), timeout=READINESS_TIMEOUT_SECONDS)
+        return _ready_ok()
+    except Exception as exc:
+        return _ready_error(exc)
+    finally:
+        close = getattr(client, "aclose", None)
+        if close is not None:
+            await close()
+        else:  # pragma: no cover - compatibility with older redis-py
+            await client.close()
+
+
+def _check_chroma_ready(settings) -> dict[str, str]:
+    try:
+        settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+        marker = settings.chroma_persist_dir / f".ready-{uuid.uuid4().hex}.tmp"
+        marker.write_text("ok", encoding="utf-8")
+        marker.unlink(missing_ok=True)
+        return _ready_ok()
+    except Exception as exc:
+        return _ready_error(exc)
+
+
+async def collect_readiness_checks(settings) -> dict[str, dict[str, str]]:
+    database, redis = await asyncio.gather(
+        _check_database_ready(),
+        _check_redis_ready(settings),
+    )
+    return {
+        "database": database,
+        "redis": redis,
+        "chroma": _check_chroma_ready(settings),
+    }
+
+
+async def get_readiness_status(settings) -> tuple[dict, int]:
+    checks = await collect_readiness_checks(settings)
+    failed = [name for name, check in checks.items() if check.get("status") != "ok"]
+    payload = {
+        "status": "not_ready" if failed else "ready",
+        "checks": checks,
+    }
+    if failed:
+        payload["failed"] = failed
+    return payload, 503 if failed else 200
 
 
 @asynccontextmanager
@@ -109,6 +197,12 @@ def create_app() -> FastAPI:
     async def health_check():
         """Health check endpoint."""
         return {"status": "healthy"}
+
+    @app.get("/ready")
+    async def readiness_check():
+        """Readiness check endpoint."""
+        payload, status_code = await get_readiness_status(settings)
+        return JSONResponse(payload, status_code=status_code)
 
     return app
 

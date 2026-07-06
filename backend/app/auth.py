@@ -29,6 +29,7 @@ PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 PUBLIC_PATHS = {
     "/health",
+    "/ready",
     "/api/auth/session",
     "/api/auth/login",
     "/api/auth/setup",

@@ -2,9 +2,10 @@
 
 import shutil
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -56,6 +57,22 @@ async def _probe_uploaded_video(file_path: Path) -> dict:
     return info
 
 
+class DuplicateOfVideoResponse(BaseModel):
+    """Safe duplicate target metadata."""
+
+    id: str
+    title: str | None = None
+
+
+class VideoDuplicateInfoResponse(BaseModel):
+    """Safe duplicate detection metadata."""
+
+    classification: str | None = None
+    score: float | None = None
+    suppressed: bool | None = None
+    duplicate_of: DuplicateOfVideoResponse | None = None
+
+
 class VideoResponse(BaseModel):
     """Video response schema."""
 
@@ -69,6 +86,7 @@ class VideoResponse(BaseModel):
     duration_formatted: str
     title: str | None
     tags: list[str] | None
+    duplicate_info: VideoDuplicateInfoResponse | None = None
     status: str
     created_at: str
 
@@ -88,6 +106,19 @@ class VideoStatsResponse(BaseModel):
     total: int
     completed: int
     workload: int
+
+
+class VideoLabelResponse(BaseModel):
+    """One user label suggestion with its video count."""
+
+    name: str
+    count: int
+
+
+class VideoLabelsResponse(BaseModel):
+    """Distinct user labels across videos."""
+
+    labels: list[VideoLabelResponse]
 
 
 class VideoTagsUpdate(BaseModel):
@@ -159,6 +190,80 @@ async def _get_display_job(db: AsyncSession, video_id: uuid.UUID) -> Job | None:
         .limit(1)
     )
     return job_result.scalar_one_or_none()
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _safe_duplicate_info(video: Video, db: AsyncSession) -> VideoDuplicateInfoResponse | None:
+    duplicate_info = video.duplicate_info or {}
+    if not isinstance(duplicate_info, dict) or not duplicate_info:
+        return None
+
+    duplicate_of = None
+    representative_id = duplicate_info.get("representative_video_id")
+    if representative_id:
+        representative_id_text = str(representative_id)
+        representative_title = None
+        try:
+            representative_uuid = uuid.UUID(representative_id_text)
+        except ValueError:
+            representative_uuid = None
+
+        if representative_uuid:
+            result = await db.execute(select(Video).where(Video.id == representative_uuid))
+            representative = result.scalar_one_or_none()
+            if representative:
+                representative_title = representative.title or representative.original_filename
+
+        representative_title = representative_title or duplicate_info.get("representative_title")
+        duplicate_of = DuplicateOfVideoResponse(
+            id=representative_id_text,
+            title=str(representative_title) if representative_title else None,
+        )
+
+    response = VideoDuplicateInfoResponse(
+        classification=(
+            str(duplicate_info["classification"])
+            if duplicate_info.get("classification") is not None
+            else None
+        ),
+        score=_safe_float(duplicate_info.get("score")),
+        suppressed=(
+            bool(duplicate_info["suppressed"])
+            if duplicate_info.get("suppressed") is not None
+            else None
+        ),
+        duplicate_of=duplicate_of,
+    )
+    if (
+        response.classification is None
+        and response.score is None
+        and response.suppressed is None
+        and response.duplicate_of is None
+    ):
+        return None
+    return response
+
+
+async def _video_response(video: Video, *, status: str, db: AsyncSession) -> VideoResponse:
+    return VideoResponse(
+        id=str(video.id),
+        filename=video.filename,
+        original_filename=video.original_filename,
+        file_size=video.file_size,
+        duration_seconds=video.duration_seconds,
+        duration_formatted=video.duration_formatted,
+        title=video.title,
+        tags=video.tags,
+        duplicate_info=await _safe_duplicate_info(video, db),
+        status=status,
+        created_at=video.created_at.isoformat(),
+    )
 
 
 @router.post("/upload", response_model=VideoResponse)
@@ -234,18 +339,7 @@ async def upload_video(
     else:
         await db.commit()
 
-    return VideoResponse(
-        id=str(video.id),
-        filename=video.filename,
-        original_filename=video.original_filename,
-        file_size=video.file_size,
-        duration_seconds=video.duration_seconds,
-        duration_formatted=video.duration_formatted,
-        title=video.title,
-        tags=video.tags,
-        status=job.status if auto_process else "uploaded",
-        created_at=video.created_at.isoformat(),
-    )
+    return await _video_response(video, status=job.status if auto_process else "uploaded", db=db)
 
 
 @router.get("", response_model=VideoListResponse)
@@ -302,20 +396,7 @@ async def list_videos(
                 dirty_jobs = True
             status = JobStatus.FAILED.value if job else "missing"
 
-        video_responses.append(
-            VideoResponse(
-                id=str(video.id),
-                filename=video.filename,
-                original_filename=video.original_filename,
-                file_size=video.file_size,
-                duration_seconds=video.duration_seconds,
-                duration_formatted=video.duration_formatted,
-                title=video.title,
-                tags=video.tags,
-                status=status,
-                created_at=video.created_at.isoformat(),
-            )
-        )
+        video_responses.append(await _video_response(video, status=status, db=db))
 
     if dirty_jobs:
         await db.commit()
@@ -362,6 +443,41 @@ async def get_video_stats(
     )
 
 
+@router.get("/labels", response_model=VideoLabelsResponse)
+async def list_video_labels(
+    db: AsyncSession = Depends(get_db),
+) -> VideoLabelsResponse:
+    """List distinct user labels with per-label video counts."""
+    result = await db.execute(select(Video.tags))
+    tag_lists = result.scalars().all()
+
+    counts: Counter[str] = Counter()
+    display_names: dict[str, str] = {}
+    for tags in tag_lists:
+        if not tags:
+            continue
+        video_keys: set[str] = set()
+        for tag in tags:
+            clean = str(tag).strip()
+            if not clean:
+                continue
+            key = clean.lower()
+            if key in video_keys:
+                continue
+            video_keys.add(key)
+            counts[key] += 1
+            display_names.setdefault(key, clean)
+
+    labels = [
+        VideoLabelResponse(name=display_names[key], count=count)
+        for key, count in sorted(
+            counts.items(),
+            key=lambda item: (-item[1], display_names[item[0]].lower(), display_names[item[0]]),
+        )
+    ]
+    return VideoLabelsResponse(labels=labels)
+
+
 @router.get("/{video_id}", response_model=VideoResponse)
 async def get_video(
     video_id: str,
@@ -397,18 +513,7 @@ async def get_video(
             await db.commit()
         status = JobStatus.FAILED.value if job else "missing"
 
-    return VideoResponse(
-        id=str(video.id),
-        filename=video.filename,
-        original_filename=video.original_filename,
-        file_size=video.file_size,
-        duration_seconds=video.duration_seconds,
-        duration_formatted=video.duration_formatted,
-        title=video.title,
-        tags=video.tags,
-        status=status,
-        created_at=video.created_at.isoformat(),
-    )
+    return await _video_response(video, status=status, db=db)
 
 
 @router.put("/{video_id}/tags", response_model=VideoResponse)

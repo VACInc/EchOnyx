@@ -1,12 +1,13 @@
 """Summary retrieval and export endpoints."""
 
+import mimetypes
 import uuid
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,12 +67,7 @@ class FullSummaryResponse(BaseModel):
     slides: list[SlideInfo]
 
 
-@router.get("/{video_id}", response_model=FullSummaryResponse)
-async def get_summary(
-    video_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> FullSummaryResponse:
-    """Get the full summary for a video."""
+async def _get_video_or_404(video_id: str, db: AsyncSession) -> Video:
     try:
         vid = uuid.UUID(video_id)
     except ValueError:
@@ -82,6 +78,32 @@ async def get_summary(
 
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
+def _reject_unsafe_slide_filename(filename: str) -> None:
+    if not filename or filename in {".", ".."} or "/" in filename or "\\" in filename or Path(filename).name != filename:
+        raise HTTPException(status_code=400, detail="Invalid slide filename")
+
+
+def _find_slide_image_path(video: Video, filename: str) -> Path:
+    for slide in video.slides or []:
+        raw_path = str(slide.get("image_path", "")).strip()
+        if not raw_path:
+            continue
+        image_path = Path(raw_path)
+        if image_path.name == filename:
+            return image_path
+    raise HTTPException(status_code=404, detail="Slide image not found")
+
+
+@router.get("/{video_id}", response_model=FullSummaryResponse)
+async def get_summary(
+    video_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> FullSummaryResponse:
+    """Get the full summary for a video."""
+    video = await _get_video_or_404(video_id, db)
 
     # Extract speaker names from speaker data
     speakers = []
@@ -136,6 +158,23 @@ async def get_summary(
         transcript=transcript,
         slides=slides,
     )
+
+
+@router.get("/{video_id}/slides/{filename}")
+async def get_slide_image(
+    video_id: str,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Serve a stored slide image for a video."""
+    _reject_unsafe_slide_filename(filename)
+    video = await _get_video_or_404(video_id, db)
+    image_path = _find_slide_image_path(video, filename)
+    if not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Slide image not found")
+
+    media_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+    return FileResponse(image_path, media_type=media_type)
 
 
 @router.get("/{video_id}/export")

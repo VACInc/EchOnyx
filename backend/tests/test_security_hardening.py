@@ -4,8 +4,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
-from app.api.routes.summaries import get_summary
+from app.api.routes.summaries import get_slide_image, get_summary
 from app.security import (
     DEFAULT_LOCAL_ORIGIN_REGEX,
     cors_configuration,
@@ -100,3 +101,74 @@ async def test_get_summary_strips_absolute_slide_paths():
     response = await get_summary(str(video_id), db=DummySession([SequenceResult(scalar=video)]))
 
     assert response.slides[0].image_path == Path("frame-001.jpg").name
+
+
+@pytest.mark.asyncio
+async def test_get_slide_image_serves_only_matching_stored_slide(tmp_path):
+    video_id = uuid4()
+    slide_path = tmp_path / "frame-001.jpg"
+    slide_path.write_bytes(b"jpeg-data")
+    video = Video(
+        id=video_id,
+        filename="sample.mp4",
+        original_filename="sample.mp4",
+        file_path=str(tmp_path / "sample.mp4"),
+        file_size=123,
+        mime_type="video/mp4",
+        created_at=datetime.now(timezone.utc),
+        slides=[
+            {
+                "timestamp": 1.0,
+                "image_path": str(slide_path),
+                "ocr_text": "Budget",
+                "description": "Budget slide",
+            }
+        ],
+    )
+
+    response = await get_slide_image(
+        str(video_id),
+        "frame-001.jpg",
+        db=DummySession([SequenceResult(scalar=video)]),
+    )
+
+    assert Path(response.path) == slide_path
+    assert response.media_type == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_get_slide_image_rejects_path_traversal():
+    with pytest.raises(HTTPException) as exc:
+        await get_slide_image(
+            str(uuid4()),
+            "../frame-001.jpg",
+            db=DummySession([]),
+        )
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_slide_image_404s_unknown_slide(tmp_path):
+    video_id = uuid4()
+    slide_path = tmp_path / "frame-001.jpg"
+    slide_path.write_bytes(b"jpeg-data")
+    video = Video(
+        id=video_id,
+        filename="sample.mp4",
+        original_filename="sample.mp4",
+        file_path=str(tmp_path / "sample.mp4"),
+        file_size=123,
+        mime_type="video/mp4",
+        created_at=datetime.now(timezone.utc),
+        slides=[{"timestamp": 1.0, "image_path": str(slide_path)}],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await get_slide_image(
+            str(video_id),
+            "frame-002.jpg",
+            db=DummySession([SequenceResult(scalar=video)]),
+        )
+
+    assert exc.value.status_code == 404

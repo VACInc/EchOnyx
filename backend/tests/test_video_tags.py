@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.api.routes.videos import VideoTagsUpdate, update_video_tags
+from app.api.routes.videos import VideoTagsUpdate, list_video_labels, update_video_tags
 from app.models.video import Video
 
 
@@ -12,6 +12,12 @@ class DummyResult:
         self._item = item
 
     def scalar_one_or_none(self):
+        return self._item
+
+    def scalars(self):
+        return self
+
+    def all(self):
         return self._item
 
 
@@ -53,3 +59,23 @@ async def test_update_video_tags_normalizes(monkeypatch):
     assert response.tags == ["Alpha", "Beta"]
     assert video.tags == ["Alpha", "Beta"]
     assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_list_video_labels_counts_distinct_video_labels():
+    db = DummySession([
+        DummyResult([
+            ["Finance", "Review"],
+            ["finance", "Planning"],
+            ["Review", "review", ""],
+            None,
+        ]),
+    ])
+
+    response = await list_video_labels(db)
+
+    assert [label.model_dump() for label in response.labels] == [
+        {"name": "Finance", "count": 2},
+        {"name": "Review", "count": 2},
+        {"name": "Planning", "count": 1},
+    ]
