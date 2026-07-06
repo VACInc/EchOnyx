@@ -300,6 +300,8 @@ def test_build_server_env_narrows_pinned_host_index_under_parent_visibility(monk
     # CUDA_VISIBLE_DEVICES does not compose: exporting a new value re-enumerates
     # physical devices, so the pin is kept verbatim as the physical id.
     assert env["CUDA_VISIBLE_DEVICES"] == "4"
+    # Physical ids require PCI bus ordering to match nvidia-smi indices.
+    assert env["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
     assert env["MAIN_GPU"] == "0"
     assert env["SPLIT_MODE"] == "0"
 

@@ -164,6 +164,10 @@ def _resolve_visible_devices(env: dict[str, str]) -> tuple[int, ...]:
     if pin:
         child_visible, host_ids = _resolve_pinned_visible_devices(pin, parent_visible)
         env["CUDA_VISIBLE_DEVICES"] = child_visible
+        # Physical-id pins are only meaningful under PCI bus ordering; CUDA's
+        # default fastest-first ordering diverges from nvidia-smi indices on
+        # mixed-GPU hosts (confirmed live on a 3090 + RTX PRO 6000 mix).
+        env.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
         return host_ids
 
     if parent_visible:
