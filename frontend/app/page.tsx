@@ -1,151 +1,138 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { VideoCard } from "@/components/video-card";
-import {
-  Upload,
-  Video,
-  Clock,
-  Download,
-  CheckCircle,
-  AlertCircle,
-  Loader2,
-  Cpu,
-  Wifi,
-} from "lucide-react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, Clock, Info, Upload, Video } from "lucide-react";
+
+import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { VideoCard } from "@/components/video-card";
 import { useUploadModal } from "@/components/upload-modal";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { Tooltip } from "@/components/ui/tooltip";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useToast } from "@/components/ui/toast";
 
-const statusStyles: Record<string, { label: string; className: string }> = {
-  loaded: {
-    label: "Loaded",
-    className:
-      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-  },
-  cached: {
-    label: "Cached",
-    className:
-      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-  },
-  uncached: {
-    label: "Uncached",
-    className:
-      "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200",
-  },
-  downloading: {
-    label: "Downloading",
-    className:
-      "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/40 dark:bg-blue-500/10 dark:text-blue-200",
-  },
-  failed: {
-    label: "Failed",
-    className:
-      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200",
-  },
-  online: {
-    label: "Online",
-    className:
-      "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-200",
-  },
-  offline: {
-    label: "Offline",
-    className:
-      "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-500/10 dark:text-rose-200",
-  },
-};
+type Job = Awaited<ReturnType<typeof api.getJobs>>["jobs"][number];
+type ModelStatus = Awaited<ReturnType<typeof api.getModelStatus>>;
+type ModelEntry = NonNullable<ModelStatus["models"][string]>;
 
-const modelOrder = ["whisper", "diarization", "vision", "summarization", "embedding"];
+const modelStages = [
+  {
+    key: "whisper",
+    label: "Transcription",
+    getConfiguredModel: (settings: Awaited<ReturnType<typeof api.getSettings>> | undefined) => settings?.models.asr_model,
+  },
+  {
+    key: "diarization",
+    label: "Diarization",
+    getConfiguredModel: (settings: Awaited<ReturnType<typeof api.getSettings>> | undefined) => settings?.models.diarization_model,
+  },
+  {
+    key: "vision",
+    label: "Vision",
+    getConfiguredModel: (settings: Awaited<ReturnType<typeof api.getSettings>> | undefined) =>
+      settings?.models.vision_endpoint_model || settings?.models.vision_model,
+  },
+  {
+    key: "summarization",
+    label: "Summarization",
+    getConfiguredModel: (settings: Awaited<ReturnType<typeof api.getSettings>> | undefined) =>
+      settings?.models.summarization_endpoint_model || settings?.models.summarization_model,
+  },
+  {
+    key: "embedding",
+    label: "Embeddings",
+    getConfiguredModel: (settings: Awaited<ReturnType<typeof api.getSettings>> | undefined) => settings?.models.embedding_model,
+  },
+];
 
-const modelLabels: Record<string, string> = {
-  whisper: "Transcription",
-  diarization: "Diarization",
-  vision: "Vision",
-  summarization: "Summary",
-  embedding: "Embeddings",
-};
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
-const modelShortLabels: Record<string, string> = {
-  whisper: "T",
-  diarization: "D",
-  vision: "V",
-  summarization: "S",
-  embedding: "E",
-};
+function modelProgress(model: ModelEntry | undefined, modelStatus: ModelStatus | undefined): number | null {
+  if (!model) return null;
+  const directProgress = model.progress_percent;
+  if (typeof directProgress === "number") return directProgress;
+  const activeDownload = modelStatus?.active_downloads?.find((download) => download.model_name === model.model_name);
+  return typeof activeDownload?.progress_percent === "number" ? activeDownload.progress_percent : null;
+}
 
-const modelBadge = (modelName: string, modelType: string) => {
-  const name = modelName.toLowerCase();
-  if (name.includes("qwen")) return { label: "Q", className: "bg-emerald-100 text-emerald-700" };
-  if (name.includes("whisper") || name.includes("large-v3")) return { label: "W", className: "bg-blue-100 text-blue-700" };
-  if (name.includes("granite")) return { label: "G", className: "bg-slate-200 text-slate-700" };
-  if (name.includes("pyannote")) return { label: "P", className: "bg-amber-100 text-amber-700" };
-  if (name.includes("nomic")) return { label: "N", className: "bg-indigo-100 text-indigo-700" };
-  if (name.includes("gptoss")) return { label: "G", className: "bg-purple-100 text-purple-700" };
-  return { label: modelType.slice(0, 1).toUpperCase(), className: "bg-slate-100 text-slate-600" };
-};
+function formatMemory(value: number | null | undefined, digits = 1): string {
+  return typeof value === "number" ? `${value.toFixed(digits)} GB` : "Unknown";
+}
 
-const statusIcon = (status: string) => {
-  switch (status) {
-    case "loaded":
-    case "cached":
-    case "online":
-      return CheckCircle;
-    case "downloading":
-      return Loader2;
-    case "uncached":
-      return Clock;
-    case "offline":
-    case "failed":
-      return AlertCircle;
-    default:
-      return Clock;
-  }
-};
+function RecentVideoSkeleton() {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_150px_120px_120px_140px] md:items-center">
+        <div className="flex items-start gap-3">
+          <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-5 w-40 rounded-full" />
+          </div>
+        </div>
+        <Skeleton className="h-6 w-28 rounded-full" />
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-4 w-16" />
+        <Skeleton className="h-4 w-24" />
+      </div>
+    </div>
+  );
+}
 
 export default function Dashboard() {
+  const [hardwareDetailsOpen, setHardwareDetailsOpen] = useState(false);
   const { openModal } = useUploadModal();
   const confirm = useConfirm();
   const toast = useToast();
   const queryClient = useQueryClient();
 
-  const { data: videos, isLoading } = useQuery({
+  const videosQuery = useQuery({
     queryKey: ["videos"],
     queryFn: () => api.getVideos({ page: 1, pageSize: 5 }),
     refetchInterval: 5000,
   });
 
-  const { data: videoStats } = useQuery({
+  const videoStatsQuery = useQuery({
     queryKey: ["videoStats"],
     queryFn: api.getVideoStats,
     refetchInterval: 5000,
   });
 
-  const { data: settings } = useQuery({
+  const settingsQuery = useQuery({
     queryKey: ["settings"],
     queryFn: api.getSettings,
   });
 
-  const { data: hardware } = useQuery({
+  const hardwareQuery = useQuery({
     queryKey: ["hardware"],
     queryFn: api.getHardwareInfo,
   });
 
-  const { data: modelStatus } = useQuery({
+  const modelStatusQuery = useQuery({
     queryKey: ["modelStatus"],
     queryFn: api.getModelStatus,
     refetchInterval: 2000,
   });
 
-  const { data: processingJobs } = useQuery({
+  const processingJobsQuery = useQuery({
     queryKey: ["jobs", "processing"],
     queryFn: () => api.getJobs({ status: "processing", pageSize: 50 }),
     refetchInterval: 2000,
   });
 
-  const { data: queuedJobs } = useQuery({
+  const queuedJobsQuery = useQuery({
     queryKey: ["jobs", "queued"],
     queryFn: () => api.getJobs({ status: "queued", pageSize: 50 }),
     refetchInterval: 2000,
@@ -154,8 +141,7 @@ export default function Dashboard() {
   const cancelOrphanedMutation = useMutation({
     mutationFn: api.cancelOrphanedJobs,
     onSuccess: async (data) => {
-      await queryClient.invalidateQueries({ queryKey: ["jobs", "processing"] });
-      await queryClient.invalidateQueries({ queryKey: ["jobs", "queued"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
       const count = data?.cancelled ?? 0;
       toast({
         title: count > 0 ? "Orphaned jobs cancelled" : "No orphaned jobs found",
@@ -164,33 +150,22 @@ export default function Dashboard() {
       });
     },
     onError: (error) => {
-      const message = error instanceof Error ? error.message : "Failed to cancel orphaned jobs";
       toast({
         title: "Cleanup failed",
-        description: message,
+        description: getErrorMessage(error, "Failed to cancel orphaned jobs"),
         variant: "error",
       });
     },
   });
 
-  const downloadCount = modelStatus?.active_downloads?.length ?? 0;
-  const modelEntries = modelOrder
-    .map((key) => ({ key, data: modelStatus?.models?.[key] }))
-    .filter((entry) => entry.data);
-
   const workloadJobs = useMemo(() => {
-    const processing = processingJobs?.jobs ?? [];
-    const queued = queuedJobs?.jobs ?? [];
-    return [...processing, ...queued];
-  }, [processingJobs, queuedJobs]);
+    return [...(processingJobsQuery.data?.jobs ?? []), ...(queuedJobsQuery.data?.jobs ?? [])];
+  }, [processingJobsQuery.data?.jobs, queuedJobsQuery.data?.jobs]);
 
   const jobByVideoId = useMemo(() => {
-    type ProcessingJob = NonNullable<typeof processingJobs>["jobs"][number];
-    const map: Record<string, ProcessingJob> = {};
-    if (workloadJobs.length > 0) {
-      for (const job of workloadJobs) {
-        map[job.video_id] = job;
-      }
+    const map: Record<string, Job> = {};
+    for (const job of workloadJobs) {
+      map[job.video_id] = job;
     }
     return map;
   }, [workloadJobs]);
@@ -198,59 +173,45 @@ export default function Dashboard() {
   const stats = [
     {
       label: "Completed",
-      value: videoStats?.completed ?? 0,
+      value: videoStatsQuery.data?.completed ?? 0,
       icon: Video,
-      accent: "text-blue-600 dark:text-blue-300",
-      bg: "bg-blue-50 dark:bg-blue-500/10",
+      loading: videoStatsQuery.isLoading,
     },
     {
       label: "Workload",
-      value: videoStats?.workload ?? 0,
+      value: videoStatsQuery.data?.workload ?? 0,
       icon: Clock,
-      accent: "text-amber-600 dark:text-amber-300",
-      bg: "bg-amber-50 dark:bg-amber-500/10",
+      loading: videoStatsQuery.isLoading,
     },
   ];
 
   return (
     <div className="space-y-8">
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-4">
-        {stats.map((stat, idx) => {
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        {stats.map((stat) => {
           const isWorkload = stat.label === "Workload";
           return (
-          <div
-            key={stat.label}
-            className={`rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up dark:border-slate-700/60 dark:bg-slate-900/70 ${
-              isWorkload
-                ? "group relative after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-['']"
-                : ""
-            }`}
-            style={{ animationDelay: `${idx * 80}ms` }}
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-                  {stat.label}
-                </p>
-                <p className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
-                  {stat.value}
-                </p>
+            <Card key={stat.label} className="p-5">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{stat.label}</p>
+                  {stat.loading ? <Skeleton className="mt-3 h-8 w-16" /> : <p className="mt-2 text-2xl font-semibold">{stat.value}</p>}
+                  {videoStatsQuery.isError ? (
+                    <p className="mt-2 text-xs text-destructive">
+                      {getErrorMessage(videoStatsQuery.error, "Stats failed to load.")}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <stat.icon className="h-5 w-5" aria-hidden="true" />
+                </div>
               </div>
-              <div className={`rounded-full p-3 ${stat.bg} dark:bg-slate-800`}>
-                <stat.icon className={`h-6 w-6 ${stat.accent}`} />
-              </div>
-            </div>
-            {isWorkload ? (
-              <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Workload cleanup</p>
-                <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-                  Cancels queued/processing jobs that no longer have a matching video.
-                </p>
-                <button
-                  type="button"
+              {isWorkload ? (
+                <Button
+                  className="mt-4"
+                  disabled={cancelOrphanedMutation.isPending}
+                  loading={cancelOrphanedMutation.isPending}
                   onClick={async () => {
-                    if (cancelOrphanedMutation.isPending) return;
                     const confirmed = await confirm({
                       title: "Cancel orphaned jobs?",
                       description: "Cancel queued or processing jobs that no longer have a matching video.",
@@ -261,178 +222,230 @@ export default function Dashboard() {
                       cancelOrphanedMutation.mutate();
                     }
                   }}
-                  className="mt-3 inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-600 transition hover:border-slate-300 hover:text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-slate-100"
-                  disabled={cancelOrphanedMutation.isPending}
+                  size="sm"
+                  variant="outline"
                 >
-                  {cancelOrphanedMutation.isPending ? "Clearing..." : "Clear orphaned"}
-                </button>
-              </div>
-            ) : null}
-          </div>
-        );
+                  Clear orphaned
+                </Button>
+              ) : null}
+            </Card>
+          );
         })}
 
-        {/* Model Status (compact) */}
-        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-[''] dark:border-slate-700/60 dark:bg-slate-900/70">
-          <div className="flex items-center justify-between">
+        <Card className="p-5 lg:col-span-2">
+          <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-                Model status
-              </p>
-              {downloadCount > 0 ? (
-                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  {`${downloadCount} downloading`}
-                </p>
-              ) : null}
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Models</p>
+              <h2 className="mt-1 text-lg font-semibold">Runtime model status</h2>
             </div>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {modelEntries.map(({ key, data }) => {
-              if (!data) return null;
-              const style = statusStyles[data.status] || statusStyles.uncached;
-              const shortLabel = modelShortLabels[key] || key.slice(0, 1).toUpperCase();
-              const BadgeIcon = statusIcon(data.status);
-              return (
-                <div
-                  key={key}
-                  className={`inline-flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-[10px] font-semibold ${style.className}`}
-                >
-                  <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-100">
-                    {shortLabel}
-                  </span>
-                  <BadgeIcon className={`h-3.5 w-3.5 ${data.status === "downloading" ? "animate-spin" : ""}`} />
-                </div>
-              );
-            })}
+            {(modelStatusQuery.data?.active_downloads?.length ?? 0) > 0 ? (
+              <Badge variant="info">{modelStatusQuery.data?.active_downloads.length} downloading</Badge>
+            ) : null}
           </div>
 
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-600 opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Model status</p>
-            <div className="mt-3 space-y-2">
-              {modelEntries.map(({ key, data }) => {
-                if (!data) return null;
-                const style = statusStyles[data.status] || statusStyles.uncached;
-                const Icon = statusIcon(data.status);
+          {modelStatusQuery.isLoading || settingsQuery.isLoading ? (
+            <div className="mt-4 space-y-3">
+              {modelStages.map((stage) => (
+                <div key={stage.key} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-3 w-48" />
+                    </div>
+                    <Skeleton className="h-6 w-24 rounded-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : modelStatusQuery.isError || settingsQuery.isError ? (
+            <ErrorState
+              className="mt-4"
+              title="Model status failed to load"
+              message={getErrorMessage(modelStatusQuery.error ?? settingsQuery.error, "Refresh to try loading model status again.")}
+              onRetry={() => {
+                modelStatusQuery.refetch();
+                settingsQuery.refetch();
+              }}
+            />
+          ) : (
+            <div className="mt-4 space-y-3">
+              {modelStages.map((stage) => {
+                const model = modelStatusQuery.data?.models?.[stage.key];
+                const configuredModel = stage.getConfiguredModel(settingsQuery.data) ?? model?.model_name ?? "Not configured";
+                const progress = modelProgress(model, modelStatusQuery.data);
                 return (
-                  <div key={key} className="flex items-center justify-between">
-                    <span className={`inline-flex items-center gap-2 rounded-full border px-2 py-1 text-[10px] font-semibold ${style.className}`}>
-                      <Icon className={`h-3 w-3 ${data.status === "downloading" ? "animate-spin" : ""}`} />
-                      {modelLabels[key] || key}
-                    </span>
-                    <span className="text-[10px] uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">
-                      {data.status}
-                    </span>
+                  <div key={stage.key} className="rounded-lg border border-border p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-sm font-semibold">{stage.label}</h3>
+                          <Tooltip content={model?.error ? `Error: ${model.error}` : `Configured model: ${configuredModel}`}>
+                            <span tabIndex={0} className="inline-flex rounded-full text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                              <Info className="h-3.5 w-3.5" aria-hidden="true" />
+                            </span>
+                          </Tooltip>
+                        </div>
+                        <p className="mt-1 truncate text-sm text-muted-foreground">{configuredModel}</p>
+                      </div>
+                      <Tooltip content={model?.error || `${stage.label} is ${model?.status ?? "unknown"}.`}>
+                        <StatusBadge status={model?.status ?? "offline"} tabIndex={0} />
+                      </Tooltip>
+                    </div>
+                    {model?.status === "downloading" && progress !== null ? (
+                      <div className="mt-3 space-y-1">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>Download progress</span>
+                          <span>{progress.toFixed(0)}%</span>
+                        </div>
+                        <Progress value={progress} />
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
+          )}
+        </Card>
+      </div>
+
+      <Card className="p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Hardware</p>
+            <h2 className="mt-1 text-lg font-semibold">{hardwareQuery.data?.active_profile ?? settingsQuery.data?.hardware_profile ?? "Detecting profile"}</h2>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3 lg:w-2/3">
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">GPU backend</p>
+              <p className="mt-1 truncate text-sm font-semibold">{hardwareQuery.data?.active_backend ?? settingsQuery.data?.gpu_backend ?? "Detecting"}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">Loading strategy</p>
+              <p className="mt-1 truncate text-sm font-semibold">{hardwareQuery.data?.model_loading_strategy ?? settingsQuery.data?.model_loading ?? "Detecting"}</p>
+            </div>
+            <div className="rounded-lg border border-border p-3">
+              <p className="text-xs text-muted-foreground">Memory</p>
+              <p className="mt-1 truncate text-sm font-semibold">
+                {hardwareQuery.data?.unified_memory_gb
+                  ? `${formatMemory(hardwareQuery.data.unified_memory_gb, 0)} unified`
+                  : `${formatMemory(hardwareQuery.data?.total_vram_gb)} VRAM`}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="group relative rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm animate-fade-up after:absolute after:left-0 after:top-full after:h-3 after:w-full after:content-[''] dark:border-slate-700/60 dark:bg-slate-900/70">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-                Hardware
-              </p>
-              <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-slate-100">
-                {settings?.hardware_profile ?? "detecting..."}
-              </p>
-            </div>
-            <div className="rounded-full bg-slate-100 p-3 dark:bg-slate-800">
-              <Cpu className="h-6 w-6 text-slate-600 dark:text-slate-300" />
-            </div>
+        {hardwareQuery.isLoading || settingsQuery.isLoading ? (
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
           </div>
-          <div className="pointer-events-none absolute left-0 top-full z-20 mt-3 w-full -translate-y-1 rounded-xl border border-slate-200 bg-white p-4 text-sm opacity-0 shadow-xl transition duration-200 delay-500 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-hover:delay-0 dark:border-slate-700 dark:bg-slate-900">
-            <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 dark:text-slate-500">Profile</span>
-                <span>{hardware?.active_profile ?? "detecting"}</span>
+        ) : hardwareQuery.isError || settingsQuery.isError ? (
+          <ErrorState
+            className="mt-4"
+            title="Hardware details failed to load"
+            message={getErrorMessage(hardwareQuery.error ?? settingsQuery.error, "Refresh to try loading hardware details again.")}
+            onRetry={() => {
+              hardwareQuery.refetch();
+              settingsQuery.refetch();
+            }}
+          />
+        ) : (
+          <details
+            className="mt-4 rounded-lg border border-border bg-muted/30"
+            open={hardwareDetailsOpen}
+            onToggle={(event) => setHardwareDetailsOpen(event.currentTarget.open)}
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              Runtime details
+              <ChevronDown className={cn("h-4 w-4 transition", hardwareDetailsOpen && "rotate-180")} aria-hidden="true" />
+            </summary>
+            <div className="grid gap-3 border-t border-border p-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Whisper backend</p>
+                <p className="mt-1 font-medium">{hardwareQuery.data?.whisper_backend ?? "Unknown"}</p>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 dark:text-slate-500">GPU backend</span>
-                <span>{hardware?.active_backend ?? "detecting"}</span>
+              <div>
+                <p className="text-xs text-muted-foreground">Available VRAM</p>
+                <p className="mt-1 font-medium">{formatMemory(hardwareQuery.data?.available_vram_gb)}</p>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 dark:text-slate-500">Whisper backend</span>
-                <span>{hardware?.whisper_backend ?? "detecting"}</span>
+              <div>
+                <p className="text-xs text-muted-foreground">Runtime planner</p>
+                <p className="mt-1 font-medium">{hardwareQuery.data?.runtime_planner_enabled ? "Enabled" : "Disabled"}</p>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 dark:text-slate-500">Loading strategy</span>
-                <span>{hardware?.model_loading_strategy ?? "detecting"}</span>
+              <div>
+                <p className="text-xs text-muted-foreground">ROCm runtime</p>
+                <p className="mt-1 font-medium">{hardwareQuery.data?.rocm_llm_runtime ?? "Unknown"}</p>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 dark:text-slate-500">Total VRAM</span>
-                <span>{hardware?.total_vram_gb?.toFixed(1) ?? 0} GB</span>
+              <div>
+                <p className="text-xs text-muted-foreground">Memory ceiling</p>
+                <p className="mt-1 font-medium">{formatMemory(hardwareQuery.data?.runtime_memory_ceiling_gb)}</p>
               </div>
-              {hardware?.unified_memory_gb && (
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400 dark:text-slate-500">Unified memory</span>
-                  <span>{hardware.unified_memory_gb.toFixed(0)} GB</span>
-                </div>
-              )}
-              {hardware?.nvidia_gpus?.length ? (
-                <div className="mt-2">
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">
-                    GPUs
-                  </p>
-                  <ul className="mt-2 space-y-1">
-                    {hardware.nvidia_gpus.map((gpu, idx) => (
-                      <li key={`nvidia-${idx}`} className="flex justify-between">
-                        <span>{gpu.name}</span>
-                        <span>{gpu.vram_gb.toFixed(1)} GB</span>
-                      </li>
-                    ))}
-                    {hardware.amd_gpus?.map((gpu, idx) => (
-                      <li key={`amd-${idx}`} className="flex justify-between">
-                        <span>{gpu.name}</span>
-                        <span>{gpu.vram_gb.toFixed(1)} GB</span>
+              <div>
+                <p className="text-xs text-muted-foreground">GPU memory fraction</p>
+                <p className="mt-1 font-medium">{hardwareQuery.data?.gpu_memory_fraction ? `${Math.round(hardwareQuery.data.gpu_memory_fraction * 100)}%` : "Unknown"}</p>
+              </div>
+              {[...(hardwareQuery.data?.nvidia_gpus ?? []), ...(hardwareQuery.data?.amd_gpus ?? [])].length > 0 ? (
+                <div className="sm:col-span-2 lg:col-span-3">
+                  <p className="text-xs text-muted-foreground">Detected GPUs</p>
+                  <ul className="mt-2 grid gap-2">
+                    {[...(hardwareQuery.data?.nvidia_gpus ?? []), ...(hardwareQuery.data?.amd_gpus ?? [])].map((gpu, index) => (
+                      <li key={`${gpu.name}-${index}`} className="flex items-center justify-between rounded-md bg-card px-3 py-2">
+                        <span className="min-w-0 truncate">{gpu.name}</span>
+                        <span className="shrink-0 text-muted-foreground">{formatMemory(gpu.vram_gb)}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
               ) : null}
             </div>
-          </div>
-        </div>
-      </div>
+          </details>
+        )}
+      </Card>
 
-      {/* Recent Videos */}
-      <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-            Recent videos
-          </h2>
-          <Link
-            href="/videos"
-            className="text-sm font-medium text-blue-600 hover:text-blue-700"
-          >
+      <Card className="p-6">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">Recent videos</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Latest uploads and processing activity.</p>
+          </div>
+          <Link href="/videos" className="text-sm font-medium text-primary hover:underline">
             View all
           </Link>
         </div>
 
-        {isLoading ? (
-          <div className="py-8 text-center text-slate-500 dark:text-slate-400">Loading...</div>
-        ) : videos?.videos?.length === 0 ? (
-          <div className="py-8 text-center">
-            <Video className="mx-auto h-12 w-12 text-slate-400 dark:text-slate-500" />
-            <p className="mt-2 text-slate-500 dark:text-slate-400">No videos yet</p>
-            <button
-              onClick={openModal}
-              className="mt-4 inline-flex items-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900"
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Upload your first video
-            </button>
+        {videosQuery.isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <RecentVideoSkeleton key={index} />
+            ))}
           </div>
+        ) : videosQuery.isError ? (
+          <ErrorState
+            title="Videos failed to load"
+            message={getErrorMessage(videosQuery.error, "Refresh to try loading recent videos again.")}
+            onRetry={() => videosQuery.refetch()}
+          />
+        ) : videosQuery.data?.videos?.length === 0 ? (
+          <EmptyState
+            icon={<Upload className="h-6 w-6" aria-hidden="true" />}
+            headline="No videos yet"
+            hint="Upload a video to start transcription, summaries, search, and action extraction."
+            action={
+              <Button onClick={openModal}>
+                <Upload className="h-4 w-4" aria-hidden="true" />
+                Upload
+              </Button>
+            }
+          />
         ) : (
           <div className="space-y-3">
-            {videos?.videos?.map((video) => (
+            {videosQuery.data?.videos?.map((video) => (
               <VideoCard key={video.id} video={video} job={jobByVideoId[video.id]} />
             ))}
           </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
