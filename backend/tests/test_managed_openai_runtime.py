@@ -129,6 +129,21 @@ def test_build_runtime_command_normalizes_vllm_mm_limits():
     assert command[-2:] == ["--max-num-seqs", "1"]
 
 
+def test_build_runtime_command_translates_llama_tensor_split_from_host_slots(monkeypatch):
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._discover_llama_server_bin",
+        lambda: "/opt/amd-llama/bin/llama-server",
+    )
+    config = _runtime_config(
+        llama_extra_args=["--tensor-split", "0,0.25,0,0,0.75"],
+    )
+
+    command = build_runtime_command(config, cuda_visible_devices="1,4")
+
+    tensor_split_index = command.index("--tensor-split")
+    assert command[tensor_split_index + 1] == "0.25,0.75"
+
+
 def test_runtime_config_accepts_vllm_model_id_without_model_path(monkeypatch):
     monkeypatch.setenv("MODEL_RUNTIME", "vllm")
     monkeypatch.delenv("MODEL_PATH", raising=False)
@@ -245,6 +260,72 @@ def test_managed_runtime_uses_role_specific_explicit_gpu_pin(monkeypatch):
     runtime.ensure_started()
 
     assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+def test_managed_runtime_translates_llama_main_gpu_for_single_host_pin(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["command"] = command
+        captured["env"] = env
+        return process
+
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._discover_llama_server_bin",
+        lambda: "/opt/amd-llama/bin/llama-server",
+    )
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="llama_server",
+            service_role="summarization",
+            llama_extra_args=["--main-gpu", "4"],
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "4"
+    main_gpu_index = captured["command"].index("--main-gpu")
+    assert captured["command"][main_gpu_index + 1] == "0"
+
+
+def test_managed_runtime_translates_vllm_device_for_second_visible_gpu(monkeypatch):
+    process = FakeProcess()
+    captured = {}
+
+    def fake_popen(command, env, start_new_session):
+        captured["command"] = command
+        captured["env"] = env
+        return process
+
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "1,4")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="vllm",
+            service_role="vision",
+            model_path="/models/unused.gguf",
+            vllm_model_id="Qwen/Qwen3-VL-30B-A3B-Instruct-FP8",
+            vllm_extra_args=["--device", "cuda:4"],
+        ),
+        popen_factory=fake_popen,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "1,4"
+    device_index = captured["command"].index("--device")
+    assert captured["command"][device_index + 1] == "cuda:1"
 
 
 def test_managed_runtime_command_child_uses_upstream_port(monkeypatch):

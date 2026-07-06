@@ -99,15 +99,29 @@ def _parse_device_indices(value: str) -> tuple[int, ...]:
         return ()
 
 
+def _apply_explicit_cuda_visibility(env: dict[str, str]) -> None:
+    if env.get("CUDA_VISIBLE_DEVICES", "").strip():
+        return
+    for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
+        value = env.get(key, "").strip()
+        if value:
+            env["CUDA_VISIBLE_DEVICES"] = value
+            return
+
+
+def _translate_visible_main_gpu(main_gpu: int, env: dict[str, str]) -> int:
+    visible_devices = _parse_device_indices(env.get("CUDA_VISIBLE_DEVICES", ""))
+    if not visible_devices:
+        return main_gpu
+    if main_gpu in visible_devices:
+        return visible_devices.index(main_gpu)
+    return main_gpu
+
+
 def _infer_single_gpu_target(env: dict[str, str]) -> tuple[int | None, int | None]:
     cuda_visible = _split_device_tokens(env.get("CUDA_VISIBLE_DEVICES", ""))
     if len(cuda_visible) == 1:
         return 0, 0
-
-    for key in ("MODEL_VISIBLE_DEVICES", "NVIDIA_VISION_VISIBLE_DEVICES", "NVIDIA_SUMMARIZATION_VISIBLE_DEVICES"):
-        device_indices = _parse_device_indices(env.get(key, ""))
-        if len(device_indices) == 1:
-            return device_indices[0], 0
 
     return None, None
 
@@ -121,8 +135,13 @@ def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
     env["N_CTX"] = str(config.context_size)
     env["N_GPU_LAYERS"] = str(config.gpu_layers)
 
+    _apply_explicit_cuda_visibility(env)
     inferred_main_gpu, inferred_split_mode = _infer_single_gpu_target(env)
-    main_gpu = config.main_gpu if config.main_gpu is not None else inferred_main_gpu
+    main_gpu = (
+        _translate_visible_main_gpu(config.main_gpu, env)
+        if config.main_gpu is not None
+        else inferred_main_gpu
+    )
     split_mode = config.split_mode
     if split_mode is None and main_gpu is not None:
         split_mode = 0

@@ -190,7 +190,61 @@ def test_build_server_env_infers_single_nvidia_pin_when_all_gpus_visible(monkeyp
 
     env = llama_cpp_server.build_server_env(config)
 
-    assert env["MAIN_GPU"] == "5"
+    assert env["CUDA_VISIBLE_DEVICES"] == "5"
+    assert env["MAIN_GPU"] == "0"
+    assert env["SPLIT_MODE"] == "0"
+
+
+def test_build_server_env_translates_single_host_pin_to_local_main_gpu(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("stub")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["CUDA_VISIBLE_DEVICES"] == "4"
+    assert env["MAIN_GPU"] == "0"
+    assert env["SPLIT_MODE"] == "0"
+
+
+def test_build_server_env_translates_selected_host_gpu_to_visible_local_ordinal(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("stub")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,4")
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=4,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=(),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+
+    assert env["CUDA_VISIBLE_DEVICES"] == "1,4"
+    assert env["MAIN_GPU"] == "1"
     assert env["SPLIT_MODE"] == "0"
 
 

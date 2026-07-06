@@ -42,6 +42,7 @@ git clone <repository-url>
 cd EchOnyx
 cp .env.example .env
 docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
+./scripts/bootstrap-admin.sh --compose
 ```
 
 The AMD override targets ROCm 7.2, sets `HARDWARE_PROFILE=strix_halo`, uses `GPU_BACKEND=rocm`, and runs managed OpenAI-compatible vision and summarization endpoints inside the Compose network. Strix Halo is treated as a ROCm-only profile; CPU and Vulkan fallbacks are rejected for that profile.
@@ -55,6 +56,7 @@ git clone <repository-url>
 cd EchOnyx
 cp .env.example .env
 docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+./scripts/bootstrap-admin.sh --compose
 ```
 
 The NVIDIA override exposes all visible NVIDIA GPUs to the backend and worker, runs the worker with Celery `--pool=solo`, and uses managed endpoint services for vision and summarization. If you build on a host without a visible GPU during `docker build`, set `CUDA_ARCHITECTURES` for the target cards. The validation host used `86;120` for an `RTX 3090 + RTX PRO 6000 Blackwell` split.
@@ -91,6 +93,7 @@ git clone <repository-url>
 cd EchOnyx
 cp .env.example .env
 HARDWARE_PROFILE=cpu_only GPU_BACKEND=cpu docker compose up -d
+./scripts/bootstrap-admin.sh --compose
 ```
 
 Before processing real media, open Settings -> Model Downloads and choose the small recommended set. Keep `MODEL_LOADING=sequential`. Expect long runtimes, especially for transcription, vision, and summarization.
@@ -136,6 +139,7 @@ cd EchOnyx
 cp .env.example .env
 # Edit .env for your hardware, auth, model, and token choices.
 docker compose -f docker-compose.yml -f docker-compose.amd.yml up -d
+./scripts/bootstrap-admin.sh --compose
 ```
 
 For NVIDIA, replace the AMD override with `docker-compose.nvidia.yml`. For CPU-only, use the base Compose file with `HARDWARE_PROFILE=cpu_only` and `GPU_BACKEND=cpu`.
@@ -156,6 +160,7 @@ EchOnyx uses a single-admin auth model for 1.0.
 
 - First local use creates the admin password through the sign-in gate or `POST /api/auth/setup`.
 - First-run password creation is localhost-only by default.
+- For Docker first-run setup, run `./scripts/bootstrap-admin.sh --compose` from the project root after the backend is up.
 - For remote first-run installs, preseed `AUTH_PASSWORD_HASH` or configure OIDC before opening the service remotely.
 - OIDC uses the same local session cookies after login. Set `OIDC_ENABLED=true` plus the issuer, client id, and client secret values.
 - Non-loopback HTTP auth is blocked by default. Use HTTPS for remote auth, or set `ALLOW_INSECURE_AUTH_HTTP=true` only for temporary development.
@@ -263,6 +268,7 @@ Set these in `.env`. Blank values generally mean "auto-detect" or "disabled" as 
 | `AUTH_SESSION_TTL_HOURS` | Local session lifetime. |
 | `TRUST_PROXY_HEADERS` | Trust `X-Forwarded-*` headers only behind a trusted reverse proxy. |
 | `TRUSTED_PROXY_CIDRS` | CIDRs allowed to provide trusted proxy headers. |
+| `AUTH_SETUP_ALLOWED_CIDRS` | CIDRs allowed to create the initial admin password. Keep loopback-only unless you intentionally permit a narrow Docker bridge or LAN bootstrap source. |
 | `ALLOW_INSECURE_AUTH_HTTP` | Dev/emergency override for non-loopback HTTP auth; leave false in real deployments. |
 | `OIDC_ENABLED` | Enables external OIDC login. |
 | `OIDC_PROVIDER_NAME` | Display name for the OIDC provider. |

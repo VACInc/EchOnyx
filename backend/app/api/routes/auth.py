@@ -21,6 +21,7 @@ from app.auth import (
     oidc_is_enabled,
     resolve_request_auth_state,
     revoke_session,
+    SETUP_SOURCE_FORBIDDEN_DETAIL,
     rotate_password,
     setup_request_is_allowed,
     verify_password,
@@ -90,7 +91,7 @@ async def setup_auth(payload: AuthPasswordPayload, request: Request):
     if not auth_origin_is_allowed(request):
         raise HTTPException(status_code=403, detail="Cross-origin setup is not allowed.")
     if not setup_request_is_allowed(request):
-        raise HTTPException(status_code=403, detail="Initial setup is only allowed from localhost.")
+        raise HTTPException(status_code=403, detail=SETUP_SOURCE_FORBIDDEN_DETAIL)
     if not auth_transport_is_secure(request):
         raise HTTPException(status_code=400, detail="HTTPS is required for remote authentication.")
 

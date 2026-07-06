@@ -205,7 +205,25 @@ async def test_remote_setup_rejected_even_with_forwarded_loopback(monkeypatch, t
         )
 
     assert response.status_code == 403
-    assert "localhost" in response.json()["detail"].lower()
+    detail = response.json()["detail"]
+    assert "scripts/bootstrap-admin.sh" in detail
+    assert "AUTH_PASSWORD_HASH" in detail
+    assert "OIDC" in detail
+
+
+@pytest.mark.asyncio
+async def test_setup_allows_explicit_cidr_override(monkeypatch, tmp_path):
+    stack = await _build_auth_stack(
+        monkeypatch,
+        tmp_path,
+        AUTH_SETUP_ALLOWED_CIDRS="127.0.0.1/32,::1/128,192.168.0.0/24",
+    )
+
+    async with _client(stack, client_host="192.168.0.10", base_url="https://192.168.0.20:8000") as client:
+        response = await client.post("/api/auth/setup", json={"password": "very-secure-password"})
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Application configuration with hardware detection."""
 
 import csv
+import ipaddress
 import os
 import platform
 import re
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
     auth_session_ttl_hours: int = 168
     trust_proxy_headers: bool = False
     trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    auth_setup_allowed_cidrs: str = "127.0.0.1/32,::1/128"
     allow_insecure_auth_http: bool = False
     oidc_enabled: bool = False
     oidc_provider_name: str = "Authentik"
@@ -182,6 +184,19 @@ class Settings(BaseSettings):
     def _blank_enum_env_to_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("auth_setup_allowed_cidrs")
+    @classmethod
+    def _validate_auth_setup_allowed_cidrs(cls, value: str) -> str:
+        networks = [part.strip() for part in value.split(",") if part.strip()]
+        if not networks:
+            raise ValueError("AUTH_SETUP_ALLOWED_CIDRS must include at least one CIDR.")
+        for network in networks:
+            try:
+                ipaddress.ip_network(network, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"AUTH_SETUP_ALLOWED_CIDRS contains invalid CIDR {network!r}.") from exc
         return value
 
 

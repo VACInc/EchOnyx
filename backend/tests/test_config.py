@@ -324,6 +324,14 @@ def test_settings_reads_model_auto_download_env(monkeypatch, tmp_path):
     assert settings.model_auto_download is False
 
 
+def test_settings_rejects_invalid_auth_setup_allowed_cidr(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTH_SETUP_ALLOWED_CIDRS", "127.0.0.1/32,not-a-cidr")
+
+    with pytest.raises(ValueError, match="AUTH_SETUP_ALLOWED_CIDRS contains invalid CIDR"):
+        Settings()
+
+
 def test_get_settings_attaches_qwen3vl_defaults(monkeypatch):
     get_settings.cache_clear()
 

@@ -30,7 +30,8 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 
 - The backend now expects a single local admin password.
 - First-use setup happens through `POST /api/auth/setup` or the frontend sign-in gate.
-- First-use setup is localhost-only by default. Remote bootstrap should use a preseeded `AUTH_PASSWORD_HASH` or OIDC config.
+- First-use setup is localhost-only by default. Docker deployments should run `scripts/bootstrap-admin.sh --compose` from the project root so setup is posted from inside the backend container.
+- Host-run installs can run `scripts/bootstrap-admin.sh --url http://127.0.0.1:8000`, preseed `AUTH_PASSWORD_HASH`, or configure OIDC before exposing the service remotely.
 - Later access uses `POST /api/auth/login`, `POST /api/auth/logout`, and `POST /api/auth/password`.
 - Session auth is cookie-based; mutating requests require the matching CSRF header.
 - Non-loopback HTTP auth is blocked by default. Use HTTPS, or set `ALLOW_INSECURE_AUTH_HTTP=true` only for temporary dev/test environments.
@@ -38,6 +39,7 @@ uv run celery -A app.workers.celery_app worker --loglevel=info
 - Set `OIDC_ENABLED=true` plus `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` to turn it on.
 - Optional `OIDC_ALLOWED_EMAILS` and `OIDC_ALLOWED_GROUPS` restrict which IdP users can create a local session.
 - The backend exposes `GET /api/auth/oidc/login` and `GET /api/auth/oidc/callback`; the frontend sign-in gate uses those automatically when OIDC is enabled.
+- `AUTH_SETUP_ALLOWED_CIDRS` can extend first-use setup beyond loopback for a narrow Docker bridge or LAN range, but it grants those clients the right to create the initial admin password. Leave it at the loopback default unless the bootstrap path is controlled.
 - Only enable `TRUST_PROXY_HEADERS=true` when the app is actually behind a trusted reverse proxy and `TRUSTED_PROXY_CIDRS` is set correctly.
 
 ## Apple Silicon / Metal Bring-Up
@@ -85,7 +87,7 @@ uv run celery -A app.workers.celery_app worker --pool=solo --concurrency=1 --log
 - The NVIDIA Compose override now uses `gpus: all` so backend and worker actually see every visible NVIDIA GPU under normal Docker Compose.
 - The NVIDIA worker currently uses Celery `--pool=solo`, and the NVIDIA Compose override now routes vision/summarization through managed endpoint runtimes instead of the in-process worker path.
 - Apple Silicon host runs currently need Celery `--pool=solo`; the default prefork worker path stalled during the first real Metal validation run.
-- On NVIDIA, leave `CUDA_VISIBLE_DEVICES` unset unless you intentionally want to hide GPUs from the planner; an empty string hides all CUDA devices. When it is unset, local `llama.cpp` loads now narrow visibility to the planner-selected GPUs before first import.
+- On NVIDIA, leave `CUDA_VISIBLE_DEVICES` unset unless you intentionally want to hide GPUs from the planner; an empty string hides all CUDA devices. Managed endpoints now export host GPU pins through `CUDA_VISIBLE_DEVICES` and pass local ordinals to llama.cpp and vLLM engine arguments.
 - On heterogeneous NVIDIA hosts, `NVIDIA_VISION_VISIBLE_DEVICES` and `NVIDIA_SUMMARIZATION_VISIBLE_DEVICES` are role-specific pins. A summary service now ignores the vision pin and vice versa. When they are unset, the managed NVIDIA endpoints auto-pick the emptiest GPU that can fit the requested model and fall back to stage-by-stage endpoint loading on single smaller GPUs.
 - The runtime planner reports installed accelerator memory separately from the current free-memory budget; the budget is intentionally based on currently free memory, not raw installed VRAM.
 - Vision and summarization endpoint warmup is now bounded; if an endpoint keeps returning `503 Loading model` for too long, the worker stops waiting and surfaces the failure instead of hanging for many minutes.

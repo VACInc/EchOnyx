@@ -49,6 +49,128 @@ def _parse_extra_args(value: str | None) -> list[str]:
     return shlex.split(value or "")
 
 
+def _split_device_tokens(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
+def _numeric_visible_devices(value: str | None) -> tuple[int, ...]:
+    tokens = _split_device_tokens(value or "")
+    if not tokens:
+        return ()
+    try:
+        return tuple(int(token) for token in tokens)
+    except ValueError:
+        return ()
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _translate_device_index_value(value: str, visible_devices: tuple[int, ...]) -> str:
+    if not visible_devices:
+        return value
+
+    prefix = ""
+    raw_index = value.strip()
+    lowered = raw_index.lower()
+    if lowered.startswith("cuda:"):
+        prefix = raw_index[: raw_index.index(":") + 1]
+        raw_index = raw_index[len(prefix):]
+
+    try:
+        host_index = int(raw_index)
+    except ValueError:
+        return value
+
+    if host_index in visible_devices:
+        return f"{prefix}{visible_devices.index(host_index)}"
+
+    # Already-local ordinals are left alone for operators who intentionally pass them.
+    if 0 <= host_index < len(visible_devices):
+        return value
+    return value
+
+
+def _translate_tensor_split_value(value: str, visible_devices: tuple[int, ...]) -> str:
+    if not visible_devices:
+        return value
+
+    tokens = _split_device_tokens(value)
+    if not tokens:
+        return value
+
+    keyed_values: dict[int, str] = {}
+    for token in tokens:
+        separator = ":" if ":" in token else "=" if "=" in token else ""
+        if not separator:
+            keyed_values = {}
+            break
+        key, ratio = token.split(separator, 1)
+        try:
+            keyed_values[int(key.strip())] = ratio.strip()
+        except ValueError:
+            return value
+    if keyed_values:
+        return ",".join(keyed_values.get(host_index, "0") for host_index in visible_devices)
+
+    if len(tokens) > max(visible_devices) and all(_is_number(token) for token in tokens):
+        return ",".join(tokens[host_index] for host_index in visible_devices)
+    return value
+
+
+def _translate_engine_device_args(args: list[str], cuda_visible_devices: str | None) -> list[str]:
+    visible_devices = _numeric_visible_devices(cuda_visible_devices)
+    if not visible_devices:
+        return list(args)
+
+    device_index_options = {
+        "--main-gpu",
+        "--main_gpu",
+        "-mg",
+        "--gpu",
+        "--gpu-id",
+        "--gpu_id",
+        "--device-id",
+        "--device_id",
+        "--cuda-device",
+        "--cuda_device",
+        "--device",
+    }
+    tensor_split_options = {"--tensor-split", "--tensor_split", "-ts"}
+    translated: list[str] = []
+    index = 0
+    while index < len(args):
+        current = args[index]
+        if "=" in current:
+            option, value = current.split("=", 1)
+            if option in device_index_options:
+                translated.append(f"{option}={_translate_device_index_value(value, visible_devices)}")
+                index += 1
+                continue
+            if option in tensor_split_options:
+                translated.append(f"{option}={_translate_tensor_split_value(value, visible_devices)}")
+                index += 1
+                continue
+
+        if current in device_index_options and index + 1 < len(args):
+            translated.extend([current, _translate_device_index_value(args[index + 1], visible_devices)])
+            index += 2
+            continue
+        if current in tensor_split_options and index + 1 < len(args):
+            translated.extend([current, _translate_tensor_split_value(args[index + 1], visible_devices)])
+            index += 2
+            continue
+
+        translated.append(current)
+        index += 1
+    return translated
+
+
 def _normalize_vllm_args(args: list[str]) -> list[str]:
     normalized: list[str] = []
     index = 0
@@ -226,7 +348,7 @@ class RuntimeConfig:
         )
 
 
-def build_runtime_command(config: RuntimeConfig) -> list[str]:
+def build_runtime_command(config: RuntimeConfig, *, cuda_visible_devices: str | None = None) -> list[str]:
     if config.runtime == "llama_server":
         command = [
             _discover_llama_server_bin(),
@@ -245,7 +367,7 @@ def build_runtime_command(config: RuntimeConfig) -> list[str]:
         ]
         if config.mmproj_path:
             command.extend(["--mmproj", config.mmproj_path])
-        command.extend(config.llama_extra_args)
+        command.extend(_translate_engine_device_args(config.llama_extra_args, cuda_visible_devices))
         return command
 
     if config.runtime == "vllm":
@@ -265,13 +387,13 @@ def build_runtime_command(config: RuntimeConfig) -> list[str]:
             "--tensor-parallel-size",
             "1",
         ]
-        command.extend(_normalize_vllm_args(config.vllm_extra_args))
+        command.extend(_translate_engine_device_args(_normalize_vllm_args(config.vllm_extra_args), cuda_visible_devices))
         return command
 
     if config.runtime == "command":
         if not config.model_command:
             raise RuntimeError("MODEL_COMMAND is required when MODEL_RUNTIME=command.")
-        return shlex.split(config.model_command)
+        return _translate_engine_device_args(shlex.split(config.model_command), cuda_visible_devices)
 
     raise RuntimeError(f"Unsupported MODEL_RUNTIME: {config.runtime}")
 
@@ -330,8 +452,8 @@ class ManagedRuntime:
             if self._child_running_locked():
                 return self._health_check(self.config)
 
-            command = build_runtime_command(self.config)
             env = self._build_child_env_locked()
+            command = build_runtime_command(self.config, cuda_visible_devices=env.get("CUDA_VISIBLE_DEVICES"))
             self._process = self._popen_factory(command, env=env, start_new_session=True)
             self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts

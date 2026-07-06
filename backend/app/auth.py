@@ -38,6 +38,11 @@ PUBLIC_PATHS = {
 }
 IN_MEMORY_RATE_LIMITS: dict[str, tuple[int, float]] = {}
 IN_MEMORY_RATE_LIMIT_LOCK = asyncio.Lock()
+SETUP_SOURCE_FORBIDDEN_DETAIL = (
+    "Initial setup is only allowed from an approved local source. "
+    "For Docker first-run setup, run scripts/bootstrap-admin.sh from the project root; "
+    "for managed deployments, preseed AUTH_PASSWORD_HASH or configure OIDC before exposing the service."
+)
 
 
 @dataclass(slots=True)
@@ -179,6 +184,16 @@ def _trusted_proxy_networks(settings: Settings) -> tuple[ipaddress._BaseNetwork,
     return tuple(networks)
 
 
+def _auth_setup_allowed_networks(settings: Settings) -> tuple[ipaddress._BaseNetwork, ...]:
+    networks: list[ipaddress._BaseNetwork] = []
+    for raw in settings.auth_setup_allowed_cidrs.split(","):
+        clean = raw.strip()
+        if not clean:
+            continue
+        networks.append(ipaddress.ip_network(clean, strict=False))
+    return tuple(networks)
+
+
 def _request_from_trusted_proxy(request: Request) -> bool:
     settings = get_settings()
     if not settings.trust_proxy_headers:
@@ -241,7 +256,11 @@ def _is_loopback_host(host: str) -> bool:
 
 
 def setup_request_is_allowed(request: Request) -> bool:
-    return _is_loopback_host(get_client_ip(request))
+    client_ip = get_client_ip(request)
+    parsed_ip = _parse_ip(client_ip)
+    if parsed_ip is None:
+        return _is_loopback_host(client_ip)
+    return any(parsed_ip in network for network in _auth_setup_allowed_networks(get_settings()))
 
 
 def auth_transport_is_secure(request: Request) -> bool:
