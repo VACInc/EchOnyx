@@ -1,10 +1,30 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { Search, MessageSquare, RotateCcw, Video } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  MessageSquare,
+  MessageSquareText,
+  RotateCcw,
+  Search,
+  SearchX,
+  Tags,
+  Video,
+} from "lucide-react";
+
+import { api } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { TagInput } from "@/components/ui/tag-input";
+
+type AskResponse = Awaited<ReturnType<typeof api.askQuestion>>;
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -16,13 +36,46 @@ type ChatMessage = {
   }>;
 };
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function SearchResultSkeleton() {
+  return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Skeleton className="h-4 w-4 shrink-0 rounded-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+        <Skeleton className="h-6 w-16 rounded-full" />
+      </div>
+      <Skeleton className="mt-3 h-4 w-24" />
+      <div className="mt-3 space-y-2">
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-3/4" />
+      </div>
+    </Card>
+  );
+}
+
 export default function SearchPage() {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"search" | "ask">("search");
-  const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const warmedRef = useRef({ search: false, ask: false });
+
+  const labelsQuery = useQuery({
+    queryKey: ["video-labels"],
+    queryFn: api.getVideoLabels,
+  });
+
+  const labelSuggestions = useMemo(
+    () => labelsQuery.data?.labels.map((label) => label.name) ?? [],
+    [labelsQuery.data],
+  );
 
   const searchMutation = useMutation({
     mutationFn: ({ q, filterTags }: { q: string; filterTags: string[] }) =>
@@ -39,6 +92,22 @@ export default function SearchPage() {
       filterTags: string[];
       history: Array<{ role: "user" | "assistant"; content: string }>;
     }) => api.askQuestion(q, undefined, filterTags, history),
+    onSuccess: (data: AskResponse, variables) => {
+      setChatMessages((current) => [
+        ...current,
+        { role: "user", content: variables.q },
+        {
+          role: "assistant",
+          content: data.answer,
+          sources: data.sources.map((source) => ({
+            video_id: source.video_id,
+            video_title: source.video_title,
+            timestamp_formatted: source.timestamp_formatted,
+          })),
+        },
+      ]);
+      setQuery("");
+    },
   });
 
   useEffect(() => {
@@ -91,114 +160,89 @@ export default function SearchPage() {
     if (nextMode === "ask" && warmedRef.current.ask) {
       return;
     }
-    void api.warmSearchRuntime(nextMode).then(() => {
-      warmedRef.current[nextMode] = true;
-    }).catch(() => {
-      warmedRef.current[nextMode] = false;
-    });
+    void api
+      .warmSearchRuntime(nextMode)
+      .then(() => {
+        warmedRef.current[nextMode] = true;
+      })
+      .catch(() => {
+        warmedRef.current[nextMode] = false;
+      });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitAsk = (q: string, filterTags: string[]) => {
+    const trimmed = q.trim();
+    const history = chatMessages.map(({ role, content }) => ({ role, content }));
+    askMutation.mutate({ q: trimmed, filterTags, history });
+  };
+
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
     if (!query.trim()) return;
 
     if (mode === "search") {
       searchMutation.mutate({ q: query, filterTags: tags });
-    } else {
-      const trimmed = query.trim();
-      const history = chatMessages.map(({ role, content }) => ({ role, content }));
-      askMutation.mutate(
-        { q: trimmed, filterTags: tags, history },
-        {
-          onSuccess: (data) => {
-            setChatMessages((current) => [
-              ...current,
-              { role: "user", content: trimmed },
-              {
-                role: "assistant",
-                content: data.answer,
-                sources: data.sources.map((source) => ({
-                  video_id: source.video_id,
-                  video_title: source.video_title,
-                  timestamp_formatted: source.timestamp_formatted,
-                })),
-              },
-            ]);
-            setQuery("");
-          },
-        },
-      );
-    }
-  };
-
-  const addTagsFromInput = () => {
-    const candidates = tagInput
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0);
-    if (candidates.length === 0) {
       return;
     }
-    const existingLower = new Set(tags.map((tag) => tag.toLowerCase()));
-    const merged = [...tags];
-    for (const tag of candidates) {
-      if (!existingLower.has(tag.toLowerCase())) {
-        merged.push(tag);
-        existingLower.add(tag.toLowerCase());
-      }
-    }
-    setTags(merged);
-    setTagInput("");
+
+    submitAsk(query, tags);
   };
 
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter((tag) => tag !== tagToRemove));
+  const retrySearch = () => {
+    const variables = searchMutation.variables;
+    if (variables) {
+      searchMutation.mutate(variables);
+    }
   };
+
+  const retryAsk = () => {
+    const variables = askMutation.variables;
+    if (variables) {
+      askMutation.mutate(variables);
+    }
+  };
+
+  const searchData = searchMutation.data;
+  const hasCompletedEmptySearch =
+    mode === "search" &&
+    searchMutation.isSuccess &&
+    searchData !== undefined &&
+    searchData.results.length === 0;
 
   return (
     <div className="space-y-6">
-      {/* Mode Toggle */}
-      <div className="flex space-x-2">
-        <button
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant={mode === "search" ? "primary" : "secondary"}
           onClick={() => handleModeChange("search")}
-          className={`flex items-center rounded-lg px-4 py-2 ${
-            mode === "search"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
-          }`}
+          aria-pressed={mode === "search"}
         >
-          <Search className="mr-2 h-4 w-4" />
+          <Search className="h-4 w-4" aria-hidden="true" />
           Search
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
+          variant={mode === "ask" ? "primary" : "secondary"}
           onClick={() => handleModeChange("ask")}
-          className={`flex items-center rounded-lg px-4 py-2 ${
-            mode === "ask"
-              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-              : "bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
-          }`}
+          aria-pressed={mode === "ask"}
         >
-          <MessageSquare className="mr-2 h-4 w-4" />
+          <MessageSquare className="h-4 w-4" aria-hidden="true" />
           Ask
-        </button>
-        {mode === "ask" && chatMessages.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setChatMessages([])}
-            className="flex items-center rounded-lg bg-slate-100 px-4 py-2 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200"
-          >
-            <RotateCcw className="mr-2 h-4 w-4" />
+        </Button>
+        {mode === "ask" && chatMessages.length > 0 ? (
+          <Button type="button" variant="outline" onClick={() => setChatMessages([])}>
+            <RotateCcw className="h-4 w-4" aria-hidden="true" />
             New chat
-          </button>
-        )}
+          </Button>
+        ) : null}
       </div>
 
-      {/* Search Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex flex-col gap-4 lg:flex-row">
+        <div className="flex flex-col gap-3 lg:flex-row">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
-            <input
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
               type="text"
               placeholder={
                 mode === "search"
@@ -208,163 +252,177 @@ export default function SearchPage() {
                     : "Ask a question about your videos..."
               }
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-white/80 py-3 pl-10 pr-4 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
+              onChange={(event) => setQuery(event.target.value)}
+              className="pl-9"
             />
           </div>
-          <button
+          <Button
             type="submit"
             disabled={!query.trim() || searchMutation.isPending || askMutation.isPending}
-            className="rounded-full bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-900"
+            loading={mode === "search" ? searchMutation.isPending : askMutation.isPending}
+            className="lg:min-w-28"
           >
             {mode === "search" ? "Search" : "Ask"}
-          </button>
+          </Button>
         </div>
-        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70">
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Filter by labels</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {tags.length === 0 && (
-              <span className="text-sm text-slate-400 dark:text-slate-500">No label filters applied.</span>
-            )}
-            {tags.map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-              >
-                {tag}
-                <button
-                  type="button"
-                  onClick={() => removeTag(tag)}
-                  className="ml-2 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200"
-                  aria-label={`Remove ${tag}`}
-                >
-                  ×
-                </button>
-              </span>
-            ))}
+
+        <Card className="p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+            <div className="lg:w-56">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <Tags className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                Filter by labels
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Suggestions come from labels already attached to videos.
+              </p>
+            </div>
+            <div className="min-w-0 flex-1">
+              <TagInput
+                value={tags}
+                onChange={setTags}
+                suggestions={labelSuggestions}
+                placeholder={labelsQuery.isLoading ? "Loading labels..." : "Add label filters"}
+              />
+            </div>
           </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <input
-              type="text"
-              value={tagInput}
-              onChange={(e) => setTagInput(e.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  addTagsFromInput();
-                }
-              }}
-              placeholder="Add labels to filter (comma-separated)"
-              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900/70"
-            />
-            <button
-              type="button"
-              onClick={addTagsFromInput}
-              disabled={tagInput.trim().length === 0}
-              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200"
-            >
-              Add filter
-            </button>
-          </div>
-        </div>
+        </Card>
       </form>
 
-      {/* Results */}
-      {mode === "search" && searchMutation.data && (
+      {mode === "search" && searchMutation.isPending ? (
+        <div className="space-y-4" aria-busy="true" aria-label="Loading search results">
+          <SearchResultSkeleton />
+          <SearchResultSkeleton />
+          <SearchResultSkeleton />
+        </div>
+      ) : null}
+
+      {mode === "search" && searchMutation.isError ? (
+        <ErrorState
+          title="Search failed"
+          message={getErrorMessage(searchMutation.error, "Search could not be completed.")}
+          onRetry={searchMutation.variables ? retrySearch : undefined}
+          retryLabel="Retry search"
+        />
+      ) : null}
+
+      {hasCompletedEmptySearch ? (
+        <EmptyState
+          icon={<SearchX className="h-6 w-6" aria-hidden="true" />}
+          headline="No results found"
+          hint={
+            tags.length > 0
+              ? "The current label filters may be narrowing the search too much."
+              : "Try a different phrase or add more processed videos."
+          }
+        />
+      ) : null}
+
+      {mode === "search" && searchData && !searchMutation.isPending && searchData.results.length > 0 ? (
         <div className="space-y-4">
-          <p className="text-sm text-slate-500 dark:text-slate-400">
-            {searchMutation.data.total} results for &quot;{searchMutation.data.query}&quot;
-          </p>
-          {tags.length > 0 && (
-            <p className="text-xs text-slate-400 dark:text-slate-500">
-              Filtered by labels: {tags.join(", ")}
+          <div className="flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <p>
+              {searchData.total} results for &quot;{searchData.query}&quot;
             </p>
-          )}
-          {searchMutation.data.results.map((result, idx) => (
-            <div
-              key={idx}
-              className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 dark:border-slate-700/60 dark:bg-slate-900/70"
-            >
-              <div className="flex items-center justify-between">
+            {tags.length > 0 ? <p>Filtered by labels: {tags.join(", ")}</p> : null}
+          </div>
+          {searchData.results.map((result, index) => (
+            <Card key={`${result.video_id}-${result.timestamp ?? index}-${index}`} className="p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <Link
                   href={`/videos/${result.video_id}`}
-                  className="flex items-center text-blue-600 hover:underline"
+                  className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold text-primary hover:underline"
                 >
-                  <Video className="mr-2 h-4 w-4" />
-                  {result.video_title}
+                  <Video className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{result.video_title}</span>
                 </Link>
-                {result.timestamp_formatted && (
-                  <span className="text-sm text-slate-500 dark:text-slate-400">
+                {result.timestamp_formatted ? (
+                  <Badge variant="muted" className="w-fit shrink-0">
                     {result.timestamp_formatted}
-                  </span>
-                )}
+                  </Badge>
+                ) : null}
               </div>
-              {result.speaker && (
-                <p className="mt-1 text-sm font-medium text-slate-700 dark:text-slate-200">
-                  {result.speaker}
+              {result.speaker ? (
+                <p className="mt-3 text-sm font-medium text-foreground">{result.speaker}</p>
+              ) : null}
+              <p className="mt-2 text-sm leading-6 text-card-foreground">{result.text}</p>
+              {result.context ? (
+                <p className="mt-2 border-l-2 border-border pl-3 text-sm leading-6 text-muted-foreground">
+                  ...{result.context}...
                 </p>
-              )}
-              <p className="mt-2 text-slate-600 dark:text-slate-300">{result.text}</p>
-              {result.context && (
-                <p className="mt-1 text-sm text-slate-400 dark:text-slate-500">...{result.context}...</p>
-              )}
-            </div>
+              ) : null}
+            </Card>
           ))}
         </div>
-      )}
+      ) : null}
 
-      {mode === "ask" && (
-        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-6 shadow-sm dark:border-slate-700/60 dark:bg-slate-900/70">
+      {mode === "ask" ? (
+        <Card className="p-5" aria-live="polite">
           {chatMessages.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Ask a question, then keep going with follow-ups in the same chat.
-            </p>
+            <div className="flex items-start gap-3 text-sm text-muted-foreground">
+              <MessageSquareText className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              <p>Ask a question, then keep going with follow-ups in the same chat.</p>
+            </div>
           ) : (
             <div className="space-y-4">
-              {chatMessages.map((message, idx) => (
-                <div key={`${message.role}-${idx}`} className="space-y-2">
+              {chatMessages.map((message, index) => (
+                <div key={`${message.role}-${index}`} className="space-y-2">
                   <div className={message.role === "user" ? "text-right" : ""}>
                     <div
-                      className={`inline-block max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
+                      className={
                         message.role === "user"
-                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                      }`}
+                          ? "inline-block max-w-[85%] rounded-lg bg-primary px-4 py-3 text-sm text-primary-foreground"
+                          : "inline-block max-w-[85%] rounded-lg bg-secondary px-4 py-3 text-sm text-secondary-foreground"
+                      }
                     >
                       {message.content}
                     </div>
                   </div>
-                  {message.role === "assistant" && message.sources && message.sources.length > 0 && (
+                  {message.role === "assistant" && message.sources && message.sources.length > 0 ? (
                     <div className="space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                        Sources
-                      </p>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sources</p>
                       <ul className="space-y-2">
-                        {message.sources.map((source, sourceIdx) => (
+                        {message.sources.map((source, sourceIndex) => (
                           <li
-                            key={`${source.video_id}-${sourceIdx}`}
-                            className="rounded-xl bg-slate-50 p-2 text-sm dark:bg-slate-800/70"
+                            key={`${source.video_id}-${sourceIndex}`}
+                            className="rounded-lg border border-border bg-muted/40 p-2 text-sm"
                           >
-                            <Link href={`/videos/${source.video_id}`} className="text-blue-600 hover:underline">
+                            <Link href={`/videos/${source.video_id}`} className="font-medium text-primary hover:underline">
                               {source.video_title}
                             </Link>
-                            {source.timestamp_formatted && (
-                              <span className="ml-2 text-gray-500">@ {source.timestamp_formatted}</span>
-                            )}
+                            {source.timestamp_formatted ? (
+                              <Badge variant="muted" className="ml-2 align-middle">
+                                {source.timestamp_formatted}
+                              </Badge>
+                            ) : null}
                           </li>
                         ))}
                       </ul>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>
           )}
-          {askMutation.isPending && (
-            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Thinking…</p>
-          )}
-        </div>
-      )}
+
+          {askMutation.isPending ? (
+            <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+              <Spinner label="Thinking" />
+              <span>Thinking...</span>
+            </div>
+          ) : null}
+
+          {askMutation.isError ? (
+            <ErrorState
+              className="mt-4"
+              title="Ask failed"
+              message={getErrorMessage(askMutation.error, "The question could not be answered.")}
+              onRetry={askMutation.variables ? retryAsk : undefined}
+              retryLabel="Retry question"
+            />
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   );
 }
