@@ -146,6 +146,38 @@ async def test_list_available_models_uses_asr_key():
 
 
 @pytest.mark.asyncio
+async def test_model_status_uses_resolver_for_case_insensitive_gguf(monkeypatch, tmp_path):
+    cached_path = tmp_path / "qwen3-30b-a3b-q4_k_m.gguf"
+    cached_path.write_bytes(b"stub")
+    fake_settings = types.SimpleNamespace(
+        model_cache_dir=tmp_path,
+        whisper_model="small",
+        diarization_model="pyannote/speaker-diarization-community-1",
+        vision_model="Qwen3VL-32B-Instruct-Q4_K_M.gguf",
+        vision_endpoint_url="",
+        vision_endpoint_api_key="",
+        vision_endpoint_model="",
+        summarization_model="Qwen3-30B-A3B-Q4_K_M.gguf",
+        summarization_endpoint_url="",
+        summarization_endpoint_api_key="",
+        summarization_endpoint_model="",
+        embedding_model="Qwen/Qwen3-Embedding-8B",
+        audio_event_model="laion/clap-htsat-fused",
+        gpu_backend=GPUBackend.CPU,
+    )
+    monkeypatch.setattr(settings_module, "get_settings", lambda: fake_settings)
+    monkeypatch.setattr(settings_module, "get_all_download_progress", lambda: {})
+    monkeypatch.setattr(settings_module, "is_model_cached", lambda *args, **kwargs: False)
+
+    response = await settings_module.get_model_download_status()
+
+    summary_status = response["models"]["summarization"]
+    assert summary_status["model_name"] == "Qwen3-30B-A3B-Q4_K_M.gguf"
+    assert summary_status["status"] == "cached"
+    assert summary_status["path"] == str(cached_path)
+
+
+@pytest.mark.asyncio
 async def test_verify_model_candidate_accepts_catalog_model():
     response = await settings_module.verify_model_candidate(
         settings_module.ModelVerifyRequest(component="embedding", model_name="Qwen/Qwen3-Embedding-8B")

@@ -107,6 +107,13 @@ def batch_to_response(batch: Batch, rejected: list[BatchRejectedFile] | None = N
     )
 
 
+def _all_invalid_batch_detail(rejected: list[BatchRejectedFile]) -> str:
+    if not rejected:
+        return "No valid video files provided"
+    reasons = "; ".join(f"{item.filename or '<unnamed>'}: {item.reason}" for item in rejected)
+    return f"No valid video files provided: {reasons}"
+
+
 @router.get("", response_model=BatchListResponse)
 async def list_batches(
     page: int = Query(1, ge=1),
@@ -217,7 +224,7 @@ async def create_batch(
         accepted_jobs.append(job)
 
     if not accepted_videos:
-        raise HTTPException(status_code=400, detail="No valid video files provided")
+        raise HTTPException(status_code=400, detail=_all_invalid_batch_detail(rejected))
 
     batch = Batch(
         id=batch_id,

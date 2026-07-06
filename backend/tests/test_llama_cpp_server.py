@@ -335,6 +335,40 @@ def test_build_server_env_exports_host_pin_verbatim_when_parent_unset(monkeypatc
     assert env["SPLIT_MODE"] == "0"
 
 
+def test_build_server_command_translates_extra_gpu_args_for_host_pin(monkeypatch, tmp_path):
+    model_path = tmp_path / "model.gguf"
+    model_path.write_text("stub")
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+    monkeypatch.delenv("NVIDIA_VISION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("MODEL_VISIBLE_DEVICES", raising=False)
+
+    config = llama_cpp_server.LlamaCppServerConfig(
+        model_path=model_path,
+        model_alias="summary-model",
+        host="0.0.0.0",
+        port=8000,
+        context_size=8192,
+        gpu_layers=999,
+        main_gpu=None,
+        split_mode=None,
+        chat_format="",
+        clip_model_path=None,
+        extra_args=("--main-gpu", "4", "--device", "cuda:4", "--tensor-split", "0,0,0,0,1"),
+    )
+
+    env = llama_cpp_server.build_server_env(config)
+    command = llama_cpp_server.build_server_command(config, cuda_visible_devices=env.get("CUDA_VISIBLE_DEVICES"))
+
+    assert env["CUDA_VISIBLE_DEVICES"] == "4"
+    main_gpu_index = command.index("--main-gpu")
+    device_index = command.index("--device")
+    tensor_split_index = command.index("--tensor-split")
+    assert command[main_gpu_index + 1] == "0"
+    assert command[device_index + 1] == "cuda:0"
+    assert command[tensor_split_index + 1] == "1"
+
+
 def test_build_server_env_fails_fast_when_pin_not_resolvable(monkeypatch, tmp_path):
     model_path = tmp_path / "model.gguf"
     model_path.write_text("stub")

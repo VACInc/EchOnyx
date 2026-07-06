@@ -34,6 +34,7 @@ from app.core.model_downloader import (
     is_model_cached,
     pyannote_token_guidance,
     reserve_download_progress,
+    resolve_local_model_path,
 )
 from app.core.model_manager import reset_model_manager
 from app.env_utils import resolve_env_file_path, stringify_env_value, write_env_updates
@@ -846,9 +847,9 @@ async def get_model_download_status() -> dict:
             }
             continue
 
-        if model_name.endswith(".gguf"):
-            model_path = cache_dir / model_name
-            if model_path.exists():
+        if model_name.lower().endswith(".gguf"):
+            model_path = resolve_local_model_path(model_name, cache_dir)
+            if model_path is not None:
                 file_size = model_path.stat().st_size
                 models_status[model_type] = {
                     "model_name": model_name,

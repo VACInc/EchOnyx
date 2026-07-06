@@ -17,6 +17,7 @@ from app.core.model_downloader import (
     model_download_target,
     resolve_local_model_path,
 )
+from app.runtime.managed_openai_runtime import _translate_engine_device_args
 
 
 logger = logging.getLogger(__name__)
@@ -226,8 +227,9 @@ def build_server_env(config: LlamaCppServerConfig) -> dict[str, str]:
     return env
 
 
-def build_server_command(config: LlamaCppServerConfig) -> list[str]:
-    return [sys.executable, "-m", "llama_cpp.server", *config.extra_args]
+def build_server_command(config: LlamaCppServerConfig, *, cuda_visible_devices: str | None = None) -> list[str]:
+    extra_args = _translate_engine_device_args(list(config.extra_args), cuda_visible_devices)
+    return [sys.executable, "-m", "llama_cpp.server", *extra_args]
 
 
 def ensure_server_dependencies() -> None:
@@ -245,7 +247,7 @@ def main() -> None:
     config = LlamaCppServerConfig.from_env()
     ensure_server_dependencies()
     env = build_server_env(config)
-    command = build_server_command(config)
+    command = build_server_command(config, cuda_visible_devices=env.get("CUDA_VISIBLE_DEVICES"))
     os.execvpe(command[0], command, env)
 
 

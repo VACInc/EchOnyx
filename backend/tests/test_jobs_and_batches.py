@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from fastapi import HTTPException
 import pytest
 
 from app.api.routes.batch import create_batch, list_batches, cancel_batch
@@ -254,6 +255,31 @@ async def test_create_batch_reports_rejected_corrupt_file(monkeypatch, tmp_path)
     assert response.rejected[0].filename == "corrupt.mp4"
     assert "not valid video media" in response.rejected[0].reason
     assert len(queued_batch_ids) == 1
+
+
+@pytest.mark.asyncio
+async def test_create_batch_all_invalid_files_reports_each_rejection(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.api.routes.batch.settings.upload_dir", tmp_path)
+    monkeypatch.setattr("app.api.routes.batch.settings.max_upload_size_gb", 1)
+
+    text_upload = StreamingUpload("notes.txt", b"not a video", content_type="text/plain")
+    json_upload = StreamingUpload("metadata.json", b"{}", content_type="application/json")
+    session = QueueSession([])
+
+    with pytest.raises(HTTPException) as exc:
+        await create_batch(
+            files=[text_upload, json_upload],
+            name="invalid",
+            priority=0,
+            db=session,
+        )
+
+    assert exc.value.status_code == 400
+    assert "No valid video files provided" in exc.value.detail
+    assert "notes.txt: Invalid file type: text/plain" in exc.value.detail
+    assert "metadata.json: Invalid file type: application/json" in exc.value.detail
+    assert session.added == []
+    assert session.commits == 0
 
 
 @pytest.mark.asyncio
