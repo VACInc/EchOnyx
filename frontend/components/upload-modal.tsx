@@ -4,13 +4,15 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
 } from "react";
+import { Film, Lightbulb, ShieldCheck, Sparkles } from "lucide-react";
+
 import { UploadDropzone } from "@/components/upload-dropzone";
-import { X, Sparkles, Shield, Film } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 
 type UploadModalContextValue = {
   isOpen: boolean;
@@ -38,7 +40,7 @@ export function UploadModalProvider({ children }: { children: React.ReactNode })
       openModal,
       closeModal,
     }),
-    [isOpen, openModal, closeModal]
+    [isOpen, openModal, closeModal],
   );
 
   return (
@@ -56,90 +58,68 @@ function UploadModal({
   isOpen: boolean;
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6 backdrop-blur-sm"
-      onClick={onClose}
+    <Dialog
+      className="max-w-5xl"
+      description="Upload one video directly, or send multiple videos as a server-side batch."
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      open={isOpen}
+      title="Add videos"
     >
-      <div
-        className={cn(
-          "relative w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200/70 bg-white shadow-2xl",
-          "dark:border-slate-700/60 dark:bg-slate-900"
-        )}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-slate-200/70 px-6 py-4 dark:border-slate-700/60">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-              Upload
-            </p>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
-              Add new videos
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded-full border border-slate-200/70 p-2 text-slate-500 transition hover:text-slate-800 dark:border-slate-700/60 dark:text-slate-300 dark:hover:text-slate-100"
-            aria-label="Close upload modal"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
+        <UploadDropzone onUploaded={onClose} />
 
-        <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-          <div className="space-y-4">
-            <UploadDropzone />
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 dark:border-slate-700/60 dark:bg-slate-800/60">
-              <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-                <Film className="h-4 w-4 text-slate-600 dark:text-slate-300" />
-                Processing pipeline
-              </div>
-              <ul className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                <li>1. Extract audio + key frames</li>
-                <li>2. Transcribe and diarize speakers</li>
-                <li>3. Analyze slides + visuals</li>
-                <li>4. Summarize and index for search</li>
-              </ul>
+        <aside className="space-y-4">
+          <Card className="p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+              <Film className="h-4 w-4 text-info" aria-hidden="true" />
+              Processing pipeline
             </div>
+            <ol className="mt-3 space-y-2 text-sm text-muted-foreground">
+              <li>1. Extract audio and key frames.</li>
+              <li>2. Transcribe speech and identify speakers.</li>
+              <li>3. Analyze slides and visual changes.</li>
+              <li>4. Summarize, index, and queue search data.</li>
+            </ol>
+          </Card>
 
-            <div className="rounded-xl border border-amber-200/70 bg-amber-50/80 p-4 dark:border-amber-300/20 dark:bg-amber-500/10">
-              <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
-                <Sparkles className="h-4 w-4" />
+          <Card className="p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+                <Lightbulb className="h-4 w-4 text-warning" aria-hidden="true" />
                 Tips
               </div>
-              <ul className="mt-3 space-y-2 text-sm text-amber-900/80 dark:text-amber-100/80">
-                <li>Use clear recordings for best transcription.</li>
-                <li>Upload multiple videos; they will process sequentially.</li>
-                <li>Tag videos after processing for faster retrieval.</li>
-              </ul>
+              <Badge variant="info">Batch aware</Badge>
             </div>
+            <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+              <li>Clear audio improves transcription and speaker labels.</li>
+              <li>Multiple files are accepted as one batch and enqueued server-side.</li>
+              <li>Batch concurrency follows the server setting for concurrent jobs.</li>
+              <li>Add tags after processing to make recurring searches easier.</li>
+            </ul>
+          </Card>
 
-            <div className="flex items-start gap-3 rounded-xl border border-slate-200/70 bg-white/70 p-4 text-xs text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/40 dark:text-slate-400">
-              <Shield className="mt-0.5 h-4 w-4 text-slate-400 dark:text-slate-400" />
-              <p>
-                Processing is fully local. No data leaves your machine unless you
-                configured external endpoints.
-              </p>
+          <Card className="p-4">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+              <div>
+                <div className="text-sm font-semibold text-card-foreground">Privacy</div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Processing runs locally. Data only leaves this machine if external
+                  endpoints are configured.
+                </p>
+              </div>
             </div>
+          </Card>
+
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5 text-info" aria-hidden="true" />
+            New uploads appear in videos and jobs after the server accepts them.
           </div>
-        </div>
+        </aside>
       </div>
-    </div>
+    </Dialog>
   );
 }
