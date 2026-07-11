@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from app.config import get_settings
 from app.core.model_manager import ModelType, get_model_manager
+from app.core.torchcodec_compat import ensure_torchcodec_importable_or_stub
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,9 @@ async def _transcribe_transformers_asr(
             }
 
         return await loop.run_in_executor(None, run_granite)
+    # Must run before pipeline construction: transformers ASR preprocess
+    # imports torchcodec unconditionally when its metadata is present.
+    ensure_torchcodec_importable_or_stub()
     pipeline_kwargs: dict[str, Any] = {
         "model": model,
         "device": device_id,
