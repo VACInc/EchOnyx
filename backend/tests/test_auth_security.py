@@ -14,6 +14,9 @@ async def _build_auth_stack(monkeypatch, tmp_path, **env_overrides):
     defaults = {
         "DATABASE_URL": f"sqlite+aiosqlite:///{tmp_path / 'auth.sqlite3'}",
         "AUTH_REQUIRED": "true",
+        # Pin transport policy so a deployment .env (ALLOW_INSECURE_AUTH_HTTP=true)
+        # cannot leak into the suite and bypass the HTTPS gate under test.
+        "ALLOW_INSECURE_AUTH_HTTP": "false",
         "AUTH_PASSWORD_HASH": "",
         "REDIS_URL": "",
         "LOGIN_RATE_LIMIT_ATTEMPTS": "2",
