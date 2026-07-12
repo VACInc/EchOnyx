@@ -98,11 +98,16 @@ RUN set -e; \
 # server path exits after each image completion, reloading the model per
 # frame. Built at the same llama.cpp revision AMD packages for the ROCm lane
 # (b7782), which predates the npm/embed web-UI toolchain and builds headless.
-ARG LLAMA_SERVER_REF=b7782
+# b7782 == commit 08f3f4a8a30633491b031bf833441de2a1ab5029 (immutable pin;
+# tags are mutable and llama.cpp has no stable release channel).
+ARG LLAMA_SERVER_COMMIT=08f3f4a8a30633491b031bf833441de2a1ab5029
 RUN set -e; \
     if [ "$LLAMA_BUILD_CUDA" = "1" ]; then \
-      git clone --depth 1 --branch "$LLAMA_SERVER_REF" \
-        https://github.com/ggml-org/llama.cpp.git /tmp/llama-server-src; \
+      git init /tmp/llama-server-src; \
+      git -C /tmp/llama-server-src remote add origin https://github.com/ggml-org/llama.cpp.git; \
+      git -C /tmp/llama-server-src fetch --depth 1 origin "$LLAMA_SERVER_COMMIT"; \
+      git -C /tmp/llama-server-src checkout FETCH_HEAD; \
+      test "$(git -C /tmp/llama-server-src rev-parse HEAD)" = "$LLAMA_SERVER_COMMIT"; \
       cmake -S /tmp/llama-server-src -B /tmp/llama-server-build \
         -DGGML_CUDA=on \
         ${CUDA_ARCHITECTURES:+-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES} \

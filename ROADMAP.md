@@ -11,6 +11,11 @@ Future work that is not required for the current 1.0 support matrix. Current rea
 
 ## Runtime And Hardware
 
+- Coordinate swap-mode endpoints through a shared GPU lease instead of
+  independent idle lingers, so concurrent or reverse-order stages hand the
+  card over deterministically rather than retrying against transient free
+  memory.
+
 - Promote ROCm vLLM only after Strix Halo startup, memory contention, and teardown behavior are reliable enough for default use.
 - Reduce AMD cold-start overhead for large embedding models so batch tails are not dominated by first-load startup costs.
 - Extend the runtime residency planner beyond current free-memory placement toward more dynamic isolation, sharing, and multi-GPU splitting decisions.

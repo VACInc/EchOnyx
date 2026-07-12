@@ -816,7 +816,7 @@ def test_candidate_selection_prefers_largest_that_fits(monkeypatch, tmp_path):
     runtime = _candidate_runtime(tmp_path, candidates)
     monkeypatch.setattr(
         "app.runtime.managed_openai_runtime._query_nvidia_gpus",
-        lambda: [{"index": 1, "free_vram_gb": 23.5}],
+        lambda: [{"index": 1, "free_vram_gb": 23.5, "total_vram_gb": 24.0}],
     )
 
     env = {}
@@ -833,20 +833,22 @@ def test_candidate_selection_falls_through_on_vram_and_missing_files(monkeypatch
     small.write_bytes(b"g")
 
     candidates = [
-        {"model": str(missing), "mmproj": "", "memory_gb": 21.0},
+        {"model": str(missing), "mmproj": "", "memory_gb": 40.0},
         {"model": str(small), "mmproj": "", "memory_gb": 7.0},
     ]
     runtime = _candidate_runtime(tmp_path, candidates)
     monkeypatch.setattr(
         "app.runtime.managed_openai_runtime._query_nvidia_gpus",
-        lambda: [{"index": 1, "free_vram_gb": 9.0}],
+        lambda: [{"index": 1, "free_vram_gb": 9.0, "total_vram_gb": 24.0}],
     )
 
     env = {"MODEL_MMPROJ": "stale"}
     runtime._apply_model_candidate_locked(env)
 
     assert env["MODEL_PATH"] == str(small)
-    assert "MODEL_MMPROJ" not in env
+    # Explicit empty sentinel: a projector-less candidate must clear, not
+    # inherit, the configured mmproj.
+    assert env["MODEL_MMPROJ"] == ""
 
 
 def test_candidate_exhaustion_is_transient_not_fatal(monkeypatch, tmp_path):
@@ -1017,3 +1019,50 @@ def test_build_runtime_command_applies_candidate_overrides(monkeypatch):
     assert command[1:3] == ["-m", "/models/chosen.gguf"]
     mmproj_index = command.index("--mmproj")
     assert command[mmproj_index + 1] == "/models/chosen.mmproj"
+
+
+def test_contended_best_candidate_waits_instead_of_downgrading(monkeypatch, tmp_path):
+    big = tmp_path / "big.gguf"
+    big.write_bytes(b"g")
+    small = tmp_path / "small.gguf"
+    small.write_bytes(b"g")
+    candidates = [
+        {"model": str(big), "mmproj": "", "memory_gb": 21.0},
+        {"model": str(small), "mmproj": "", "memory_gb": 7.0},
+    ]
+    runtime = _candidate_runtime(tmp_path, candidates)
+    # Peer endpoint still lingering: only 9 GiB free on a 24 GiB card.
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._query_nvidia_gpus",
+        lambda: [{"index": 1, "free_vram_gb": 9.0, "total_vram_gb": 24.0}],
+    )
+
+    with pytest.raises(TransientStartError, match="Loading model"):
+        runtime._apply_model_candidate_locked({})
+
+
+def test_cleared_mmproj_never_resurrects_configured_projector(monkeypatch):
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._discover_llama_server_bin",
+        lambda: "/opt/cuda-llama/bin/llama-server",
+    )
+    config = _runtime_config(mmproj_path="/models/stale.mmproj")
+
+    cleared = build_runtime_command(config, mmproj_override="")
+    inherited = build_runtime_command(config, mmproj_override=None)
+
+    assert "--mmproj" not in cleared
+    assert "/models/stale.mmproj" in inherited
+
+
+def test_invalid_swap_idle_timeout_is_a_startup_error(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "llama_server")
+    monkeypatch.setenv("MODEL_PATH", "/models/model.gguf")
+    monkeypatch.setenv("SWAP_IDLE_TIMEOUT_SECONDS", "banana")
+
+    with pytest.raises(RuntimeError, match="SWAP_IDLE_TIMEOUT_SECONDS"):
+        RuntimeConfig.from_env()
+
+    monkeypatch.setenv("SWAP_IDLE_TIMEOUT_SECONDS", "-5")
+    with pytest.raises(RuntimeError, match="positive"):
+        RuntimeConfig.from_env()

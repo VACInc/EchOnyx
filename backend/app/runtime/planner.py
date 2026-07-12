@@ -309,14 +309,34 @@ def _unique_device_labels(*groups: tuple[dict, ...]) -> tuple[str, ...]:
 
 
 def _visible_nvidia_indices() -> set[int] | None:
-    """Parse CUDA_VISIBLE_DEVICES into host indices, or None when unrestricted."""
-    raw = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
-    if not raw:
+    """Parse CUDA_VISIBLE_DEVICES per the CUDA contract.
+
+    Returns None only when the variable is unset (unrestricted). A set value
+    is always a restriction: empty means no GPUs; parsing stops at the first
+    invalid token; UUID/MIG identifiers cannot be matched against nvidia-smi
+    indices here and therefore contribute nothing (fail closed rather than
+    fail open onto every GPU).
+    """
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if raw is None:
         return None
-    try:
-        return {int(token.strip()) for token in raw.split(",") if token.strip()}
-    except ValueError:
-        return None
+    indices: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if token.upper().startswith(("GPU-", "MIG-")):
+            # Opaque identifier: valid for CUDA but unmatchable against the
+            # integer indices nvidia-smi gives us; skip without failing open.
+            continue
+        try:
+            value = int(token)
+        except ValueError:
+            break  # CUDA stops parsing at the first invalid token.
+        if value < 0:
+            break
+        indices.add(value)
+    return indices
 
 
 def _filter_gpu_info_by_visibility(settings: "Settings", gpu_info: dict, notes: list[str]) -> dict:
@@ -325,7 +345,9 @@ def _filter_gpu_info_by_visibility(settings: "Settings", gpu_info: dict, notes: 
     nvidia-smi reports every host GPU regardless of CUDA_VISIBLE_DEVICES, so
     an unfiltered plan budgets VRAM the runtime can never allocate (and
     'prefers' devices owned by other workloads), keeping worker models
-    resident on cards that must also fit swap-mode endpoints.
+    resident on cards that must also fit swap-mode endpoints. An explicit
+    restriction that matches nothing plans against zero GPUs — never against
+    the full host.
     """
     if getattr(settings.gpu_backend, "value", settings.gpu_backend) != "cuda":
         return gpu_info
@@ -334,8 +356,13 @@ def _filter_gpu_info_by_visibility(settings: "Settings", gpu_info: dict, notes: 
         return gpu_info
     nvidia_gpus = gpu_info.get("nvidia_gpus", []) or []
     filtered = [gpu for gpu in nvidia_gpus if gpu.get("index") in visible]
-    if len(filtered) == len(nvidia_gpus) or not filtered:
+    if len(filtered) == len(nvidia_gpus):
         return gpu_info
+    if not filtered:
+        notes.append(
+            "CUDA_VISIBLE_DEVICES restricts this process to no matchable "
+            "NVIDIA GPUs; planning proceeds without accelerator memory."
+        )
     notes.append(
         "Planner restricted to CUDA_VISIBLE_DEVICES GPUs "
         f"{sorted(visible)} out of {len(nvidia_gpus)} detected."

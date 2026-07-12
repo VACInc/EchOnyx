@@ -61,7 +61,7 @@ docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
 
 The NVIDIA override exposes all visible NVIDIA GPUs to the backend and worker, runs the worker with Celery `--pool=solo`, and uses managed endpoint services for vision and summarization. If you build on a host without a visible GPU during `docker build`, set `CUDA_ARCHITECTURES` for the target cards. The validation host used `86;120` for an `RTX 3090 + RTX PRO 6000 Blackwell` split.
 
-By default, NVIDIA vision uses the official vLLM image and summarization uses CUDA `llama.cpp`. The runtime planner can auto-pick devices from live `nvidia-smi` free-memory data when explicit NVIDIA endpoint pins are unset.
+By default, NVIDIA vision and summarization both use the native CUDA `llama-server` (built at pinned llama.cpp b7782, the same revision as the ROCm lane). Vision serves the largest downloaded Q4 candidate that fits the selected GPU (`VISION_MODEL_CANDIDATES_JSON`); when endpoints share a card that cannot hold both, the managed runtime swaps them per stage with a short idle linger (`SWAP_IDLE_TIMEOUT_SECONDS`, default 30). The vLLM full-precision vision flavor remains available through the `vision-vllm` compose profile for large-VRAM hosts. The runtime planner can auto-pick devices from live `nvidia-smi` free-memory data when explicit NVIDIA endpoint pins are unset.
 
 ### Tier 2: Apple Silicon Host Run
 
@@ -308,7 +308,10 @@ Set these in `.env`. Blank values generally mean "auto-detect" or "disabled" as 
 | `VISION_DEBUG` | Enables extra vision debug logging. |
 | `VISION_MODEL_PATH` | Model path used by managed vision endpoint containers. |
 | `VISION_MMPROJ_PATH` | Multimodal projector path used by managed vision endpoint containers. |
-| `VISION_VLLM_MODEL_ID` | Hugging Face model id for vLLM vision runtime. |
+| `VISION_VLLM_MODEL_ID` | Hugging Face model id for the optional vLLM vision profile. |
+| `VISION_MODEL_CANDIDATES_JSON` | Ordered best-first vision model candidates for the CUDA lane. |
+| `SWAP_IDLE_TIMEOUT_SECONDS` | Idle linger before a swap-mode endpoint frees its GPU (default 30). |
+| `LLAMA_SERVER_COMMIT` | Pinned llama.cpp commit for the CUDA llama-server build. |
 | `VISION_CONTEXT_SIZE` | Context size for managed vision endpoint runtime. |
 | `VISION_GPU_LAYERS` | GPU layer count for local or managed llama.cpp vision runtime. |
 | `VISION_LLAMA_SERVER_EXTRA_ARGS` | Extra args for managed llama.cpp vision server. |

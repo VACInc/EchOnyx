@@ -356,6 +356,23 @@ class TransientStartError(RuntimeError):
     """
 
 
+def _parse_swap_idle_timeout(raw: str | None) -> float:
+    value = (raw or "").strip()
+    if not value:
+        return 30.0
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"SWAP_IDLE_TIMEOUT_SECONDS must be a positive number, got {value!r}."
+        ) from exc
+    if not (parsed > 0) or parsed != parsed or parsed == float("inf"):
+        raise RuntimeError(
+            f"SWAP_IDLE_TIMEOUT_SECONDS must be a positive finite number, got {value!r}."
+        )
+    return parsed
+
+
 def _parse_model_candidates(raw: str | None) -> tuple[dict, ...]:
     value = (raw or "").strip()
     if not value:
@@ -407,6 +424,7 @@ class RuntimeConfig:
     llama_extra_args: list[str]
     vllm_extra_args: list[str]
     model_candidates: tuple = ()
+    swap_idle_timeout_s: float = 30.0
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -452,6 +470,9 @@ class RuntimeConfig:
             llama_extra_args=_parse_extra_args(os.environ.get("LLAMA_SERVER_EXTRA_ARGS")),
             vllm_extra_args=_parse_extra_args(os.environ.get("VLLM_EXTRA_ARGS")),
             model_candidates=model_candidates,
+            swap_idle_timeout_s=_parse_swap_idle_timeout(
+                os.environ.get("SWAP_IDLE_TIMEOUT_SECONDS")
+            ),
         )
 
 
@@ -463,7 +484,12 @@ def build_runtime_command(
     mmproj_override: str | None = None,
 ) -> list[str]:
     model_path = (model_path_override or "").strip() or config.model_path
-    mmproj_path = (mmproj_override or "").strip() or config.mmproj_path
+    # None = no override supplied; empty string = candidate explicitly cleared
+    # the projector (never resurrect a stale configured mmproj).
+    if mmproj_override is None:
+        mmproj_path = config.mmproj_path
+    else:
+        mmproj_path = mmproj_override.strip()
     if config.runtime == "llama_server":
         command = [
             _discover_llama_server_bin(),
@@ -710,9 +736,7 @@ class ManagedRuntime:
                     self.config, gpus
                 )
                 if shutdown_after_request and not self.config.shutdown_after_request:
-                    self._swap_idle_override_s = float(
-                        os.environ.get("SWAP_IDLE_TIMEOUT_SECONDS", "30") or 30
-                    )
+                    self._swap_idle_override_s = self.config.swap_idle_timeout_s
                 else:
                     self._shutdown_after_request = shutdown_after_request
                 if visible_devices:
@@ -767,9 +791,7 @@ class ManagedRuntime:
         except Exception:
             return
         if capacity_gb and hot_set_gb > capacity_gb:
-            self._swap_idle_override_s = float(
-                os.environ.get("SWAP_IDLE_TIMEOUT_SECONDS", "30") or 30
-            )
+            self._swap_idle_override_s = self.config.swap_idle_timeout_s
             logger.info(
                 "GPUs %s hold %.1f GB but the endpoint hot set needs %.1f GB; "
                 "swap mode active with a %.0fs idle linger.",
@@ -779,21 +801,23 @@ class ManagedRuntime:
                 self._swap_idle_override_s,
             )
 
-    def _selected_devices_min_free_gib(self) -> float | None:
+    def _selected_devices_memory_gib(self) -> tuple[float, float] | None:
+        """(min free, min total) GiB across the selected devices, or None."""
         visible = (self._child_host_visible or "").strip()
         if not visible:
             return None
         try:
             wanted = {int(token) for token in visible.split(",") if token.strip()}
             gpus = _query_nvidia_gpus()
-            free_values = [
-                float(gpu["free_vram_gb"])
-                for gpu in gpus
-                if int(gpu["index"]) in wanted
-            ]
+            rows = [gpu for gpu in gpus if int(gpu["index"]) in wanted]
+            if not rows:
+                return None
+            return (
+                min(float(gpu["free_vram_gb"]) for gpu in rows),
+                min(float(gpu["total_vram_gb"]) for gpu in rows),
+            )
         except Exception:
             return None
-        return min(free_values) if free_values else None
 
     def _apply_model_candidate_locked(self, env: dict[str, str]) -> None:
         """Pick the largest downloaded candidate that fits the selected GPU.
@@ -811,8 +835,11 @@ class ManagedRuntime:
         if (env.get("MODEL_PATH") or "").strip():
             # Explicit operator override always wins over candidate selection.
             return
-        free_gib = self._selected_devices_min_free_gib()
+        memory = self._selected_devices_memory_gib()
+        free_gib = memory[0] if memory else None
+        total_gib = memory[1] if memory else None
         skipped: list[str] = []
+        waiting_for_memory = False
         for candidate in candidates:
             model_path = candidate["model"]
             if not os.path.isfile(model_path):
@@ -824,27 +851,41 @@ class ManagedRuntime:
                 continue
             need_gib = candidate["memory_gb"]
             if free_gib is not None and need_gib and need_gib + 1.0 > free_gib:
+                if total_gib is None or need_gib + 1.0 <= total_gib:
+                    # Fits the card, just not right now (peer endpoint still
+                    # lingering). Wait for the swap instead of silently
+                    # downgrading to a smaller model — best bang wins.
+                    waiting_for_memory = True
+                    skipped.append(
+                        f"{model_path} (needs ~{need_gib:.1f} GiB, {free_gib:.1f} GiB free; waiting)"
+                    )
+                    break
                 skipped.append(
-                    f"{model_path} (needs ~{need_gib:.1f} GiB, {free_gib:.1f} GiB free)"
+                    f"{model_path} (needs ~{need_gib:.1f} GiB, card holds {total_gib:.1f} GiB)"
                 )
                 continue
             env["MODEL_PATH"] = model_path
             if not (env.get("MODEL_NAME") or "").strip():
                 env["MODEL_NAME"] = Path(model_path).name
-            if mmproj:
-                env["MODEL_MMPROJ"] = mmproj
-            else:
-                env.pop("MODEL_MMPROJ", None)
+            # Empty string is the explicit "no projector" sentinel; a missing
+            # key would let a stale configured mmproj resurface in the argv.
+            env["MODEL_MMPROJ"] = mmproj or ""
             logger.info("Selected model candidate %s for %s.", model_path, self.config.service_role or "endpoint")
             return
         # Full diagnostics (paths, free VRAM) go to logs; the HTTP surface gets
         # model identifiers and guidance only.
         logger.warning("No usable model candidate: %s", "; ".join(skipped))
         names = ", ".join(Path(candidate["model"]).name for candidate in candidates)
+        if waiting_for_memory:
+            # "Loading model" is the canonical retryable token the pipeline
+            # clients poll on; peer swap-out frees the memory shortly.
+            raise TransientStartError(
+                f"Loading model: waiting for GPU memory to serve {names}."
+            )
         raise TransientStartError(
             f"No approved model is ready ({names}): each is either not "
-            "downloaded or does not fit currently free GPU memory. Download "
-            "one via Settings → Model Downloads or free GPU memory."
+            "downloaded or does not fit this GPU. Download one via "
+            "Settings → Model Downloads."
         )
 
     def _terminate_locked(self) -> None:
