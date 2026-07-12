@@ -45,9 +45,67 @@ def get_chroma_client() -> chromadb.ClientAPI:
     return _chroma_client
 
 
-def get_collection(name: str = "video_content") -> chromadb.Collection:
-    """Get or create a ChromaDB collection."""
+_LEGACY_COLLECTION_NAME = "video_content"
+_LEGACY_OWNER_FILENAME = "legacy_collection_owner.json"
+
+
+def _collection_slug(model_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", model_name.lower()).strip("-")
+    return (slug or "default")[:40].rstrip("-")
+
+
+def _collection_name_for_model(model_name: str) -> str:
+    return f"{_LEGACY_COLLECTION_NAME}--{_collection_slug(model_name)}"
+
+
+def _legacy_owner_path():
+    from pathlib import Path
+
+    return Path(get_settings().chroma_persist_dir) / _LEGACY_OWNER_FILENAME
+
+
+def _read_legacy_owner_model() -> str | None:
+    try:
+        payload = json.loads(_legacy_owner_path().read_text())
+    except (OSError, ValueError):
+        return None
+    owner = payload.get("embedding_model")
+    return owner if isinstance(owner, str) and owner else None
+
+
+def _stamp_legacy_owner_model(model_name: str) -> None:
+    try:
+        path = _legacy_owner_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"embedding_model": model_name}))
+    except OSError as exc:  # pragma: no cover - best effort marker
+        logger.warning("Could not record legacy collection owner: %s", exc)
+
+
+def get_collection(name: str | None = None) -> chromadb.Collection:
+    """Get or create the ChromaDB collection for the active embedding model.
+
+    Collections are namespaced per embedding model: vectors from different
+    models have different dimensions, so a shared collection makes every
+    insert and query fail after EMBEDDING_MODEL changes. The pre-namespacing
+    legacy collection is adopted by whichever model is active at first use
+    after upgrade (recorded in a marker file) and only served to that model;
+    any other model gets its own namespaced collection and its content
+    returns to semantic results after reprocessing.
+    """
     client = get_chroma_client()
+    if name is None:
+        active_model = get_settings().embedding_model
+        namespaced = _collection_name_for_model(active_model)
+        existing = {collection.name for collection in client.list_collections()}
+        name = namespaced
+        if namespaced not in existing and _LEGACY_COLLECTION_NAME in existing:
+            owner = _read_legacy_owner_model()
+            if owner is None:
+                _stamp_legacy_owner_model(active_model)
+                name = _LEGACY_COLLECTION_NAME
+            elif owner == active_model:
+                name = _LEGACY_COLLECTION_NAME
     return client.get_or_create_collection(
         name=name,
         metadata={"hnsw:space": "cosine"},
@@ -55,10 +113,15 @@ def get_collection(name: str = "video_content") -> chromadb.Collection:
 
 
 def delete_video_content(video_id: str) -> None:
-    """Remove all indexed content for a video from ChromaDB."""
+    """Remove all indexed content for a video from every content collection."""
     try:
-        collection = get_collection()
-        collection.delete(where={"video_id": video_id})
+        client = get_chroma_client()
+        for collection_info in client.list_collections():
+            if not collection_info.name.startswith(_LEGACY_COLLECTION_NAME):
+                continue
+            client.get_collection(collection_info.name).delete(
+                where={"video_id": video_id}
+            )
     except Exception as exc:
         logger.warning("Failed to delete embeddings for %s: %s", video_id, exc)
 
