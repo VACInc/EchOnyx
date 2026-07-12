@@ -2,6 +2,48 @@
 
 Reverse-chronological project milestones and validation notes. Operational plans and future work live in [ROADMAP.md](ROADMAP.md); support status lives in [docs/1.0-READINESS.md](docs/1.0-READINESS.md).
 
+## v1.1.0 - 2026-07-12
+
+Core directive release: EchOnyx now automatically picks the best inference
+engine and the largest approved model for the detected platform, swapping
+models per stage when they do not fit resident — every choice remains
+user-overridable. Recorded as the leading directive in AGENTS.md. Verified
+end to end on both Tier 1 platforms; on a single 24 GB RTX 3090 shared with
+nothing else, the full pipeline now outruns the Strix Halo reference while
+serving 30B-class Q4 models.
+
+- CUDA vision and summarization both run a native, statically built CUDA
+  llama-server pinned to the same llama.cpp revision as the ROCm lane
+  (b7782 / 08f3f4a, SHA-verified at build). This replaced the vLLM-image
+  default and the llama-cpp-python mtmd server, whose child process exits
+  after every image completion (vision reloaded ~19 GB per frame; 373 s for
+  a 19-second video, now 8 s). The vLLM full-precision flavor remains via
+  the vision-vllm compose profile with correct served-model-name wiring.
+- Vision serves the largest downloaded Q4 candidate that fits the selected
+  GPU (VISION_MODEL_CANDIDATES_JSON, best-first: 32B, 30B-A3B, 8B).
+  Contention for a card that can hold the model waits with the canonical
+  retryable 503 instead of silently downgrading; missing downloads produce
+  actionable guidance; explicit VISION_MODEL_PATH overrides disable
+  selection.
+- Stage swapping on shared GPUs uses a short idle linger
+  (SWAP_IDLE_TIMEOUT_SECONDS, default 30 s) instead of per-request
+  teardown, for both auto-selected and pinned endpoints; explicit
+  SHUTDOWN_AFTER_REQUEST keeps per-request semantics.
+- The runtime planner budgets only CUDA_VISIBLE_DEVICES-visible GPUs with
+  CUDA-contract parsing that fails closed (empty restricts to none,
+  parsing truncates at invalid tokens, UUID/MIG identifiers never fail
+  open), recomputing VRAM aggregates from the visible set.
+- Endpoint status probes use the managed wrapper's /health so status
+  polling no longer wakes models or resets idle teardown; generic external
+  /health responses are not trusted as proof of a working OpenAI path.
+- Model registry, catalog, and recommendation tiers move to current-gen
+  models (Qwen3-VL 30B-A3B and 8B Q4 with mmproj companions,
+  Qwen3-Embedding-0.6B) with a new CUDA-gated single_gpu tier for
+  16-40 GB budgets; the small tier's vision moves to Qwen3VL-8B Q4.
+- The standalone managed runtime configures logging, validates
+  SWAP_IDLE_TIMEOUT_SECONDS at startup, and uses an explicit sentinel so
+  projector-less candidates can never inherit a stale mmproj.
+
 ## v1.0.1 - 2026-07-11
 
 Bugfix release from the first live CUDA multi-GPU validation (mixed 3090/
