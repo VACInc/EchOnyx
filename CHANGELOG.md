@@ -2,6 +2,34 @@
 
 Reverse-chronological project milestones and validation notes. Operational plans and future work live in [ROADMAP.md](ROADMAP.md); support status lives in [docs/1.0-READINESS.md](docs/1.0-READINESS.md).
 
+## v1.0.1 - 2026-07-11
+
+Bugfix release from the first live CUDA multi-GPU validation (mixed 3090/
+Blackwell host with production workloads on neighboring GPUs), plus
+independent-review hardening. Verified with the full backend suite and live
+end-to-end acceptance on both Tier 1 platforms (Strix Halo ROCm and NVIDIA
+CUDA), including single-24-GB-GPU operation with the low-VRAM model set.
+
+- Fixed multi-GPU CUDA worker placement: all worker models previously loaded
+  onto the first planner-preferred device, OOMing once it filled while other
+  visible worker GPUs sat idle. Placement now selects the emptiest visible
+  worker GPU per model (GiB-consistent accounting), retries once with fresh
+  telemetry when a cross-process race steals the chosen GPU, and raises an
+  actionable insufficient-VRAM error instead of a raw CUDA OOM when nothing
+  fits. ROCm, single-GPU, and endpoint-pin behavior are unchanged.
+- Fixed changing EMBEDDING_MODEL breaking the vector index: Chroma
+  collections are now namespaced per embedding model (digest-suffixed, no
+  collision on long names). The pre-namespacing collection is adopted via an
+  atomic ownership claim by the model active at first use and never served
+  to a different model; deletes sweep only content collections and survive
+  per-collection failures.
+- Fixed managed endpoint containers reporting healthy with no usable server:
+  fatal configuration errors (unresolvable device pins, invalid runtime
+  command, missing engine binaries) are memoized, validated at startup for
+  immutable settings, returned as descriptive 503s, and flip /health to 503
+  so container healthchecks tell the truth. Device topology details stay in
+  logs rather than HTTP responses.
+
 ## v1.0.0 - 2026-07-11
 
 First tagged release. Closed the 1.0 launch checklist's remaining gate by running
