@@ -733,10 +733,15 @@ async def download_model_candidate(request: ModelDownloadRequest) -> JSONRespons
         component=component,
         backend=backend,
     ):
-        return JSONResponse(
-            status_code=200,
-            content={"model_name": model_name, "status": "cached"},
+        content = {"model_name": model_name, "status": "cached"}
+        # A cached primary can still be missing its companion (e.g. a vision
+        # GGUF downloaded before companion handling existed); heal it here.
+        companions = _launch_companion_downloads(
+            model_name, component, backend, settings
         )
+        if companions:
+            content["companions"] = companions
+        return JSONResponse(status_code=200, content=content)
 
     expected_size_gb = _expected_download_size_gb(component, model_name)
     note = None
