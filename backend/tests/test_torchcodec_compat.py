@@ -39,6 +39,12 @@ def test_broken_torchcodec_installs_stub(compat, monkeypatch):
     assert not isinstance(
         {"array": [], "sampling_rate": 16000}, stub.decoders.AudioDecoder
     )
+    # find_spec raises ValueError on spec-less sys.modules entries, which
+    # would break transformers' availability probes after stubbing.
+    import importlib.util
+
+    assert importlib.util.find_spec("torchcodec") is not None
+    assert importlib.util.find_spec("torchcodec.decoders") is not None
 
 
 def test_result_is_memoized_after_stub(compat, monkeypatch):
