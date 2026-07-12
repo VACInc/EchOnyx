@@ -673,6 +673,7 @@ class ManagedRuntime:
             child_visible, host_ids = _resolve_pinned_child_devices(
                 pin, parent_visible, role=self.config.service_role
             )
+            self._maybe_enable_pinned_shutdown_locked(host_ids)
             return self._finalize_child_env_locked(env, child_visible, host_ids)
 
         # Auto-pick from live nvidia-smi data. nvidia-smi reports HOST indices even
@@ -712,6 +713,38 @@ class ManagedRuntime:
             env.pop(key, None)
         self._child_host_visible = ",".join(str(index) for index in host_ids) or child_visible
         return env
+
+    def _maybe_enable_pinned_shutdown_locked(self, host_ids: tuple[int, ...]) -> None:
+        """Enable stage swapping when pinned GPUs cannot hold the hot set.
+
+        Auto GPU selection already flips shutdown-after-request when the hot
+        set exceeds the chosen card; explicit pins skipped that logic, so two
+        endpoints pinned to one small GPU stayed resident and starved each
+        other. Same rule, applied to the pinned capacity.
+        """
+        if self._shutdown_after_request or not host_ids:
+            return
+        hot_set_gb = self.config.hot_set_memory_gb
+        if hot_set_gb <= 0:
+            return
+        try:
+            gpus = _query_nvidia_gpus()
+            capacity_gb = sum(
+                float(gpu["total_vram_gb"])
+                for gpu in gpus
+                if int(gpu["index"]) in set(host_ids)
+            )
+        except Exception:
+            return
+        if capacity_gb and hot_set_gb > capacity_gb:
+            self._shutdown_after_request = True
+            logger.info(
+                "Pinned GPUs %s hold %.1f GB but the endpoint hot set needs %.1f GB; "
+                "enabling shutdown-after-request stage swapping.",
+                list(host_ids),
+                capacity_gb,
+                hot_set_gb,
+            )
 
     def _selected_devices_min_free_gib(self) -> float | None:
         visible = (self._child_host_visible or "").strip()

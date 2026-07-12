@@ -912,3 +912,67 @@ def test_shutdown_after_request_spares_warming_child(monkeypatch):
     runtime.note_served()
     runtime.request_finished()
     assert process.terminated is True
+
+
+def test_pinned_small_gpu_enables_stage_swapping(monkeypatch):
+    process = FakeProcess()
+
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="1, RTX 3090, 24576, 1, 24126, 0\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "1")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="vision",
+            model_memory_gb=21.0,
+            peer_model_memory_gb=20.0,
+            hot_set_memory_gb=41.0,
+        ),
+        popen_factory=lambda *a, **k: process,
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert runtime._shutdown_after_request is True
+
+
+def test_pinned_large_gpu_keeps_endpoints_resident(monkeypatch):
+    def fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="3, RTX PRO 6000, 97887, 1, 97000, 0\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.runtime.managed_openai_runtime.subprocess.run", fake_run)
+    monkeypatch.setenv("NVIDIA_VISION_VISIBLE_DEVICES", "3")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="vision",
+            hot_set_memory_gb=41.0,
+        ),
+        popen_factory=lambda *a, **k: FakeProcess(),
+        health_check=lambda _config: False,
+    )
+
+    runtime.ensure_started()
+
+    assert runtime._shutdown_after_request is False
