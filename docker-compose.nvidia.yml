@@ -26,8 +26,13 @@ services:
   # CUDA-native default (core directive: best engine + best model for the
   # platform): CUDA llama.cpp serving the largest downloaded Q4 candidate
   # that fits the selected GPU, swapped in and out by the managed runtime.
-  # For large-VRAM hosts preferring vLLM full precision, start the
-  # vision-server-vllm profile instead and point VISION_ENDPOINT_URL at it.
+  # For large-VRAM hosts preferring vLLM full precision, use the vision-vllm
+  # profile:
+  #   VISION_ENDPOINT_URL=http://vision-server-vllm:8000/v1 \
+  #   VISION_ENDPOINT_MODEL=Qwen/Qwen3-VL-30B-A3B-Instruct-FP8 \
+  #   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml \
+  #     --profile vision-vllm up -d
+  # and stop the default lane with: docker compose ... stop vision-server
   vision-server:
     <<: *cuda-service
     build: *cuda-build
@@ -43,10 +48,12 @@ services:
       - PORT=8000
       - MODEL_RUNTIME=command
       - MODEL_COMMAND=python -m app.runtime.llama_cpp_server
-      - MODEL_CANDIDATES_JSON=${VISION_MODEL_CANDIDATES_JSON:-[{"model":"/models/Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf","memory_gb":21},{"model":"/models/Qwen3VL-8B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf","memory_gb":7}]}
-      - MODEL_PATH=${VISION_MODEL_PATH:-/models/Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf}
-      - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-/models/mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf}
-      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf}
+      - MODEL_CANDIDATES_JSON=${VISION_MODEL_CANDIDATES_JSON:-[{"model":"/models/Qwen3VL-32B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf","memory_gb":26},{"model":"/models/Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf","memory_gb":21},{"model":"/models/Qwen3VL-8B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf","memory_gb":7}]}
+      # Explicit VISION_MODEL_PATH disables candidate selection (override wins).
+      - MODEL_PATH=${VISION_MODEL_PATH:-}
+      - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-}
+      - MODEL_NAME=${VISION_ENDPOINT_MODEL:-}
+      - MODEL_CHAT_FORMAT=${VISION_LLAMA_CHAT_FORMAT:-mtmd}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
       - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
       - SERVICE_ROLE=vision
@@ -91,7 +98,7 @@ services:
       - MODEL_NAME=${VISION_ENDPOINT_MODEL:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
       - VLLM_MODEL_ID=${VISION_VLLM_MODEL_ID:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
-      - VLLM_EXTRA_ARGS=--gpu-memory-utilization ${VISION_VLLM_GPU_MEMORY_UTILIZATION:-0.8}
+      - VLLM_EXTRA_ARGS=--gpu-memory-utilization ${VISION_VLLM_GPU_MEMORY_UTILIZATION:-0.8} --served-model-name ${VISION_ENDPOINT_MODEL:-Qwen/Qwen3-VL-30B-A3B-Instruct-FP8}
       - SERVICE_ROLE=vision
       - AUTO_NVIDIA_GPU_SELECTION=1
       - MODEL_MEMORY_GB=${VISION_VLLM_ESTIMATED_MEMORY_GB:-62}

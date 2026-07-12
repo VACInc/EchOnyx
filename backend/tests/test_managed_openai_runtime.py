@@ -569,6 +569,8 @@ def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monk
     runtime._process = process
     runtime._process_group_id = process.pid
     runtime.request_started()
+    # Teardown-after-request only applies once an inference has completed.
+    runtime.note_served()
 
     monkeypatch.setattr("app.runtime.managed_openai_runtime.os.killpg", lambda *_args: setattr(process, "returncode", 0))
     runtime.request_finished()
@@ -851,3 +853,62 @@ def test_candidate_exhaustion_is_transient_not_fatal(monkeypatch, tmp_path):
 
     # Transient failures must not poison /health.
     assert runtime.fatal_config_error() is None
+
+
+def test_explicit_model_path_override_disables_candidates(monkeypatch, tmp_path):
+    small = tmp_path / "small.gguf"
+    small.write_bytes(b"g")
+    runtime = _candidate_runtime(
+        tmp_path, [{"model": str(small), "mmproj": "", "memory_gb": 7.0}]
+    )
+
+    env = {"MODEL_PATH": "/models/operator-pinned.gguf", "MODEL_MMPROJ": "/models/pin.mmproj"}
+    runtime._apply_model_candidate_locked(env)
+
+    assert env["MODEL_PATH"] == "/models/operator-pinned.gguf"
+    assert env["MODEL_MMPROJ"] == "/models/pin.mmproj"
+
+
+def test_candidate_exhaustion_message_contains_no_paths(monkeypatch, tmp_path):
+    candidates = [
+        {"model": str(tmp_path / "secret-dir" / "absent.gguf"), "mmproj": "", "memory_gb": 7.0}
+    ]
+    runtime = _candidate_runtime(tmp_path, candidates)
+
+    with pytest.raises(TransientStartError) as excinfo:
+        runtime._apply_model_candidate_locked({})
+
+    message = str(excinfo.value)
+    assert "absent.gguf" in message
+    assert "secret-dir" not in message
+
+
+def test_shutdown_after_request_spares_warming_child(monkeypatch):
+    process = FakeProcess()
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="/models/model.gguf",
+            shutdown_after_request=True,
+        ),
+        popen_factory=lambda *a, **k: process,
+        health_check=lambda _config: False,
+    )
+    monkeypatch.delenv("NVIDIA_VISION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    # Warm-up request: child spawns, not ready, handler returns 503 and
+    # finishes the request. The child must survive.
+    runtime.request_started()
+    assert runtime.ensure_started() is False
+    runtime._process_group_id = None
+    runtime.request_finished()
+    assert process.terminated is False
+
+    # Completed inference sets the served flag; only then may teardown run.
+    runtime.request_started()
+    runtime.note_served()
+    runtime.request_finished()
+    assert process.terminated is True

@@ -504,7 +504,9 @@ def _recommendation_set(settings: Settings, runtime_plan) -> tuple[str, dict[str
         return "apple_silicon", {**base, **apple_overrides}
     if profile == HardwareProfile.CPU_ONLY.value or budget_gb < 16:
         return "small", {**base, **small_overrides}
-    if budget_gb < 40:
+    # The swap-per-stage single_gpu set is only executable on the CUDA lane;
+    # the ROCm compose services stay pinned to the base model paths.
+    if budget_gb < 40 and _enum_value(getattr(settings, "gpu_backend", "")) == "cuda":
         return "single_gpu", {**base, **single_gpu_overrides}
     return "large", base
 
@@ -1091,8 +1093,8 @@ async def _endpoint_status(url: str, api_key: str | None) -> str:
                     # Managed wrapper: idle children load on demand, so the
                     # endpoint is online unless its configuration is fatal.
                     return "offline" if payload.get("status") == "fatal" else "online"
-                if health.status_code == 200:
-                    return "online"
+                # An unrecognized /health (external gateway) proves nothing
+                # about the OpenAI path or credentials; probe the base URL.
             response = await client.get(url, headers=headers)
         if response.status_code < 500:
             return "online"

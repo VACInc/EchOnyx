@@ -625,3 +625,34 @@ async def test_endpoint_status_falls_back_to_base_url_for_external_endpoints(mon
 
     assert status == "online"
     assert client.called == ["https://api.example.com/health", "https://api.example.com/v1"]
+
+
+def test_recommendation_set_rocm_budget_stays_on_base_models():
+    from app.api.routes import settings as settings_module
+    from app.config import GPUBackend, HardwareProfile
+
+    fake_settings = types.SimpleNamespace(hardware_profile=HardwareProfile.MULTI_GPU, gpu_backend=GPUBackend.ROCM)
+    plan = types.SimpleNamespace(effective_memory_budget_gb=24.0)
+
+    tier, choices = settings_module._recommendation_set(fake_settings, plan)
+
+    # The ROCm compose lane pins the base vision path; single_gpu is CUDA-only.
+    assert tier == "large"
+    assert choices["vision"] == "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_status_distrusts_generic_health_endpoints(monkeypatch):
+    client = _fake_httpx(
+        monkeypatch,
+        {
+            "https://api.example.com/health": _FakeResponse(200, {"status": "ok"}),
+            "https://api.example.com/v1": _FakeResponse(401),
+        },
+    )
+
+    status = await settings_module._endpoint_status("https://api.example.com/v1", "bad-key")
+
+    # A generic 200 /health proves nothing; the base URL (401 < 500) decides.
+    assert status == "online"
+    assert client.called == ["https://api.example.com/health", "https://api.example.com/v1"]

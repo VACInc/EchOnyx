@@ -524,6 +524,7 @@ class ManagedRuntime:
         self._active_requests = 0
         self._shutdown_after_request = config.shutdown_after_request
         self._fatal_config_error: str | None = None
+        self._served_since_start = False
 
     def fatal_config_error(self) -> str | None:
         with self._lock:
@@ -567,6 +568,10 @@ class ManagedRuntime:
         with self._lock:
             self._last_request_ts = self._clock()
 
+    def note_served(self) -> None:
+        with self._lock:
+            self._served_since_start = True
+
     def request_started(self) -> None:
         with self._lock:
             self._last_request_ts = self._clock()
@@ -577,7 +582,15 @@ class ManagedRuntime:
             self._last_request_ts = self._clock()
             if self._active_requests > 0:
                 self._active_requests -= 1
-            if self._active_requests == 0 and self._shutdown_after_request and self._child_running_locked():
+            if (
+                self._active_requests == 0
+                and self._shutdown_after_request
+                and self._served_since_start
+                and self._child_running_locked()
+            ):
+                # Only tear down after a completed inference; a warm-up 503
+                # must never kill the still-loading child (retry loop of death
+                # on constrained single-GPU hosts).
                 self._terminate_locked()
 
     def child_running(self) -> bool:
@@ -614,6 +627,7 @@ class ManagedRuntime:
                 logger.error("Fatal endpoint configuration error: %s", exc)
                 raise RuntimeError(str(exc)) from exc
             self._process_group_id = getattr(self._process, "pid", None)
+            self._served_since_start = False
             self._last_start_ts = self._last_request_ts
             return False
 
@@ -728,6 +742,9 @@ class ManagedRuntime:
         candidates = self.config.model_candidates
         if not candidates:
             return
+        if (env.get("MODEL_PATH") or "").strip():
+            # Explicit operator override always wins over candidate selection.
+            return
         free_gib = self._selected_devices_min_free_gib()
         skipped: list[str] = []
         for candidate in candidates:
@@ -746,17 +763,22 @@ class ManagedRuntime:
                 )
                 continue
             env["MODEL_PATH"] = model_path
-            env["MODEL_NAME"] = Path(model_path).name
+            if not (env.get("MODEL_NAME") or "").strip():
+                env["MODEL_NAME"] = Path(model_path).name
             if mmproj:
                 env["MODEL_MMPROJ"] = mmproj
             else:
                 env.pop("MODEL_MMPROJ", None)
             logger.info("Selected model candidate %s for %s.", model_path, self.config.service_role or "endpoint")
             return
+        # Full diagnostics (paths, free VRAM) go to logs; the HTTP surface gets
+        # model identifiers and guidance only.
+        logger.warning("No usable model candidate: %s", "; ".join(skipped))
+        names = ", ".join(Path(candidate["model"]).name for candidate in candidates)
         raise TransientStartError(
-            "No model candidate is usable right now: "
-            + "; ".join(skipped)
-            + ". Download a candidate via Settings → Model Downloads or free GPU memory."
+            f"No approved model is ready ({names}): each is either not "
+            "downloaded or does not fit currently free GPU memory. Download "
+            "one via Settings → Model Downloads or free GPU memory."
         )
 
     def _terminate_locked(self) -> None:
@@ -919,6 +941,9 @@ class RuntimeProxyHandler(BaseHTTPRequestHandler):
                 return
 
             self._proxy_to_child()
+            # Teardown-after-request may only follow a completed inference;
+            # warm-up 503s above never set this.
+            self.runtime_manager.note_served()
         finally:
             self.runtime_manager.request_finished()
 
