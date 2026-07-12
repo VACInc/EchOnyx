@@ -2,6 +2,30 @@
 
 Reverse-chronological project milestones and validation notes. Operational plans and future work live in [ROADMAP.md](ROADMAP.md); support status lives in [docs/1.0-READINESS.md](docs/1.0-READINESS.md).
 
+## v1.0.0 - 2026-07-11
+
+First tagged release. Closed the 1.0 launch checklist's remaining gate by running
+the live GPU acceptance battery end to end on the Strix Halo ROCm reference
+machine (upload → transcription → vision → summarization → embedding → search →
+ask), which surfaced and fixed the issues below. All changes were independently
+code-reviewed before tagging.
+
+- Fixed ROCm transcription failing outright: transformers imports torchcodec
+  whenever its package metadata is present, and the CUDA-linked wheel pulled in
+  transitively by pyannote-audio cannot load in the ROCm image. A compat guard
+  at the model-loading funnel probes the real import once and registers a
+  spec-complete stub when broken, covering backend warm-up and worker pipelines.
+- Fixed vision model downloads leaving the endpoint unable to start: registry
+  entries now declare mmproj companion files, downloads launch them with the
+  primary, cached primaries heal missing companions, and model status,
+  recommendations, disk totals, and the settings UI all surface companion gaps
+  instead of reporting a partial download as cached.
+- Fixed transformers whisper segment text welding words together by preserving
+  token spacing during word-timestamp reassembly.
+- Fixed the backend test suite leaking deployment configuration: the auth
+  fixture pins ALLOW_INSECURE_AUTH_HTTP so the HTTPS-gate tests are
+  deterministic on any machine.
+
 ## 2026-07-06
 
 - Added the 1.0 readiness audit, support matrix, and launch checklist.
