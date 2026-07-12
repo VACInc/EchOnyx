@@ -487,6 +487,40 @@ class ManagedRuntime:
         with self._lock:
             return self._fatal_config_error
 
+    def health_snapshot(self) -> dict:
+        """Fatal state and child status read under one lock acquisition."""
+        with self._lock:
+            running = self._child_running_locked()
+            return {
+                "fatal": self._fatal_config_error is not None,
+                "child_running": running,
+                "child_ready": running and self._health_check(self.config),
+            }
+
+    def validate_startup_config(self) -> None:
+        """Fail fast on immutable configuration errors.
+
+        Explicit device pins and the runtime command shape cannot change for
+        the container's lifetime, so an invalid value must flip /health
+        immediately instead of waiting for the first proxied request to
+        discover it. Auto GPU selection depends on live occupancy and is
+        deliberately not validated here.
+        """
+        with self._lock:
+            try:
+                has_pin = any(
+                    os.environ.get(key, "").strip()
+                    for key in _explicit_visible_device_keys(self.config.service_role)
+                )
+                if has_pin:
+                    self._build_child_env_locked()
+                build_runtime_command(
+                    self.config, cuda_visible_devices=self._child_host_visible
+                )
+            except (RuntimeError, OSError) as exc:
+                self._fatal_config_error = str(exc)
+                logger.error("Fatal endpoint configuration error at startup: %s", exc)
+
     def note_activity(self) -> None:
         with self._lock:
             self._last_request_ts = self._clock()
@@ -525,13 +559,15 @@ class ManagedRuntime:
                 command = build_runtime_command(
                     self.config, cuda_visible_devices=self._child_host_visible
                 )
-            except RuntimeError as exc:
-                # Device pins and runtime command shape cannot heal without a
-                # container restart; memoize so /health reports the failure
-                # instead of the wrapper sitting healthy with no usable child.
+                self._process = self._popen_factory(command, env=env, start_new_session=True)
+            except (RuntimeError, OSError) as exc:
+                # Device pins, runtime command shape, and missing/non-executable
+                # engine binaries cannot heal without a container restart;
+                # memoize so /health reports the failure instead of the wrapper
+                # sitting healthy with no usable child.
                 self._fatal_config_error = str(exc)
-                raise
-            self._process = self._popen_factory(command, env=env, start_new_session=True)
+                logger.error("Fatal endpoint configuration error: %s", exc)
+                raise RuntimeError(str(exc)) from exc
             self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts
             return False
@@ -716,17 +752,19 @@ class RuntimeProxyHandler(BaseHTTPRequestHandler):
 
     def _handle(self) -> None:
         if self.path == "/health":
-            fatal = self.runtime_manager.fatal_config_error()
+            snapshot = self.runtime_manager.health_snapshot()
             body = {
                 **DEFAULT_HEALTH_BODY,
                 "runtime": self.runtime_manager.config.runtime,
-                "child_running": self.runtime_manager.child_running(),
-                "child_ready": self.runtime_manager.child_ready(),
+                "child_running": snapshot["child_running"],
+                "child_ready": snapshot["child_ready"],
             }
-            if fatal:
+            if snapshot["fatal"]:
+                # Details (device indices, allowlists) stay in the logs; this
+                # gateway may be reachable beyond localhost.
                 body["status"] = "fatal"
-                body["fatal_config_error"] = fatal
-            self._write_json(503 if fatal else 200, body)
+                body["detail"] = "Endpoint configuration is invalid; see container logs."
+            self._write_json(503 if snapshot["fatal"] else 200, body)
             return
 
         self.runtime_manager.note_activity()
@@ -734,12 +772,14 @@ class RuntimeProxyHandler(BaseHTTPRequestHandler):
         try:
             try:
                 ready = self.runtime_manager.ensure_started()
-            except RuntimeError as exc:
+            except RuntimeError:
                 self._write_json(
                     503,
                     {
                         "error": {
-                            "message": str(exc),
+                            "message": (
+                                "Endpoint configuration is invalid; see container logs."
+                            ),
                             "type": "unavailable_error",
                             "code": 503,
                         }
@@ -822,6 +862,7 @@ def _idle_monitor(runtime_manager: ManagedRuntime, stop_event: threading.Event) 
 def main() -> None:
     config = RuntimeConfig.from_env()
     runtime_manager = ManagedRuntime(config)
+    runtime_manager.validate_startup_config()
     stop_event = threading.Event()
 
     RuntimeProxyHandler.runtime_manager = runtime_manager

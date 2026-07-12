@@ -1,6 +1,7 @@
 """Embeddings and vector search using ChromaDB."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -50,8 +51,11 @@ _LEGACY_OWNER_FILENAME = "legacy_collection_owner.json"
 
 
 def _collection_slug(model_name: str) -> str:
+    """Readable prefix plus a digest so distinct models can never collide."""
     slug = re.sub(r"[^a-z0-9]+", "-", model_name.lower()).strip("-")
-    return (slug or "default")[:40].rstrip("-")
+    digest = hashlib.sha256(model_name.encode()).hexdigest()[:8]
+    prefix = (slug or "default")[:31].rstrip("-")
+    return f"{prefix}-{digest}"
 
 
 def _collection_name_for_model(model_name: str) -> str:
@@ -69,17 +73,30 @@ def _read_legacy_owner_model() -> str | None:
         payload = json.loads(_legacy_owner_path().read_text())
     except (OSError, ValueError):
         return None
+    if not isinstance(payload, dict):
+        return None
     owner = payload.get("embedding_model")
     return owner if isinstance(owner, str) and owner else None
 
 
-def _stamp_legacy_owner_model(model_name: str) -> None:
+def _claim_legacy_owner_model(model_name: str) -> bool:
+    """Atomically claim legacy-collection ownership; False if not claimed.
+
+    O_EXCL creation makes exactly one process the owner even when backend and
+    worker race with different models configured. Any failure means the claim
+    is not ours, so callers fail closed onto the namespaced collection.
+    """
     try:
         path = _legacy_owner_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"embedding_model": model_name}))
-    except OSError as exc:  # pragma: no cover - best effort marker
+        with open(path, "x", encoding="utf-8") as handle:
+            json.dump({"embedding_model": model_name}, handle)
+        return True
+    except FileExistsError:
+        return _read_legacy_owner_model() == model_name
+    except OSError as exc:
         logger.warning("Could not record legacy collection owner: %s", exc)
+        return False
 
 
 def get_collection(name: str | None = None) -> chromadb.Collection:
@@ -101,10 +118,9 @@ def get_collection(name: str | None = None) -> chromadb.Collection:
         name = namespaced
         if namespaced not in existing and _LEGACY_COLLECTION_NAME in existing:
             owner = _read_legacy_owner_model()
-            if owner is None:
-                _stamp_legacy_owner_model(active_model)
+            if owner == active_model:
                 name = _LEGACY_COLLECTION_NAME
-            elif owner == active_model:
+            elif owner is None and _claim_legacy_owner_model(active_model):
                 name = _LEGACY_COLLECTION_NAME
     return client.get_or_create_collection(
         name=name,
@@ -112,18 +128,34 @@ def get_collection(name: str | None = None) -> chromadb.Collection:
     )
 
 
+def _is_content_collection(name: str) -> bool:
+    return name == _LEGACY_COLLECTION_NAME or name.startswith(
+        f"{_LEGACY_COLLECTION_NAME}--"
+    )
+
+
 def delete_video_content(video_id: str) -> None:
     """Remove all indexed content for a video from every content collection."""
     try:
         client = get_chroma_client()
-        for collection_info in client.list_collections():
-            if not collection_info.name.startswith(_LEGACY_COLLECTION_NAME):
-                continue
-            client.get_collection(collection_info.name).delete(
-                where={"video_id": video_id}
-            )
+        collection_names = [
+            info.name
+            for info in client.list_collections()
+            if _is_content_collection(info.name)
+        ]
     except Exception as exc:
-        logger.warning("Failed to delete embeddings for %s: %s", video_id, exc)
+        logger.warning("Failed to list collections deleting %s: %s", video_id, exc)
+        return
+    for collection_name in collection_names:
+        try:
+            client.get_collection(collection_name).delete(where={"video_id": video_id})
+        except Exception as exc:
+            logger.warning(
+                "Failed to delete embeddings for %s from %s: %s",
+                video_id,
+                collection_name,
+                exc,
+            )
 
 
 async def generate_embeddings(texts: list[str]) -> list[list[float]]:

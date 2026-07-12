@@ -698,3 +698,62 @@ def test_unresolvable_pin_is_memoized_as_fatal_and_popen_never_runs(monkeypatch)
     with pytest.raises(RuntimeError, match="pinned GPUs"):
         runtime.ensure_started()
     assert popen_calls == []
+
+
+def test_validate_startup_config_flips_health_before_any_request(monkeypatch):
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+
+    runtime = ManagedRuntime(
+        _runtime_config(service_role="summarization"),
+        popen_factory=lambda *a, **k: FakeProcess(),
+        health_check=lambda _config: True,
+    )
+    runtime.validate_startup_config()
+
+    snapshot = runtime.health_snapshot()
+    assert snapshot["fatal"] is True
+    assert snapshot["child_running"] is False
+
+
+def test_validate_startup_config_ignores_transient_auto_selection(monkeypatch):
+    monkeypatch.delenv("NVIDIA_VISION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            service_role="vision",
+            auto_nvidia_gpu_selection=True,
+            runtime="command",
+            model_command="python3 -m app.runtime.llama_cpp_server",
+            model_path="",
+        ),
+        popen_factory=lambda *a, **k: FakeProcess(),
+        health_check=lambda _config: True,
+    )
+    runtime.validate_startup_config()
+
+    assert runtime.health_snapshot()["fatal"] is False
+
+
+def test_missing_engine_binary_is_memoized_as_fatal(monkeypatch):
+    monkeypatch.delenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", raising=False)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+    def missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("no such file: vllm")
+
+    runtime = ManagedRuntime(
+        _runtime_config(
+            service_role="summarization",
+            runtime="command",
+            model_command="definitely-missing-binary --serve",
+            model_path="",
+        ),
+        popen_factory=missing_binary,
+        health_check=lambda _config: True,
+    )
+
+    with pytest.raises(RuntimeError, match="no such file"):
+        runtime.ensure_started()
+    assert runtime.health_snapshot()["fatal"] is True

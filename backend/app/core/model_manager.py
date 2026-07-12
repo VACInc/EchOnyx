@@ -341,6 +341,25 @@ class ModelType(str, Enum):
     AUDIO_EVENT = "audio_event"
 
 
+_WORKER_MODEL_TYPES = {
+    ModelType.WHISPER,
+    ModelType.DIARIZATION,
+    ModelType.EMBEDDING,
+    ModelType.AUDIO_EVENT,
+}
+
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    try:
+        import torch
+
+        if isinstance(exc, torch.cuda.OutOfMemoryError):
+            return True
+    except Exception:  # pragma: no cover - torch always present in runtime
+        pass
+    return "out of memory" in str(exc).lower()
+
+
 class ModelManager:
     """
     Manages model loading and unloading based on hardware constraints.
@@ -482,7 +501,9 @@ class ModelManager:
                 if local is None or local >= torch.cuda.device_count():
                     continue
                 free_bytes, _total = torch.cuda.mem_get_info(local)
-                candidates.append((free_bytes / 1e9, host_index))
+                # Planner estimates are GiB-based; keep the comparison in GiB
+                # so boundary cases fail toward the actionable error.
+                candidates.append((free_bytes / (1024**3), host_index))
         except Exception:  # pragma: no cover - defensive telemetry fallback
             logger.warning(
                 "Free-VRAM query failed while placing %s; using first worker GPU.",
@@ -664,6 +685,28 @@ class ModelManager:
         # backend warm-up and worker pipelines are equally protected.
         ensure_torchcodec_importable_or_stub()
 
+        try:
+            return await self._dispatch_load(model_type)
+        except Exception as exc:
+            # Free-VRAM placement is check-then-load: another process
+            # (backend vs worker, or a foreign GPU consumer) can claim the
+            # chosen GPU between the check and the allocation. One re-place
+            # with fresh telemetry either lands on a different GPU or raises
+            # the actionable insufficient-VRAM error.
+            if (
+                model_type in _WORKER_MODEL_TYPES
+                and self.settings.gpu_backend == GPUBackend.CUDA
+                and len(self.worker_gpu_indices) > 1
+                and _is_cuda_oom(exc)
+            ):
+                logger.warning(
+                    "CUDA OOM while loading %s; retrying once with fresh placement.",
+                    model_type.value,
+                )
+                return await self._dispatch_load(model_type)
+            raise
+
+    async def _dispatch_load(self, model_type: ModelType) -> Any:
         if model_type == ModelType.WHISPER:
             return await self._load_whisper()
         elif model_type == ModelType.DIARIZATION:

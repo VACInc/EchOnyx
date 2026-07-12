@@ -769,7 +769,7 @@ def _fake_torch_with_free_gb(free_gb_by_local):
         cuda=types.SimpleNamespace(
             is_available=lambda: True,
             device_count=lambda: len(free_gb_by_local),
-            mem_get_info=lambda local: (int(free_gb_by_local[local] * 1e9), int(24e9)),
+            mem_get_info=lambda local: (int(free_gb_by_local[local] * 1024**3), int(24 * 1024**3)),
         )
     )
 
