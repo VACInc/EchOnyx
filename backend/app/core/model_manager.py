@@ -23,6 +23,8 @@ from app.runtime.planner import build_runtime_plan
 
 logger = logging.getLogger(__name__)
 
+_WORKER_VRAM_HEADROOM_GB = 1.0
+
 
 def _is_granite_speech_model(model_name: str) -> bool:
     """Heuristic to detect Granite speech models."""
@@ -403,10 +405,17 @@ class ModelManager:
         runtime_label: str,
         strict: bool,
         endpoint: bool = False,
+        model_key: str | None = None,
     ) -> str:
-        indices = self.endpoint_gpu_indices if endpoint else self.worker_gpu_indices
+        if endpoint:
+            indices = self.endpoint_gpu_indices
+            host_index = indices[0] if indices else None
+        else:
+            host_index = self._pick_worker_host_index(
+                runtime_label=runtime_label, model_key=model_key
+            )
         device_index = self._cuda_local_device_index(
-            indices[0] if indices else None,
+            host_index,
             runtime_label=runtime_label,
         )
         return _torch_device(
@@ -426,11 +435,85 @@ class ModelManager:
             return host_index
         return _cuda_local_device_index(host_index, runtime_label=runtime_label)
 
-    def _worker_cuda_local_device_index(self, *, runtime_label: str) -> int | None:
+    def _worker_cuda_local_device_index(
+        self, *, runtime_label: str, model_key: str | None = None
+    ) -> int | None:
         return self._cuda_local_device_index(
-            self.worker_gpu_indices[0] if self.worker_gpu_indices else None,
+            self._pick_worker_host_index(
+                runtime_label=runtime_label, model_key=model_key
+            ),
             runtime_label=runtime_label,
         )
+
+    def _estimated_model_gb(self, model_key: str | None) -> float | None:
+        if not model_key:
+            return None
+        estimates = getattr(self.runtime_plan, "estimated_memory_by_model_gb", None) or {}
+        value = estimates.get(model_key)
+        return float(value) if value else None
+
+    def _pick_worker_host_index(
+        self, *, runtime_label: str, model_key: str | None = None
+    ) -> int | None:
+        """Choose the worker GPU with the most free memory for this model.
+
+        Worker models previously all landed on the first preferred device,
+        which OOMs on multi-GPU CUDA hosts once that device cannot hold the
+        resident set — even while other visible worker GPUs sit idle.
+        Endpoint pins are not affected. Non-CUDA backends, single-GPU
+        workers, and telemetry failures keep the original first-device
+        behavior.
+        """
+        indices = self.worker_gpu_indices
+        if not indices:
+            return None
+        if self.settings.gpu_backend != GPUBackend.CUDA or len(indices) == 1:
+            return indices[0]
+        try:
+            import torch
+
+            if not torch.cuda.is_available():
+                return indices[0]
+            candidates: list[tuple[float, int]] = []
+            for host_index in indices:
+                local = _cuda_local_device_index(
+                    host_index, runtime_label=runtime_label
+                )
+                if local is None or local >= torch.cuda.device_count():
+                    continue
+                free_bytes, _total = torch.cuda.mem_get_info(local)
+                candidates.append((free_bytes / 1e9, host_index))
+        except Exception:  # pragma: no cover - defensive telemetry fallback
+            logger.warning(
+                "Free-VRAM query failed while placing %s; using first worker GPU.",
+                runtime_label,
+            )
+            return indices[0]
+        if not candidates:
+            return indices[0]
+        candidates.sort(reverse=True)
+        best_free_gb, best_index = candidates[0]
+        estimated_gb = self._estimated_model_gb(model_key)
+        if (
+            estimated_gb is not None
+            and best_free_gb < estimated_gb + _WORKER_VRAM_HEADROOM_GB
+        ):
+            raise RuntimeError(
+                f"Insufficient free VRAM for {runtime_label}: needs about "
+                f"{estimated_gb:.1f} GB plus {_WORKER_VRAM_HEADROOM_GB:.1f} GB headroom, "
+                f"but the emptiest worker GPU (host index {best_index}) has only "
+                f"{best_free_gb:.1f} GB free. Free VRAM on the worker GPUs or adjust "
+                "CUDA_VISIBLE_DEVICES before retrying."
+            )
+        if best_index != indices[0]:
+            logger.info(
+                "Placing %s on GPU %s (%.1f GB free) instead of first worker GPU %s.",
+                runtime_label,
+                best_index,
+                best_free_gb,
+                indices[0],
+            )
+        return best_index
 
     @property
     def model_auto_download_enabled(self) -> bool:
@@ -613,6 +696,7 @@ class ModelManager:
             device = self._torch_runtime_device(
                 strict=self.requires_strict_accelerator,
                 runtime_label="audio event classification",
+                model_key="audio_event",
             )
             # CLAP batch norm is not reliable in half precision on CUDA here.
             # Keep it in float32 and let this optional stage fail-soft only for other reasons.
@@ -671,7 +755,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Canary transcription",
-                device_index=self._worker_cuda_local_device_index(runtime_label="Canary transcription"),
+                device_index=self._worker_cuda_local_device_index(runtime_label="Canary transcription", model_key="whisper"),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
@@ -704,7 +788,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 strict=self.requires_strict_accelerator and not self.settings.granite_force_cpu,
                 runtime_label="Granite transcription",
-                device_index=self._worker_cuda_local_device_index(runtime_label="Granite transcription"),
+                device_index=self._worker_cuda_local_device_index(runtime_label="Granite transcription", model_key="whisper"),
             )
             if self.settings.granite_force_cpu:
                 device = "cpu"
@@ -765,7 +849,7 @@ class ModelManager:
                 self.settings.gpu_backend,
                 self.settings.model_cache_dir,
                 strict_accelerator=self.requires_strict_accelerator,
-                device_index=self._worker_cuda_local_device_index(runtime_label="transcription"),
+                device_index=self._worker_cuda_local_device_index(runtime_label="transcription", model_key="whisper"),
             )
             logger.info("Loaded Whisper transformers model: %s", resolved_name)
             return model
@@ -774,7 +858,7 @@ class ModelManager:
             resolved_name,
             self.settings.gpu_backend,
             self.settings.model_cache_dir,
-            device_index=self._worker_cuda_local_device_index(runtime_label="transcription"),
+            device_index=self._worker_cuda_local_device_index(runtime_label="transcription", model_key="whisper"),
         )
         logger.info("Loaded Whisper model: %s", resolved_name)
         return model
@@ -806,6 +890,7 @@ class ModelManager:
             device = self._torch_runtime_device(
                 strict=self.requires_strict_accelerator,
                 runtime_label="diarization",
+                model_key="diarization",
             )
             if device != "cpu":
                 try:
@@ -992,6 +1077,7 @@ class ModelManager:
         device = self._torch_runtime_device(
             strict=self.requires_strict_accelerator,
             runtime_label="embedding",
+            model_key="embedding",
         )
 
         loop = asyncio.get_event_loop()
