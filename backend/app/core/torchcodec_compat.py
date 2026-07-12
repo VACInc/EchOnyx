@@ -15,6 +15,7 @@ torchcodec.decoders.AudioDecoder)` check is False for our dict inputs. On
 platforms where torchcodec imports cleanly this is a no-op.
 """
 
+import importlib.machinery
 import logging
 import sys
 import types
@@ -53,6 +54,16 @@ def ensure_torchcodec_importable_or_stub() -> bool:
         decoders = _StubModule("torchcodec.decoders")
         decoders.AudioDecoder = _StubAudioDecoder
         stub.decoders = decoders
+        # importlib.util.find_spec raises ValueError for sys.modules entries
+        # whose __spec__ is None, which breaks later availability probes
+        # (e.g. transformers' _is_package_available).
+        stub.__spec__ = importlib.machinery.ModuleSpec(
+            "torchcodec", None, is_package=True
+        )
+        stub.__path__ = []
+        decoders.__spec__ = importlib.machinery.ModuleSpec(
+            "torchcodec.decoders", None
+        )
         sys.modules["torchcodec"] = stub
         sys.modules["torchcodec.decoders"] = decoders
         return False
