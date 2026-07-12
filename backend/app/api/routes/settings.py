@@ -27,6 +27,7 @@ from app.config import (
     get_settings,
 )
 from app.core.model_downloader import (
+    companion_model_names,
     download_model_async,
     get_all_download_progress,
     get_download_progress,
@@ -766,7 +767,65 @@ async def download_model_candidate(request: ModelDownloadRequest) -> JSONRespons
     content = {"model_name": model_name, "status": "downloading"}
     if note:
         content["note"] = note
+    companions = _launch_companion_downloads(model_name, component, backend, settings)
+    if companions:
+        content["companions"] = companions
     return JSONResponse(status_code=202, content=content)
+
+
+def _launch_companion_downloads(
+    model_name: str, component: str, backend: str, settings
+) -> list[dict]:
+    """Start registry-declared companion downloads (e.g. a vision mmproj).
+
+    Best-effort: a companion problem is reported in the response instead of
+    failing the primary download, but it is never silently skipped, because a
+    vision endpoint cannot start with the projector missing.
+    """
+    results: list[dict] = []
+    for companion in companion_model_names(model_name):
+        progress = get_download_progress(companion)
+        if progress and progress.get("status") == "downloading":
+            results.append({"model_name": companion, "status": "downloading"})
+            continue
+        if is_model_cached(
+            companion,
+            settings.model_cache_dir,
+            component=component,
+            backend=backend,
+        ):
+            results.append({"model_name": companion, "status": "cached"})
+            continue
+        try:
+            expected_size_gb = _expected_download_size_gb(component, companion)
+            total_bytes = 0
+            if expected_size_gb is not None:
+                _ensure_download_disk_space(
+                    settings.model_cache_dir, companion, expected_size_gb
+                )
+                total_bytes = int(expected_size_gb * BYTES_PER_GB)
+            if not reserve_download_progress(companion, total_bytes=total_bytes):
+                results.append({"model_name": companion, "status": "downloading"})
+                continue
+            task = asyncio.create_task(
+                download_model_async(
+                    companion,
+                    settings.model_cache_dir,
+                    component=component,
+                    backend=backend,
+                )
+            )
+            task.add_done_callback(_task_log_download_result)
+            results.append({"model_name": companion, "status": "downloading"})
+        except HTTPException as exc:
+            results.append(
+                {"model_name": companion, "status": "error", "detail": str(exc.detail)}
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            results.append(
+                {"model_name": companion, "status": "error", "detail": str(exc)}
+            )
+    return results
 
 
 @router.get("/models/recommendations")

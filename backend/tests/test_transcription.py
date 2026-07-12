@@ -86,6 +86,60 @@ async def test_transcribe_nemo_canary_uses_settings(monkeypatch, tmp_path):
     assert result["language"] == "en"
 
 
+@pytest.mark.asyncio
+async def test_whisper_word_chunks_keep_spacing_in_segments(monkeypatch, tmp_path):
+    """Transformers word tokens carry leading spaces; segment text must not weld words."""
+    chunks = [
+        {"timestamp": (0.0, 0.4), "text": " Alright,"},
+        {"timestamp": (0.4, 0.7), "text": " so"},
+        {"timestamp": (0.7, 0.9), "text": " here"},
+        {"timestamp": (0.9, 1.1), "text": " we"},
+        {"timestamp": (1.1, 1.4), "text": " are."},
+        # Gap > 1.5s forces a second segment.
+        {"timestamp": (20.0, 20.5), "text": " Bye."},
+    ]
+
+    def fake_pipeline(_task, **_kwargs):
+        def asr(_inputs, **_call_kwargs):
+            return {"text": "Alright, so here we are. Bye.", "chunks": chunks}
+
+        return asr
+
+    fake_transformers = types.SimpleNamespace(pipeline=fake_pipeline)
+    fake_sf = types.SimpleNamespace(
+        read=lambda _path: (np.zeros(16000, dtype=np.float32), 16000),
+    )
+    # Pin torch too: other tests in the suite leave a fake torch module in
+    # sys.modules without a `cuda` attribute, and this path imports it locally.
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+    )
+    monkeypatch.setitem(sys.modules, "transformers", fake_transformers)
+    monkeypatch.setitem(sys.modules, "soundfile", fake_sf)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(b"placeholder")
+
+    result = await transcription._transcribe_transformers_asr(
+        {
+            "type": "whisper_transformers",
+            "model": object(),
+            "processor": object(),
+            "tokenizer": object(),
+            "feature_extractor": object(),
+            "device": "cpu",
+        },
+        audio_path,
+    )
+
+    assert [segment["text"] for segment in result["segments"]] == [
+        "Alright, so here we are.",
+        "Bye.",
+    ]
+    assert result["text"] == "Alright, so here we are. Bye."
+
+
 def test_cuda_device_id_supports_indexed_cuda_devices():
     fake_torch = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True))
 
