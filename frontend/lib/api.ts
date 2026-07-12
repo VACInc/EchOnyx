@@ -76,10 +76,17 @@ interface ModelRecommendationsResponse {
   recommendations: Record<string, ModelRecommendationEntry>;
 }
 
+interface CompanionDownloadStatus {
+  model_name: string;
+  status: string;
+  detail?: string | null;
+}
+
 interface ModelDownloadResponse {
   model_name: string;
   status: string;
   note?: string | null;
+  companions?: CompanionDownloadStatus[] | null;
 }
 
 export interface UploadProgressEvent {

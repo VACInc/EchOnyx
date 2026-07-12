@@ -536,12 +536,28 @@ export default function SettingsPage() {
       setDownloadRequestId(`${component}:${modelName}`);
     },
     onSuccess: async (response) => {
-      setPollDownloads(response.status === "downloading");
-      toast({
-        title: response.status === "cached" ? "Model already cached" : "Download started",
-        description: response.note ?? response.model_name,
-        variant: "success",
-      });
+      const companions = response.companions ?? [];
+      const failedCompanions = companions.filter((companion) => companion.status === "error");
+      const companionDownloading = companions.some((companion) => companion.status === "downloading");
+      setPollDownloads(response.status === "downloading" || companionDownloading);
+      if (failedCompanions.length > 0) {
+        toast({
+          title: "Companion download failed",
+          description: failedCompanions
+            .map((companion) => `${companion.model_name}: ${companion.detail ?? "unknown error"}`)
+            .join("; "),
+          variant: "error",
+        });
+      } else {
+        toast({
+          title:
+            response.status === "cached" && !companionDownloading
+              ? "Model already cached"
+              : "Download started",
+          description: response.note ?? response.model_name,
+          variant: "success",
+        });
+      }
       await queryClient.invalidateQueries({ queryKey: ["model-status"] });
       await queryClient.invalidateQueries({ queryKey: ["model-recommendations"] });
     },
