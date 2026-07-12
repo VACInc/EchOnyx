@@ -752,3 +752,73 @@ async def test_load_vision_primes_cuda_visibility_before_llama_import(monkeypatc
     model = await manager._load_vision()
 
     assert model["kwargs"]["model_path"] == str(model_path)
+
+
+def _placement_manager(backend, worker_indices, estimates=None):
+    manager = ModelManager.__new__(ModelManager)
+    manager.settings = types.SimpleNamespace(gpu_backend=backend)
+    manager.runtime_plan = types.SimpleNamespace(
+        preferred_worker_device_indices=tuple(worker_indices),
+        estimated_memory_by_model_gb=estimates or {},
+    )
+    return manager
+
+
+def _fake_torch_with_free_gb(free_gb_by_local):
+    return types.SimpleNamespace(
+        cuda=types.SimpleNamespace(
+            is_available=lambda: True,
+            device_count=lambda: len(free_gb_by_local),
+            mem_get_info=lambda local: (int(free_gb_by_local[local] * 1e9), int(24e9)),
+        )
+    )
+
+
+def test_worker_placement_picks_emptiest_visible_gpu(monkeypatch):
+    manager = _placement_manager(GPUBackend.CUDA, (6, 2), {"whisper": 6.0})
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,6")
+    # local 0 = host 2 (20 GB free), local 1 = host 6 (3 GB free)
+    monkeypatch.setitem(sys.modules, "torch", _fake_torch_with_free_gb({0: 20.0, 1: 3.0}))
+
+    assert manager._pick_worker_host_index(runtime_label="transcription", model_key="whisper") == 2
+
+
+def test_worker_placement_raises_actionable_error_when_nothing_fits(monkeypatch):
+    manager = _placement_manager(GPUBackend.CUDA, (6, 2), {"embedding": 16.0})
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,6")
+    monkeypatch.setitem(sys.modules, "torch", _fake_torch_with_free_gb({0: 5.0, 1: 4.0}))
+
+    with pytest.raises(RuntimeError, match="Insufficient free VRAM"):
+        manager._pick_worker_host_index(runtime_label="embedding", model_key="embedding")
+
+
+def test_worker_placement_keeps_first_device_for_non_cuda_backends():
+    manager = _placement_manager(GPUBackend.ROCM, (0, 1))
+    assert manager._pick_worker_host_index(runtime_label="embedding") == 0
+
+
+def test_worker_placement_keeps_single_device_without_telemetry():
+    manager = _placement_manager(GPUBackend.CUDA, (1,))
+    assert manager._pick_worker_host_index(runtime_label="embedding") == 1
+
+
+def test_worker_placement_falls_back_to_first_device_on_telemetry_failure(monkeypatch):
+    manager = _placement_manager(GPUBackend.CUDA, (6, 2))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,6")
+
+    def boom(_local):
+        raise RuntimeError("nvml unavailable")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        types.SimpleNamespace(
+            cuda=types.SimpleNamespace(
+                is_available=lambda: True,
+                device_count=lambda: 2,
+                mem_get_info=boom,
+            )
+        ),
+    )
+
+    assert manager._pick_worker_host_index(runtime_label="transcription") == 6
