@@ -380,7 +380,13 @@ async def test_model_recommendations_use_small_set_for_low_budget(monkeypatch, t
     assert response["recommendations"]["embedding"]["model_name"] == "nomic-ai/nomic-embed-text-v1.5"
     assert response["recommendations"]["vision"]["model_name"] == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
     assert response["recommendations"]["summarization"]["model_name"] == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
-    assert response["total_additional_download_gb"] == pytest.approx(12.6)
+    # 12.6 for the primaries plus 1.0 for the vision mmproj companion, which
+    # is required before the vision endpoint can start.
+    assert response["total_additional_download_gb"] == pytest.approx(13.6)
+    assert response["recommendations"]["vision"]["missing_companions"] == [
+        "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
+    ]
+    assert response["recommendations"]["vision"]["cached"] is False
     assert "sub-16 GB" in response["recommendations"]["vision"]["reason"]
 
 

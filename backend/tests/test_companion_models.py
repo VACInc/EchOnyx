@@ -1,3 +1,8 @@
+from app.api.routes.settings import (
+    ModelDownloadResponse,
+    _companion_gap_entry,
+    _missing_companion_names,
+)
 from app.core.model_downloader import MODEL_REGISTRY, companion_model_names
 
 
@@ -31,3 +36,53 @@ def test_declared_companions_resolve_in_registry():
                 f"{name} declares companion {companion} that is not registered"
             )
             assert companion != name
+
+
+def test_missing_companions_uses_cache_dir(tmp_path):
+    vision = "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+    mmproj = "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+    assert _missing_companion_names(vision, tmp_path) == [mmproj]
+
+    (tmp_path / mmproj).write_bytes(b"gguf")
+    assert _missing_companion_names(vision, tmp_path) == []
+
+
+def test_companion_gap_reports_cached_primary_as_uncached():
+    vision = "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+    mmproj = "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+    entry = _companion_gap_entry(vision, "vision", [mmproj], {})
+
+    assert entry == {
+        "model_name": vision,
+        "status": "uncached",
+        "expected_size_gb": 1.0,
+        "missing_companions": [mmproj],
+    }
+
+
+def test_companion_gap_prefers_live_download_progress():
+    vision = "Qwen3VL-32B-Instruct-Q4_K_M.gguf"
+    mmproj = "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+    progress = {mmproj: {"model_name": mmproj, "status": "downloading", "progress_percent": 40}}
+
+    entry = _companion_gap_entry(vision, "vision", [mmproj], progress)
+
+    assert entry is not None
+    assert entry["status"] == "downloading"
+
+
+def test_companion_gap_absent_when_companions_present():
+    assert _companion_gap_entry("Qwen3VL-32B-Instruct-Q4_K_M.gguf", "vision", [], {}) is None
+
+
+def test_download_response_schema_declares_companions():
+    response = ModelDownloadResponse(
+        model_name="Qwen3VL-32B-Instruct-Q4_K_M.gguf",
+        status="cached",
+        companions=[
+            {"model_name": "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf", "status": "error", "detail": "disk full"}
+        ],
+    )
+    dumped = response.model_dump()
+    assert dumped["companions"][0]["status"] == "error"
+    assert "companions" in ModelDownloadResponse.model_fields

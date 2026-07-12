@@ -280,10 +280,17 @@ class ModelDownloadRequest(BaseModel):
     model_name: str
 
 
+class CompanionDownloadStatus(BaseModel):
+    model_name: str
+    status: str
+    detail: str | None = None
+
+
 class ModelDownloadResponse(BaseModel):
     model_name: str
     status: str
     note: str | None = None
+    companions: list[CompanionDownloadStatus] | None = None
 
 
 ENV_FIELD_MAP: dict[str, str] = {
@@ -833,6 +840,46 @@ def _launch_companion_downloads(
     return results
 
 
+def _missing_companion_names(model_name: str, cache_dir) -> list[str]:
+    """Registry companions of model_name that are absent from the cache."""
+    return [
+        companion
+        for companion in companion_model_names(model_name)
+        if resolve_local_model_path(companion, cache_dir) is None
+    ]
+
+
+def _companion_additional_gb(component: str, missing: list[str]) -> float:
+    total = 0.0
+    for companion in missing:
+        size_gb = _expected_download_size_gb(component, companion)
+        if size_gb:
+            total += size_gb
+    return total
+
+
+def _companion_gap_entry(
+    model_name: str, component: str, missing: list[str], download_progress: dict
+) -> dict | None:
+    """Status entry for a cached primary whose companions are not all usable.
+
+    Without this, a vision GGUF missing its mmproj reports `cached`, the UI
+    disables Download, and the unusable endpoint has no repair path.
+    """
+    if not missing:
+        return None
+    for companion in missing:
+        progress = download_progress.get(companion)
+        if progress and progress.get("status") == "downloading":
+            return _normalize_progress_status(progress)
+    return {
+        "model_name": model_name,
+        "status": "uncached",
+        "expected_size_gb": round(_companion_additional_gb(component, missing), 2),
+        "missing_companions": missing,
+    }
+
+
 @router.get("/models/recommendations")
 async def get_model_recommendations() -> dict:
     """Return hardware-aware model recommendations for the active profile."""
@@ -856,6 +903,12 @@ async def get_model_recommendations() -> dict:
             backend=backend,
         )
         additional_gb = 0.0 if cached or expected_size_gb is None else expected_size_gb
+        # A model is only usable with its registry companions (e.g. mmproj);
+        # count missing ones in both the cached flag and download totals.
+        missing_companions = _missing_companion_names(model_name, cache_dir)
+        if missing_companions:
+            cached = False
+            additional_gb += _companion_additional_gb(component, missing_companions)
         total_additional_gb += additional_gb
         recommendations[component] = {
             "model_name": model_name,
@@ -864,6 +917,8 @@ async def get_model_recommendations() -> dict:
             "additional_download_gb": round(additional_gb, 2),
             "reason": _recommendation_reason(component, tier, runtime_plan),
         }
+        if missing_companions:
+            recommendations[component]["missing_companions"] = missing_companions
 
     return {
         "hardware_profile": _enum_value(settings.hardware_profile),
@@ -914,6 +969,15 @@ async def get_model_download_status() -> dict:
         if model_name.lower().endswith(".gguf"):
             model_path = resolve_local_model_path(model_name, cache_dir)
             if model_path is not None:
+                gap_entry = _companion_gap_entry(
+                    model_name,
+                    "asr" if model_type == "whisper" else model_type,
+                    _missing_companion_names(model_name, cache_dir),
+                    download_progress,
+                )
+                if gap_entry is not None:
+                    models_status[model_type] = gap_entry
+                    continue
                 file_size = model_path.stat().st_size
                 models_status[model_type] = {
                     "model_name": model_name,
