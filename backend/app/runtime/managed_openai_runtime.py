@@ -1054,6 +1054,10 @@ def _idle_monitor(runtime_manager: ManagedRuntime, stop_event: threading.Event) 
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=os.environ.get("RUNTIME_LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     config = RuntimeConfig.from_env()
     runtime_manager = ManagedRuntime(config)
     runtime_manager.validate_startup_config()
