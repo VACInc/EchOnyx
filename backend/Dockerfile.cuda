@@ -99,7 +99,7 @@ RUN set -e; \
       cmake -S /tmp/llama-cpp-python/vendor/llama.cpp -B /tmp/llama-server-build \
         -DGGML_CUDA=on \
         ${CUDA_ARCHITECTURES:+-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES} \
-        -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
         -DCMAKE_BUILD_TYPE=Release; \
       cmake --build /tmp/llama-server-build --target llama-server -j"$(nproc)"; \
       install -D /tmp/llama-server-build/bin/llama-server /opt/cuda-llama/bin/llama-server; \
