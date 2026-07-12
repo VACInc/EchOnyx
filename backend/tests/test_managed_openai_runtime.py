@@ -569,13 +569,18 @@ def test_managed_runtime_enables_shutdown_after_request_on_single_small_gpu(monk
     runtime._process = process
     runtime._process_group_id = process.pid
     runtime.request_started()
-    # Teardown-after-request only applies once an inference has completed.
     runtime.note_served()
 
     monkeypatch.setattr("app.runtime.managed_openai_runtime.os.killpg", lambda *_args: setattr(process, "returncode", 0))
     runtime.request_finished()
 
     assert captured["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+    # Hot-set pressure now swaps via a short idle linger, not per-request
+    # teardown: the child survives the request and is reaped once idle.
+    assert runtime.child_running() is True
+    assert runtime._swap_idle_override_s == 30.0
+    runtime._last_request_ts = runtime._clock() - 31.0
+    assert runtime.maybe_stop_idle_process() is True
     assert runtime.child_running() is False
 
 
@@ -945,7 +950,8 @@ def test_pinned_small_gpu_enables_stage_swapping(monkeypatch):
 
     runtime.ensure_started()
 
-    assert runtime._shutdown_after_request is True
+    assert runtime._shutdown_after_request is False
+    assert runtime._swap_idle_override_s == 30.0
 
 
 def test_pinned_large_gpu_keeps_endpoints_resident(monkeypatch):

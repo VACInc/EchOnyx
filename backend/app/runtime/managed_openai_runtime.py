@@ -525,6 +525,7 @@ class ManagedRuntime:
         self._shutdown_after_request = config.shutdown_after_request
         self._fatal_config_error: str | None = None
         self._served_since_start = False
+        self._swap_idle_override_s: float | None = None
 
     def fatal_config_error(self) -> str | None:
         with self._lock:
@@ -632,7 +633,11 @@ class ManagedRuntime:
             return False
 
     def maybe_stop_idle_process(self) -> bool:
-        timeout = self.config.idle_timeout_seconds
+        timeout = (
+            self._swap_idle_override_s
+            if self._swap_idle_override_s is not None
+            else self.config.idle_timeout_seconds
+        )
         if timeout <= 0:
             return False
 
@@ -673,7 +678,7 @@ class ManagedRuntime:
             child_visible, host_ids = _resolve_pinned_child_devices(
                 pin, parent_visible, role=self.config.service_role
             )
-            self._maybe_enable_pinned_shutdown_locked(host_ids)
+            self._maybe_enable_swap_idle_locked(host_ids)
             return self._finalize_child_env_locked(env, child_visible, host_ids)
 
         # Auto-pick from live nvidia-smi data. nvidia-smi reports HOST indices even
@@ -688,7 +693,12 @@ class ManagedRuntime:
                 visible_devices, shutdown_after_request = _select_nvidia_visible_devices(
                     self.config, gpus
                 )
-                self._shutdown_after_request = shutdown_after_request
+                if shutdown_after_request and not self.config.shutdown_after_request:
+                    self._swap_idle_override_s = float(
+                        os.environ.get("SWAP_IDLE_TIMEOUT_SECONDS", "30") or 30
+                    )
+                else:
+                    self._shutdown_after_request = shutdown_after_request
                 if visible_devices:
                     child_visible, host_ids = _resolve_pinned_child_devices(
                         ",".join(visible_devices), parent_visible, role=self.config.service_role
@@ -714,15 +724,19 @@ class ManagedRuntime:
         self._child_host_visible = ",".join(str(index) for index in host_ids) or child_visible
         return env
 
-    def _maybe_enable_pinned_shutdown_locked(self, host_ids: tuple[int, ...]) -> None:
-        """Enable stage swapping when pinned GPUs cannot hold the hot set.
+    def _maybe_enable_swap_idle_locked(self, host_ids: tuple[int, ...]) -> None:
+        """Enable stage swapping when the target GPUs cannot hold the hot set.
 
-        Auto GPU selection already flips shutdown-after-request when the hot
-        set exceeds the chosen card; explicit pins skipped that logic, so two
-        endpoints pinned to one small GPU stayed resident and starved each
-        other. Same rule, applied to the pinned capacity.
+        Swap mode uses a short idle linger rather than per-request teardown:
+        multi-request stages (vision analyzes many frames) keep the child warm
+        between calls instead of reloading tens of GB per request, and the
+        card frees a few seconds after the stage ends so the peer endpoint
+        can load. Explicit SHUTDOWN_AFTER_REQUEST=true keeps its old
+        per-request behavior.
         """
-        if self._shutdown_after_request or not host_ids:
+        if self._shutdown_after_request or self._swap_idle_override_s is not None:
+            return
+        if not host_ids:
             return
         hot_set_gb = self.config.hot_set_memory_gb
         if hot_set_gb <= 0:
@@ -737,13 +751,16 @@ class ManagedRuntime:
         except Exception:
             return
         if capacity_gb and hot_set_gb > capacity_gb:
-            self._shutdown_after_request = True
+            self._swap_idle_override_s = float(
+                os.environ.get("SWAP_IDLE_TIMEOUT_SECONDS", "30") or 30
+            )
             logger.info(
-                "Pinned GPUs %s hold %.1f GB but the endpoint hot set needs %.1f GB; "
-                "enabling shutdown-after-request stage swapping.",
+                "GPUs %s hold %.1f GB but the endpoint hot set needs %.1f GB; "
+                "swap mode active with a %.0fs idle linger.",
                 list(host_ids),
                 capacity_gb,
                 hot_set_gb,
+                self._swap_idle_override_s,
             )
 
     def _selected_devices_min_free_gib(self) -> float | None:
