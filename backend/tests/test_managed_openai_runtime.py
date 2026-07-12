@@ -668,3 +668,33 @@ def test_managed_runtime_does_not_stop_while_request_is_in_flight():
 
     assert runtime.maybe_stop_idle_process() is False
     assert process.terminated is False
+
+
+def test_unresolvable_pin_is_memoized_as_fatal_and_popen_never_runs(monkeypatch):
+    popen_calls = []
+
+    def fake_popen(command, env, start_new_session):
+        popen_calls.append(command)
+        return FakeProcess()
+
+    monkeypatch.setenv("NVIDIA_SUMMARIZATION_VISIBLE_DEVICES", "4")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+
+    runtime = ManagedRuntime(
+        _runtime_config(service_role="summarization"),
+        popen_factory=fake_popen,
+        health_check=lambda _config: True,
+    )
+
+    assert runtime.fatal_config_error() is None
+    with pytest.raises(RuntimeError, match="pinned GPUs"):
+        runtime.ensure_started()
+
+    fatal = runtime.fatal_config_error()
+    assert fatal is not None and "pinned GPUs" in fatal
+    assert popen_calls == []
+
+    # Second attempt short-circuits on the memoized fatal error.
+    with pytest.raises(RuntimeError, match="pinned GPUs"):
+        runtime.ensure_started()
+    assert popen_calls == []
