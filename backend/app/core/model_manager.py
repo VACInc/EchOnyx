@@ -18,6 +18,7 @@ from app.core.model_downloader import (
     model_download_target,
     resolve_local_model_path,
 )
+from app.core.torchcodec_compat import ensure_torchcodec_importable_or_stub
 from app.runtime.planner import build_runtime_plan
 
 logger = logging.getLogger(__name__)
@@ -575,6 +576,10 @@ class ModelManager:
     async def _load_model(self, model_type: ModelType) -> Any:
         """Load a specific model type."""
         logger.info(f"Loading model: {model_type.value}")
+        # Every transformers-backed loader can trip an unimportable torchcodec
+        # wheel (see torchcodec_compat); guard once at the shared funnel so
+        # backend warm-up and worker pipelines are equally protected.
+        ensure_torchcodec_importable_or_stub()
 
         if model_type == ModelType.WHISPER:
             return await self._load_whisper()
