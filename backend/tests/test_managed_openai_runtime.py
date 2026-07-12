@@ -767,9 +767,9 @@ def test_missing_engine_binary_is_memoized_as_fatal(monkeypatch):
     assert runtime.health_snapshot()["fatal"] is True
 
 
-def test_model_candidates_require_command_runtime(monkeypatch):
-    monkeypatch.setenv("MODEL_RUNTIME", "llama_server")
-    monkeypatch.setenv("MODEL_PATH", "/models/model.gguf")
+def test_model_candidates_reject_vllm_runtime(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "vllm")
+    monkeypatch.setenv("VLLM_MODEL_ID", "Qwen/some-model")
     monkeypatch.setenv("MODEL_CANDIDATES_JSON", '[{"model":"/models/a.gguf"}]')
 
     with pytest.raises(RuntimeError, match="MODEL_RUNTIME=command"):
@@ -982,3 +982,38 @@ def test_pinned_large_gpu_keeps_endpoints_resident(monkeypatch):
     runtime.ensure_started()
 
     assert runtime._shutdown_after_request is False
+
+
+def test_llama_server_runtime_accepts_candidates_only(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "llama_server")
+    monkeypatch.delenv("MODEL_PATH", raising=False)
+    monkeypatch.delenv("MODEL_COMMAND", raising=False)
+    monkeypatch.delenv("VLLM_MODEL_ID", raising=False)
+    monkeypatch.setenv(
+        "MODEL_CANDIDATES_JSON",
+        '[{"model":"/models/a.gguf","mmproj":"/models/a.mmproj","memory_gb":21}]',
+    )
+
+    config = RuntimeConfig.from_env()
+
+    assert config.runtime == "llama_server"
+    assert config.model_candidates[0]["model"] == "/models/a.gguf"
+    assert config.model_name == "a.gguf"
+
+
+def test_build_runtime_command_applies_candidate_overrides(monkeypatch):
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._discover_llama_server_bin",
+        lambda: "/opt/cuda-llama/bin/llama-server",
+    )
+    config = _runtime_config(model_path="", mmproj_path="")
+
+    command = build_runtime_command(
+        config,
+        model_path_override="/models/chosen.gguf",
+        mmproj_override="/models/chosen.mmproj",
+    )
+
+    assert command[1:3] == ["-m", "/models/chosen.gguf"]
+    mmproj_index = command.index("--mmproj")
+    assert command[mmproj_index + 1] == "/models/chosen.mmproj"

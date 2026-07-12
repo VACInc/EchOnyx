@@ -46,14 +46,15 @@ services:
       - app.runtime.managed_openai_runtime
     environment:
       - PORT=8000
-      - MODEL_RUNTIME=command
-      - MODEL_COMMAND=python -m app.runtime.llama_cpp_server
+      # Native CUDA llama-server: llama-cpp-python's mtmd server path exits
+      # after each image completion, reloading the model per frame.
+      - MODEL_RUNTIME=llama_server
+      - LLAMA_SERVER_BIN=/opt/cuda-llama/bin/llama-server
       - MODEL_CANDIDATES_JSON=${VISION_MODEL_CANDIDATES_JSON:-[{"model":"/models/Qwen3VL-32B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf","memory_gb":26},{"model":"/models/Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf","memory_gb":21},{"model":"/models/Qwen3VL-8B-Instruct-Q4_K_M.gguf","mmproj":"/models/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf","memory_gb":7}]}
       # Explicit VISION_MODEL_PATH disables candidate selection (override wins).
       - MODEL_PATH=${VISION_MODEL_PATH:-}
       - MODEL_MMPROJ=${VISION_MMPROJ_PATH:-}
       - MODEL_NAME=${VISION_ENDPOINT_MODEL:-}
-      - MODEL_CHAT_FORMAT=${VISION_LLAMA_CHAT_FORMAT:-mtmd}
       - MODEL_CONTEXT_SIZE=${VISION_CONTEXT_SIZE:-8192}
       - MODEL_GPU_LAYERS=${VISION_GPU_LAYERS:-999}
       - SERVICE_ROLE=vision

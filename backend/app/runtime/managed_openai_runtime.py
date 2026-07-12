@@ -42,10 +42,13 @@ def _discover_llama_server_bin() -> str:
     if configured:
         return configured
 
-    for candidate in Path("/opt/amd-llama").rglob("llama-server"):
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    raise RuntimeError("Unable to locate an executable llama-server binary in /opt/amd-llama.")
+    for root in ("/opt/amd-llama", "/opt/cuda-llama"):
+        for candidate in Path(root).rglob("llama-server"):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    raise RuntimeError(
+        "Unable to locate an executable llama-server binary in /opt/amd-llama or /opt/cuda-llama."
+    )
 
 
 def _parse_extra_args(value: str | None) -> list[str]:
@@ -412,12 +415,14 @@ class RuntimeConfig:
         model_path = os.environ.get("MODEL_PATH", "").strip()
         vllm_model_id = os.environ.get("VLLM_MODEL_ID", "").strip()
         model_candidates = _parse_model_candidates(os.environ.get("MODEL_CANDIDATES_JSON"))
-        if model_candidates and runtime != "command":
+        if model_candidates and runtime not in {"command", "llama_server"}:
             raise RuntimeError(
-                "MODEL_CANDIDATES_JSON requires MODEL_RUNTIME=command; the chosen "
-                "candidate is handed to the child through its environment."
+                "MODEL_CANDIDATES_JSON requires MODEL_RUNTIME=command or "
+                "llama_server."
             )
         effective_model_source = model_path or vllm_model_id or model_command
+        if not effective_model_source and model_candidates:
+            effective_model_source = model_candidates[0]["model"]
         if not effective_model_source:
             raise RuntimeError("MODEL_PATH is required.")
 
@@ -450,12 +455,20 @@ class RuntimeConfig:
         )
 
 
-def build_runtime_command(config: RuntimeConfig, *, cuda_visible_devices: str | None = None) -> list[str]:
+def build_runtime_command(
+    config: RuntimeConfig,
+    *,
+    cuda_visible_devices: str | None = None,
+    model_path_override: str | None = None,
+    mmproj_override: str | None = None,
+) -> list[str]:
+    model_path = (model_path_override or "").strip() or config.model_path
+    mmproj_path = (mmproj_override or "").strip() or config.mmproj_path
     if config.runtime == "llama_server":
         command = [
             _discover_llama_server_bin(),
             "-m",
-            config.model_path,
+            model_path,
             "-c",
             str(config.context_size),
             "-ngl",
@@ -467,8 +480,8 @@ def build_runtime_command(config: RuntimeConfig, *, cuda_visible_devices: str | 
             "--port",
             str(config.upstream_port),
         ]
-        if config.mmproj_path:
-            command.extend(["--mmproj", config.mmproj_path])
+        if mmproj_path:
+            command.extend(["--mmproj", mmproj_path])
         command.extend(_translate_engine_device_args(config.llama_extra_args, cuda_visible_devices))
         return command
 
@@ -614,7 +627,10 @@ class ManagedRuntime:
                 env = self._build_child_env_locked()
                 self._apply_model_candidate_locked(env)
                 command = build_runtime_command(
-                    self.config, cuda_visible_devices=self._child_host_visible
+                    self.config,
+                    cuda_visible_devices=self._child_host_visible,
+                    model_path_override=env.get("MODEL_PATH"),
+                    mmproj_override=env.get("MODEL_MMPROJ"),
                 )
                 self._process = self._popen_factory(command, env=env, start_new_session=True)
             except TransientStartError:
