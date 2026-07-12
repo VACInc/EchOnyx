@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
@@ -307,10 +308,48 @@ def _unique_device_labels(*groups: tuple[dict, ...]) -> tuple[str, ...]:
     return tuple(labels)
 
 
+def _visible_nvidia_indices() -> set[int] | None:
+    """Parse CUDA_VISIBLE_DEVICES into host indices, or None when unrestricted."""
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not raw:
+        return None
+    try:
+        return {int(token.strip()) for token in raw.split(",") if token.strip()}
+    except ValueError:
+        return None
+
+
+def _filter_gpu_info_by_visibility(settings: "Settings", gpu_info: dict, notes: list[str]) -> dict:
+    """Restrict planning to the GPUs this process may actually use.
+
+    nvidia-smi reports every host GPU regardless of CUDA_VISIBLE_DEVICES, so
+    an unfiltered plan budgets VRAM the runtime can never allocate (and
+    'prefers' devices owned by other workloads), keeping worker models
+    resident on cards that must also fit swap-mode endpoints.
+    """
+    if getattr(settings.gpu_backend, "value", settings.gpu_backend) != "cuda":
+        return gpu_info
+    visible = _visible_nvidia_indices()
+    if visible is None:
+        return gpu_info
+    nvidia_gpus = gpu_info.get("nvidia_gpus", []) or []
+    filtered = [gpu for gpu in nvidia_gpus if gpu.get("index") in visible]
+    if len(filtered) == len(nvidia_gpus) or not filtered:
+        return gpu_info
+    notes.append(
+        "Planner restricted to CUDA_VISIBLE_DEVICES GPUs "
+        f"{sorted(visible)} out of {len(nvidia_gpus)} detected."
+    )
+    adjusted = dict(gpu_info)
+    adjusted["nvidia_gpus"] = filtered
+    return adjusted
+
+
 def build_runtime_plan(settings: "Settings", gpu_info: dict) -> RuntimePlan:
     from app.config import ModelLoadingStrategy
 
     notes: list[str] = []
+    gpu_info = _filter_gpu_info_by_visibility(settings, gpu_info, notes)
     estimates = estimate_model_memory_by_type_gb(settings)
     total_memory_gb = _resolve_total_accelerator_memory_gb(settings, gpu_info)
     available_memory_gb = _resolve_available_accelerator_memory_gb(settings, gpu_info)

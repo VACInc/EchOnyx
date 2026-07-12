@@ -4,6 +4,14 @@ from app.config import GPUBackend, HardwareProfile, ModelLoadingStrategy, ROCmLL
 from app.runtime.planner import build_runtime_plan
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _clear_cuda_visibility(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
 def _settings(**overrides):
     base = dict(
         hardware_profile=HardwareProfile.STRIX_HALO,
@@ -275,3 +283,49 @@ def test_runtime_plan_uses_stage_by_stage_loading_on_small_apple_silicon():
     assert plan.worker_execution_mode == "stage_by_stage"
     assert plan.keep_resident_models == ()
     assert plan.endpoint_model_loading == "none"
+
+
+def test_plan_respects_cuda_visible_devices(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    settings = _settings(
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        gpu_backend=GPUBackend.CUDA,
+        embedding_model="Qwen/Qwen3-Embedding-0.6B",
+    )
+    gpu_info = _gpu_info(
+        nvidia_gpus=[
+            {"index": 0, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 22.0, "used_vram_gb": 2.0},
+            {"index": 1, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 23.0, "used_vram_gb": 1.0},
+            {"index": 2, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 20.0, "used_vram_gb": 4.0},
+        ],
+        amd_gpus=[],
+        unified_memory_gb=None,
+    )
+
+    plan = build_runtime_plan(settings, gpu_info)
+
+    # Only GPU 1 may be planned against: budget stays single-card scale and
+    # workers must not stay resident beside swap-mode endpoints.
+    assert plan.accelerator_count == 1
+    assert plan.effective_memory_budget_gb < 24.0
+    assert plan.worker_execution_mode != "resident_all"
+    assert any("CUDA_VISIBLE_DEVICES" in note for note in plan.notes)
+
+
+def test_plan_unchanged_when_visibility_unset():
+    settings = _settings(
+        hardware_profile=HardwareProfile.MULTI_GPU,
+        gpu_backend=GPUBackend.CUDA,
+    )
+    gpu_info = _gpu_info(
+        nvidia_gpus=[
+            {"index": 0, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 22.0, "used_vram_gb": 2.0},
+            {"index": 1, "name": "RTX 3090", "vram_gb": 24.0, "free_vram_gb": 23.0, "used_vram_gb": 1.0},
+        ],
+        amd_gpus=[],
+        unified_memory_gb=None,
+    )
+
+    plan = build_runtime_plan(settings, gpu_info)
+
+    assert plan.accelerator_count == 2
