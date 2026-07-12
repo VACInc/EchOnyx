@@ -481,6 +481,11 @@ class ManagedRuntime:
         self._last_start_ts = 0.0
         self._active_requests = 0
         self._shutdown_after_request = config.shutdown_after_request
+        self._fatal_config_error: str | None = None
+
+    def fatal_config_error(self) -> str | None:
+        with self._lock:
+            return self._fatal_config_error
 
     def note_activity(self) -> None:
         with self._lock:
@@ -510,11 +515,22 @@ class ManagedRuntime:
     def ensure_started(self) -> bool:
         with self._lock:
             self._last_request_ts = self._clock()
+            if self._fatal_config_error:
+                raise RuntimeError(self._fatal_config_error)
             if self._child_running_locked():
                 return self._health_check(self.config)
 
-            env = self._build_child_env_locked()
-            command = build_runtime_command(self.config, cuda_visible_devices=self._child_host_visible)
+            try:
+                env = self._build_child_env_locked()
+                command = build_runtime_command(
+                    self.config, cuda_visible_devices=self._child_host_visible
+                )
+            except RuntimeError as exc:
+                # Device pins and runtime command shape cannot heal without a
+                # container restart; memoize so /health reports the failure
+                # instead of the wrapper sitting healthy with no usable child.
+                self._fatal_config_error = str(exc)
+                raise
             self._process = self._popen_factory(command, env=env, start_new_session=True)
             self._process_group_id = getattr(self._process, "pid", None)
             self._last_start_ts = self._last_request_ts
@@ -700,21 +716,36 @@ class RuntimeProxyHandler(BaseHTTPRequestHandler):
 
     def _handle(self) -> None:
         if self.path == "/health":
-            self._write_json(
-                200,
-                {
-                    **DEFAULT_HEALTH_BODY,
-                    "runtime": self.runtime_manager.config.runtime,
-                    "child_running": self.runtime_manager.child_running(),
-                    "child_ready": self.runtime_manager.child_ready(),
-                },
-            )
+            fatal = self.runtime_manager.fatal_config_error()
+            body = {
+                **DEFAULT_HEALTH_BODY,
+                "runtime": self.runtime_manager.config.runtime,
+                "child_running": self.runtime_manager.child_running(),
+                "child_ready": self.runtime_manager.child_ready(),
+            }
+            if fatal:
+                body["status"] = "fatal"
+                body["fatal_config_error"] = fatal
+            self._write_json(503 if fatal else 200, body)
             return
 
         self.runtime_manager.note_activity()
         self.runtime_manager.request_started()
         try:
-            ready = self.runtime_manager.ensure_started()
+            try:
+                ready = self.runtime_manager.ensure_started()
+            except RuntimeError as exc:
+                self._write_json(
+                    503,
+                    {
+                        "error": {
+                            "message": str(exc),
+                            "type": "unavailable_error",
+                            "code": 503,
+                        }
+                    },
+                )
+                return
             if not ready:
                 self._write_json(
                     503,
