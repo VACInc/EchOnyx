@@ -300,6 +300,8 @@ def test_plan_respects_cuda_visible_devices(monkeypatch):
         ],
         amd_gpus=[],
         unified_memory_gb=None,
+        total_vram_gb=72.0,
+        available_vram_gb=65.0,
     )
 
     plan = build_runtime_plan(settings, gpu_info)
@@ -324,6 +326,8 @@ def test_plan_unchanged_when_visibility_unset():
         ],
         amd_gpus=[],
         unified_memory_gb=None,
+        total_vram_gb=48.0,
+        available_vram_gb=45.0,
     )
 
     plan = build_runtime_plan(settings, gpu_info)

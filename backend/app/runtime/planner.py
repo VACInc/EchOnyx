@@ -342,6 +342,12 @@ def _filter_gpu_info_by_visibility(settings: "Settings", gpu_info: dict, notes: 
     )
     adjusted = dict(gpu_info)
     adjusted["nvidia_gpus"] = filtered
+    # Budget resolvers consume detect-time aggregates, not the per-GPU list;
+    # recompute them from the visible set or the filter changes nothing.
+    adjusted["total_vram_gb"] = sum(float(gpu.get("vram_gb", 0.0) or 0.0) for gpu in filtered)
+    adjusted["available_vram_gb"] = sum(
+        float(gpu.get("free_vram_gb", 0.0) or 0.0) for gpu in filtered
+    )
     return adjusted
 
 
