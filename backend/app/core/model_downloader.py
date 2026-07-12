@@ -125,6 +125,28 @@ MODEL_REGISTRY = {
         # projector; keep in sync with the config.py mmproj auto-attach.
         "companions": ["mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"],
     },
+    "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf": {
+        "repo_id": "Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
+        "filename": "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf",
+        "size_gb": 19.0,
+        "companions": ["mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf"],
+    },
+    "mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf": {
+        "repo_id": "Qwen/Qwen3-VL-30B-A3B-Instruct-GGUF",
+        "filename": "mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf",
+        "size_gb": 0.8,
+    },
+    "Qwen3VL-8B-Instruct-Q4_K_M.gguf": {
+        "repo_id": "Qwen/Qwen3-VL-8B-Instruct-GGUF",
+        "filename": "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+        "size_gb": 5.1,
+        "companions": ["mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"],
+    },
+    "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf": {
+        "repo_id": "Qwen/Qwen3-VL-8B-Instruct-GGUF",
+        "filename": "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
+        "size_gb": 0.8,
+    },
     "mmproj-Qwen3VL-32B-Instruct-F16.gguf": {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "mmproj-Qwen3VL-32B-Instruct-F16.gguf",

@@ -378,13 +378,13 @@ async def test_model_recommendations_use_small_set_for_low_budget(monkeypatch, t
     assert response["free_disk_gb"] == 42.0
     assert response["recommendations"]["asr"]["model_name"] == "small"
     assert response["recommendations"]["embedding"]["model_name"] == "nomic-ai/nomic-embed-text-v1.5"
-    assert response["recommendations"]["vision"]["model_name"] == "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf"
+    assert response["recommendations"]["vision"]["model_name"] == "Qwen3VL-8B-Instruct-Q4_K_M.gguf"
     assert response["recommendations"]["summarization"]["model_name"] == "Qwen2.5-3B-Instruct.Q4_K_M.gguf"
-    # 12.6 for the primaries plus 1.0 for the vision mmproj companion, which
-    # is required before the vision endpoint can start.
-    assert response["total_additional_download_gb"] == pytest.approx(13.6)
+    # 8.6 of non-vision primaries plus the 5.1 vision Q4 and its 0.8 mmproj
+    # companion, which is required before the vision endpoint can start.
+    assert response["total_additional_download_gb"] == pytest.approx(14.5)
     assert response["recommendations"]["vision"]["missing_companions"] == [
-        "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
+        "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"
     ]
     assert response["recommendations"]["vision"]["cached"] is False
     assert "sub-16 GB" in response["recommendations"]["vision"]["reason"]
@@ -508,3 +508,120 @@ def test_write_env_updates_removes_none_values(tmp_path):
     assert "# comment" in payload
     assert "WHISPER_MODEL=large-v3" in payload
     assert "RUNTIME_MEMORY_CEILING_GB" not in payload
+
+
+def test_recommendation_set_single_gpu_tier_prefers_largest_q4(monkeypatch):
+    from app.api.routes import settings as settings_module
+    from app.config import GPUBackend, HardwareProfile
+
+    fake_settings = types.SimpleNamespace(hardware_profile=HardwareProfile.MULTI_GPU, gpu_backend=GPUBackend.CUDA)
+    plan = types.SimpleNamespace(effective_memory_budget_gb=24.0)
+
+    tier, choices = settings_module._recommendation_set(fake_settings, plan)
+
+    assert tier == "single_gpu"
+    assert choices["vision"] == "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf"
+    assert choices["summarization"] == "Qwen3-30B-A3B-Q4_K_M.gguf"
+    assert choices["embedding"] == "Qwen/Qwen3-Embedding-0.6B"
+
+
+def test_recommendation_set_large_tier_above_forty_gb():
+    from app.api.routes import settings as settings_module
+    from app.config import GPUBackend, HardwareProfile
+
+    fake_settings = types.SimpleNamespace(hardware_profile=HardwareProfile.MULTI_GPU, gpu_backend=GPUBackend.CUDA)
+    plan = types.SimpleNamespace(effective_memory_budget_gb=93.0)
+
+    tier, choices = settings_module._recommendation_set(fake_settings, plan)
+
+    assert tier == "large"
+    assert choices["embedding"] == "Qwen/Qwen3-Embedding-8B"
+
+
+class _FakeResponse:
+    def __init__(self, status_code, payload=None):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("no json")
+        return self._payload
+
+
+class _FakeAsyncClient:
+    routes = {}
+
+    def __init__(self, *args, **kwargs):
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, headers=None):
+        _FakeAsyncClient.called.append(url)
+        result = _FakeAsyncClient.routes.get(url)
+        if result is None:
+            raise ConnectionError(url)
+        return result
+
+
+def _fake_httpx(monkeypatch, routes):
+    import sys as _sys
+
+    _FakeAsyncClient.routes = routes
+    _FakeAsyncClient.called = []
+    fake = types.SimpleNamespace(AsyncClient=_FakeAsyncClient)
+    monkeypatch.setitem(_sys.modules, "httpx", fake)
+    return _FakeAsyncClient
+
+
+@pytest.mark.asyncio
+async def test_endpoint_status_uses_health_and_never_wakes_the_child(monkeypatch):
+    client = _fake_httpx(
+        monkeypatch,
+        {
+            "http://vision-server:8000/health": _FakeResponse(
+                200, {"status": "ok", "child_running": False, "child_ready": False}
+            )
+        },
+    )
+
+    status = await settings_module._endpoint_status("http://vision-server:8000/v1", None)
+
+    # Idle managed endpoint is online (loads on demand), and the API base URL
+    # was never touched — touching it would start the model.
+    assert status == "online"
+    assert client.called == ["http://vision-server:8000/health"]
+
+
+@pytest.mark.asyncio
+async def test_endpoint_status_reports_fatal_config_as_offline(monkeypatch):
+    _fake_httpx(
+        monkeypatch,
+        {
+            "http://vision-server:8000/health": _FakeResponse(
+                503, {"status": "fatal", "child_running": False, "child_ready": False}
+            )
+        },
+    )
+
+    status = await settings_module._endpoint_status("http://vision-server:8000/v1", None)
+
+    assert status == "offline"
+
+
+@pytest.mark.asyncio
+async def test_endpoint_status_falls_back_to_base_url_for_external_endpoints(monkeypatch):
+    client = _fake_httpx(
+        monkeypatch,
+        {"https://api.example.com/v1": _FakeResponse(200)},
+    )
+
+    status = await settings_module._endpoint_status("https://api.example.com/v1", "key")
+
+    assert status == "online"
+    assert client.called == ["https://api.example.com/health", "https://api.example.com/v1"]

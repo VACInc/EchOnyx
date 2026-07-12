@@ -698,11 +698,15 @@ def get_settings() -> Settings:
         vision_name = settings.vision_model.lower()
         if "qwen3vl-32b-instruct" in vision_name:
             settings.vision_mmproj = "mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"
+        elif "qwen3vl-30b-a3b-instruct" in vision_name:
+            settings.vision_mmproj = "mmproj-Qwen3VL-30B-A3B-Instruct-Q8_0.gguf"
+        elif "qwen3vl-8b-instruct" in vision_name:
+            settings.vision_mmproj = "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"
         elif "qwen2.5-vl-3b-instruct" in vision_name:
             settings.vision_mmproj = "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"
     if not settings.vision_chat_format:
         vision_name = settings.vision_model.lower()
-        if "qwen3vl-32b-instruct" in vision_name:
+        if "qwen3vl-" in vision_name:
             settings.vision_chat_format = "qwen3-vl"
         elif "qwen2.5-vl-3b-instruct" in vision_name:
             settings.vision_chat_format = "qwen2.5-vl"

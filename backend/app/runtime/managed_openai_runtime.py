@@ -345,6 +345,40 @@ def _device_preference_key(
     )
 
 
+class TransientStartError(RuntimeError):
+    """Startup blocker that can heal without a container restart.
+
+    Example: no candidate model file downloaded yet, or no candidate fits
+    the currently free VRAM. Never memoized as fatal configuration.
+    """
+
+
+def _parse_model_candidates(raw: str | None) -> tuple[dict, ...]:
+    value = (raw or "").strip()
+    if not value:
+        return ()
+    try:
+        payload = json.loads(value)
+    except ValueError as exc:
+        raise RuntimeError(f"MODEL_CANDIDATES_JSON is not valid JSON: {exc}") from exc
+    if not isinstance(payload, list):
+        raise RuntimeError("MODEL_CANDIDATES_JSON must be a JSON array.")
+    candidates: list[dict] = []
+    for index, entry in enumerate(payload):
+        if not isinstance(entry, dict) or not str(entry.get("model", "")).strip():
+            raise RuntimeError(
+                f"MODEL_CANDIDATES_JSON entry {index} must be an object with a 'model' path."
+            )
+        candidates.append(
+            {
+                "model": str(entry["model"]).strip(),
+                "mmproj": str(entry.get("mmproj", "")).strip(),
+                "memory_gb": float(entry.get("memory_gb", 0) or 0),
+            }
+        )
+    return tuple(candidates)
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     runtime: str
@@ -369,6 +403,7 @@ class RuntimeConfig:
     proxy_timeout_seconds: int
     llama_extra_args: list[str]
     vllm_extra_args: list[str]
+    model_candidates: tuple = ()
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -376,6 +411,12 @@ class RuntimeConfig:
         model_command = os.environ.get("MODEL_COMMAND", "").strip()
         model_path = os.environ.get("MODEL_PATH", "").strip()
         vllm_model_id = os.environ.get("VLLM_MODEL_ID", "").strip()
+        model_candidates = _parse_model_candidates(os.environ.get("MODEL_CANDIDATES_JSON"))
+        if model_candidates and runtime != "command":
+            raise RuntimeError(
+                "MODEL_CANDIDATES_JSON requires MODEL_RUNTIME=command; the chosen "
+                "candidate is handed to the child through its environment."
+            )
         effective_model_source = model_path or vllm_model_id or model_command
         if not effective_model_source:
             raise RuntimeError("MODEL_PATH is required.")
@@ -405,6 +446,7 @@ class RuntimeConfig:
             proxy_timeout_seconds=int(os.environ.get("PROXY_TIMEOUT_SECONDS", "600")),
             llama_extra_args=_parse_extra_args(os.environ.get("LLAMA_SERVER_EXTRA_ARGS")),
             vllm_extra_args=_parse_extra_args(os.environ.get("VLLM_EXTRA_ARGS")),
+            model_candidates=model_candidates,
         )
 
 
@@ -556,10 +598,13 @@ class ManagedRuntime:
 
             try:
                 env = self._build_child_env_locked()
+                self._apply_model_candidate_locked(env)
                 command = build_runtime_command(
                     self.config, cuda_visible_devices=self._child_host_visible
                 )
                 self._process = self._popen_factory(command, env=env, start_new_session=True)
+            except TransientStartError:
+                raise
             except (RuntimeError, OSError) as exc:
                 # Device pins, runtime command shape, and missing/non-executable
                 # engine binaries cannot heal without a container restart;
@@ -653,6 +698,66 @@ class ManagedRuntime:
             env.pop(key, None)
         self._child_host_visible = ",".join(str(index) for index in host_ids) or child_visible
         return env
+
+    def _selected_devices_min_free_gib(self) -> float | None:
+        visible = (self._child_host_visible or "").strip()
+        if not visible:
+            return None
+        try:
+            wanted = {int(token) for token in visible.split(",") if token.strip()}
+            gpus = _query_nvidia_gpus()
+            free_values = [
+                float(gpu["free_vram_gb"])
+                for gpu in gpus
+                if int(gpu["index"]) in wanted
+            ]
+        except Exception:
+            return None
+        return min(free_values) if free_values else None
+
+    def _apply_model_candidate_locked(self, env: dict[str, str]) -> None:
+        """Pick the largest downloaded candidate that fits the selected GPU.
+
+        Core directive: best model for the platform. Candidates are ordered
+        best-first in MODEL_CANDIDATES_JSON; a candidate qualifies when its
+        file exists and (when telemetry is available) its memory need plus
+        headroom fits the selected device's free VRAM. Failure here is
+        transient — downloading a model or freeing VRAM heals it without a
+        container restart.
+        """
+        candidates = self.config.model_candidates
+        if not candidates:
+            return
+        free_gib = self._selected_devices_min_free_gib()
+        skipped: list[str] = []
+        for candidate in candidates:
+            model_path = candidate["model"]
+            if not os.path.isfile(model_path):
+                skipped.append(f"{model_path} (not downloaded)")
+                continue
+            mmproj = candidate["mmproj"]
+            if mmproj and not os.path.isfile(mmproj):
+                skipped.append(f"{model_path} (missing mmproj {mmproj})")
+                continue
+            need_gib = candidate["memory_gb"]
+            if free_gib is not None and need_gib and need_gib + 1.0 > free_gib:
+                skipped.append(
+                    f"{model_path} (needs ~{need_gib:.1f} GiB, {free_gib:.1f} GiB free)"
+                )
+                continue
+            env["MODEL_PATH"] = model_path
+            env["MODEL_NAME"] = Path(model_path).name
+            if mmproj:
+                env["MODEL_MMPROJ"] = mmproj
+            else:
+                env.pop("MODEL_MMPROJ", None)
+            logger.info("Selected model candidate %s for %s.", model_path, self.config.service_role or "endpoint")
+            return
+        raise TransientStartError(
+            "No model candidate is usable right now: "
+            + "; ".join(skipped)
+            + ". Download a candidate via Settings → Model Downloads or free GPU memory."
+        )
 
     def _terminate_locked(self) -> None:
         if not self._process:
@@ -772,6 +877,20 @@ class RuntimeProxyHandler(BaseHTTPRequestHandler):
         try:
             try:
                 ready = self.runtime_manager.ensure_started()
+            except TransientStartError as exc:
+                # Healable without restart (e.g. model not downloaded yet);
+                # the message is actionable and contains no device topology.
+                self._write_json(
+                    503,
+                    {
+                        "error": {
+                            "message": str(exc),
+                            "type": "unavailable_error",
+                            "code": 503,
+                        }
+                    },
+                )
+                return
             except RuntimeError:
                 self._write_json(
                     503,

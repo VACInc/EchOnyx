@@ -1,5 +1,17 @@
 # AGENTS
 
+## CORE DIRECTIVE — best bang for the platform
+
+EchOnyx automatically selects the best inference engine for the detected
+platform (CUDA hosts use CUDA-native engines, ROCm hosts use the ROCm
+llama_server lane, Apple uses Metal) and the largest/best approved model that
+fits the available hardware budget — swapping models per stage when they do
+not all fit resident. Users can override every choice, but defaults must
+never leave a platform on a generic, CPU, or undersized path when a better
+platform-native option exists in the approved model registry. When adding or
+changing engines, models, tiers, or placement logic, measure against this
+directive first.
+
 - Always keep unit tests up to date.
 - Treat test updates as part of the code change. If behavior, API contracts, settings, ranking, queueing, or runtime decisions change, update or add tests in the same change.
 - After any code changes, run the relevant verification before you finish:

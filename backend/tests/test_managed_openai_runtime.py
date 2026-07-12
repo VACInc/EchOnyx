@@ -6,6 +6,7 @@ import pytest
 from app.runtime.managed_openai_runtime import (
     ManagedRuntime,
     RuntimeConfig,
+    TransientStartError,
     build_runtime_command,
 )
 
@@ -757,3 +758,96 @@ def test_missing_engine_binary_is_memoized_as_fatal(monkeypatch):
     with pytest.raises(RuntimeError, match="no such file"):
         runtime.ensure_started()
     assert runtime.health_snapshot()["fatal"] is True
+
+
+def test_model_candidates_require_command_runtime(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "llama_server")
+    monkeypatch.setenv("MODEL_PATH", "/models/model.gguf")
+    monkeypatch.setenv("MODEL_CANDIDATES_JSON", '[{"model":"/models/a.gguf"}]')
+
+    with pytest.raises(RuntimeError, match="MODEL_RUNTIME=command"):
+        RuntimeConfig.from_env()
+
+
+def test_model_candidates_reject_malformed_json(monkeypatch):
+    monkeypatch.setenv("MODEL_RUNTIME", "command")
+    monkeypatch.setenv("MODEL_COMMAND", "python -m app.runtime.llama_cpp_server")
+    monkeypatch.setenv("MODEL_CANDIDATES_JSON", "{not json")
+
+    with pytest.raises(RuntimeError, match="not valid JSON"):
+        RuntimeConfig.from_env()
+
+
+def _candidate_runtime(tmp_path, candidates, host_visible="1"):
+    runtime = ManagedRuntime(
+        _runtime_config(
+            runtime="command",
+            model_command="python -m app.runtime.llama_cpp_server",
+            model_path="",
+            service_role="vision",
+            model_candidates=tuple(candidates),
+        ),
+        popen_factory=lambda *a, **k: FakeProcess(),
+        health_check=lambda _config: True,
+    )
+    runtime._child_host_visible = host_visible
+    return runtime
+
+
+def test_candidate_selection_prefers_largest_that_fits(monkeypatch, tmp_path):
+    big = tmp_path / "big.gguf"
+    big.write_bytes(b"g")
+    big_mmproj = tmp_path / "big-mmproj.gguf"
+    big_mmproj.write_bytes(b"g")
+    small = tmp_path / "small.gguf"
+    small.write_bytes(b"g")
+
+    candidates = [
+        {"model": str(big), "mmproj": str(big_mmproj), "memory_gb": 21.0},
+        {"model": str(small), "mmproj": "", "memory_gb": 7.0},
+    ]
+    runtime = _candidate_runtime(tmp_path, candidates)
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._query_nvidia_gpus",
+        lambda: [{"index": 1, "free_vram_gb": 23.5}],
+    )
+
+    env = {}
+    runtime._apply_model_candidate_locked(env)
+
+    assert env["MODEL_PATH"] == str(big)
+    assert env["MODEL_MMPROJ"] == str(big_mmproj)
+    assert env["MODEL_NAME"] == "big.gguf"
+
+
+def test_candidate_selection_falls_through_on_vram_and_missing_files(monkeypatch, tmp_path):
+    missing = tmp_path / "not-downloaded.gguf"
+    small = tmp_path / "small.gguf"
+    small.write_bytes(b"g")
+
+    candidates = [
+        {"model": str(missing), "mmproj": "", "memory_gb": 21.0},
+        {"model": str(small), "mmproj": "", "memory_gb": 7.0},
+    ]
+    runtime = _candidate_runtime(tmp_path, candidates)
+    monkeypatch.setattr(
+        "app.runtime.managed_openai_runtime._query_nvidia_gpus",
+        lambda: [{"index": 1, "free_vram_gb": 9.0}],
+    )
+
+    env = {"MODEL_MMPROJ": "stale"}
+    runtime._apply_model_candidate_locked(env)
+
+    assert env["MODEL_PATH"] == str(small)
+    assert "MODEL_MMPROJ" not in env
+
+
+def test_candidate_exhaustion_is_transient_not_fatal(monkeypatch, tmp_path):
+    candidates = [{"model": str(tmp_path / "absent.gguf"), "mmproj": "", "memory_gb": 7.0}]
+    runtime = _candidate_runtime(tmp_path, candidates)
+
+    with pytest.raises(TransientStartError, match="not downloaded"):
+        runtime._apply_model_candidate_locked({})
+
+    # Transient failures must not poison /health.
+    assert runtime.fatal_config_error() is None

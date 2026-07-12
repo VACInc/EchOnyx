@@ -63,6 +63,8 @@ MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
     ],
     "vision": [
         {"name": "Qwen3VL-32B-Instruct-Q4_K_M.gguf", "size_gb": 24.0, "recommended": True},
+        {"name": "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf", "size_gb": 19.0, "recommended": True},
+        {"name": "Qwen3VL-8B-Instruct-Q4_K_M.gguf", "size_gb": 5.1, "recommended": False},
         {"name": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf", "size_gb": 4.0, "recommended": False},
     ],
     "summarization": [
@@ -71,6 +73,7 @@ MODEL_OPTIONS: dict[str, list[dict[str, Any]]] = {
     ],
     "embedding": [
         {"name": "Qwen/Qwen3-Embedding-8B", "size_gb": 16.0, "recommended": True},
+        {"name": "Qwen/Qwen3-Embedding-0.6B", "size_gb": 1.2, "recommended": False},
         {"name": "nomic-ai/nomic-embed-text-v1.5", "size_gb": 0.6, "recommended": False},
     ],
     "audio_event": [
@@ -482,9 +485,16 @@ def _recommendation_set(settings: Settings, runtime_plan) -> tuple[str, dict[str
     }
     small_overrides = {
         "asr": "small",
-        "vision": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
+        "vision": "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
         "summarization": "Qwen2.5-3B-Instruct.Q4_K_M.gguf",
         "embedding": "nomic-ai/nomic-embed-text-v1.5",
+    }
+    # Single ~24 GB accelerator: the largest approved Q4 models that fit one
+    # card each, swapped per stage by the managed endpoints/planner instead of
+    # dropping to a small tier (core directive: best bang for the platform).
+    single_gpu_overrides = {
+        "vision": "Qwen3VL-30B-A3B-Instruct-Q4_K_M.gguf",
+        "embedding": "Qwen/Qwen3-Embedding-0.6B",
     }
     apple_overrides = {
         **small_overrides,
@@ -494,6 +504,8 @@ def _recommendation_set(settings: Settings, runtime_plan) -> tuple[str, dict[str
         return "apple_silicon", {**base, **apple_overrides}
     if profile == HardwareProfile.CPU_ONLY.value or budget_gb < 16:
         return "small", {**base, **small_overrides}
+    if budget_gb < 40:
+        return "single_gpu", {**base, **single_gpu_overrides}
     return "large", base
 
 
@@ -507,6 +519,18 @@ def _recommendation_reason(component: str, tier: str, runtime_plan) -> str:
         if component in {"asr", "vision", "summarization", "embedding"}:
             return f"Selected for CPU or sub-16 GB accelerator budget ({budget_gb:.1f} GB detected)."
         return "Keeps the supported default while the core model set stays small."
+    if tier == "single_gpu":
+        if component in {"vision", "summarization"}:
+            return (
+                f"Largest approved Q4 model for a single-accelerator budget "
+                f"({budget_gb:.1f} GB detected); stages swap instead of staying resident."
+            )
+        if component == "embedding":
+            return (
+                f"Compact embedding keeps query latency low beside swapped "
+                f"endpoints ({budget_gb:.1f} GB detected)."
+            )
+        return f"Selected for the active hardware budget ({budget_gb:.1f} GB detected)."
     return f"Selected for the active hardware budget ({budget_gb:.1f} GB detected)."
 
 
@@ -1030,6 +1054,14 @@ async def get_model_download_status() -> dict:
 
 
 async def _endpoint_status(url: str, api_key: str | None) -> str:
+    """Probe an endpoint without starting or keeping alive its model.
+
+    Managed endpoints proxy every non-health request to the child engine, so
+    probing the API base URL wakes the model and resets its idle timer —
+    status polling alone kept endpoints resident. Probe the wrapper's
+    sibling /health first (never wakes the child); only endpoints that do
+    not expose it (external OpenAI-compatible servers) get the base-URL GET.
+    """
     url = url.strip()
     if not url:
         return "offline"
@@ -1040,7 +1072,27 @@ async def _endpoint_status(url: str, api_key: str | None) -> str:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 
+        health_url = url.rstrip("/")
+        if health_url.endswith("/v1"):
+            health_url = health_url[: -len("/v1")]
+        health_url = f"{health_url}/health"
+
         async with httpx.AsyncClient(timeout=2.0) as client:
+            try:
+                health = await client.get(health_url, headers=headers)
+            except Exception:
+                health = None
+            if health is not None and health.status_code in {200, 503}:
+                try:
+                    payload = health.json()
+                except ValueError:
+                    payload = None
+                if isinstance(payload, dict) and "child_ready" in payload:
+                    # Managed wrapper: idle children load on demand, so the
+                    # endpoint is online unless its configuration is fatal.
+                    return "offline" if payload.get("status") == "fatal" else "online"
+                if health.status_code == 200:
+                    return "online"
             response = await client.get(url, headers=headers)
         if response.status_code < 500:
             return "online"
