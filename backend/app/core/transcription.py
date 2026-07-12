@@ -265,8 +265,11 @@ async def _transcribe_transformers_asr(
         if not timestamp or len(timestamp) != 2:
             continue
         start, end = timestamp
-        word = chunk.get("text", "").strip()
-        if not word:
+        # Keep the token's own spacing: _words_to_text joins words without a
+        # separator (matching the faster-whisper path, whose tokens carry
+        # leading spaces), so stripping here would weld segment text together.
+        word = chunk.get("text", "")
+        if not word.strip():
             continue
         words.append({
             "word": word,
@@ -279,7 +282,7 @@ async def _transcribe_transformers_asr(
         current = {
             "start": words[0]["start"],
             "end": words[0]["end"],
-            "text": words[0]["word"],
+            "text": _words_to_text([words[0]]),
             "words": [words[0]],
         }
         for word in words[1:]:
@@ -290,7 +293,7 @@ async def _transcribe_transformers_asr(
                 current = {
                     "start": word["start"],
                     "end": word["end"],
-                    "text": word["word"],
+                    "text": _words_to_text([word]),
                     "words": [word],
                 }
             else:

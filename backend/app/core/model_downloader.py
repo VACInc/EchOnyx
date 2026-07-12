@@ -121,6 +121,9 @@ MODEL_REGISTRY = {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
         "filename": "Qwen3VL-32B-Instruct-Q4_K_M.gguf",
         "size_gb": 24.0,
+        # llama_server refuses to start the vision endpoint without the
+        # projector; keep in sync with the config.py mmproj auto-attach.
+        "companions": ["mmproj-Qwen3VL-32B-Instruct-Q8_0.gguf"],
     },
     "mmproj-Qwen3VL-32B-Instruct-F16.gguf": {
         "repo_id": "Qwen/Qwen3-VL-32B-Instruct-GGUF",
@@ -136,6 +139,7 @@ MODEL_REGISTRY = {
         "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
         "filename": "Qwen2.5-VL-3B-Instruct.Q4_K_M.gguf",
         "size_gb": 4.0,
+        "companions": ["Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf"],
     },
     "Qwen2.5-VL-3B-Instruct.mmproj-fp16.gguf": {
         "repo_id": "mradermacher/Qwen2.5-VL-3B-Instruct-GGUF",
@@ -325,6 +329,25 @@ def get_model_expected_size_gb(model_name: str) -> float | None:
         return None
     size_gb = model_info.get("size_gb")
     return float(size_gb) if size_gb is not None else None
+
+
+def companion_model_names(model_name: str) -> list[str]:
+    """Registry-declared files that must ship alongside a model.
+
+    A vision GGUF without its mmproj projector downloads fine but leaves the
+    llama_server endpoint unable to start, so downloads must treat the pair as
+    one unit. Only registry-resolvable companions are returned, under their
+    canonical registry names.
+    """
+    _, model_info = _registry_lookup(model_name)
+    if model_info is None:
+        return []
+    resolved: list[str] = []
+    for companion in model_info.get("companions", ()):
+        canonical, info = _registry_lookup(companion)
+        if canonical is not None and info is not None and canonical != model_name:
+            resolved.append(canonical)
+    return resolved
 
 
 def _hf_cache_dir() -> Path:
