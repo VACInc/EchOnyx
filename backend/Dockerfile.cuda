@@ -92,20 +92,26 @@ RUN set -e; \
     } > /tmp/mtmd.CMakeLists.txt && \
     mv /tmp/mtmd.CMakeLists.txt /tmp/llama-cpp-python/vendor/llama.cpp/tools/mtmd/CMakeLists.txt; \
     uv pip install /tmp/llama-cpp-python; \
+    rm -rf /tmp/llama-cpp-python
+
+# Native CUDA llama-server for the vision endpoint: llama-cpp-python's mtmd
+# server path exits after each image completion, reloading the model per
+# frame. Built at the same llama.cpp revision AMD packages for the ROCm lane
+# (b7782), which predates the npm/embed web-UI toolchain and builds headless.
+ARG LLAMA_SERVER_REF=b7782
+RUN set -e; \
     if [ "$LLAMA_BUILD_CUDA" = "1" ]; then \
-      # Native llama-server binary from the same pinned tree: the CUDA vision
-      # lane serves multimodal through it (llama-cpp-python's mtmd server
-      # path exits after each image completion).
-      cmake -S /tmp/llama-cpp-python/vendor/llama.cpp -B /tmp/llama-server-build \
+      git clone --depth 1 --branch "$LLAMA_SERVER_REF" \
+        https://github.com/ggml-org/llama.cpp.git /tmp/llama-server-src; \
+      cmake -S /tmp/llama-server-src -B /tmp/llama-server-build \
         -DGGML_CUDA=on \
         ${CUDA_ARCHITECTURES:+-DCMAKE_CUDA_ARCHITECTURES=$CUDA_ARCHITECTURES} \
-        -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_UI=OFF -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
+        -DLLAMA_BUILD_SERVER=ON -DLLAMA_CURL=OFF -DBUILD_SHARED_LIBS=OFF \
         -DCMAKE_BUILD_TYPE=Release; \
       cmake --build /tmp/llama-server-build --target llama-server -j"$(nproc)"; \
       install -D /tmp/llama-server-build/bin/llama-server /opt/cuda-llama/bin/llama-server; \
-      rm -rf /tmp/llama-server-build; \
-    fi; \
-    rm -rf /tmp/llama-cpp-python
+      rm -rf /tmp/llama-server-build /tmp/llama-server-src; \
+    fi
 
 RUN python - <<'PY'
 from pathlib import Path
